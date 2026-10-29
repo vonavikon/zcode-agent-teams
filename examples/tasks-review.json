@@ -1,0 +1,52 @@
+{
+  "tasks": [
+    {
+      "id": "lens-code",
+      "title": "ревью team.py: корректность логики (init/claim/verify/status)",
+      "assignee": "code-lens",
+      "lens": "correctness",
+      "files_read": ["plugins/agent-teams/skills/agent-teams/scripts/team.py"],
+      "files_write": ["examples/demo-run/findings-code.md"],
+      "acceptance": [
+        "каждый finding содержит файл:строку и конкретное предложение фикса",
+        "все findings относятся к реальному коду team.py (проверяемо чтением файла)",
+        "отчёт сгруппирован: CRITICAL / MAJOR / MINOR"
+      ],
+      "deps": []
+    },
+    {
+      "id": "lens-robust",
+      "title": "ревью team.py + SKILL.md: Windows/Git Bash и конкурентный доступ",
+      "assignee": "robust-lens",
+      "lens": "robustness",
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/scripts/team.py",
+        "plugins/agent-teams/skills/agent-teams/SKILL.md"
+      ],
+      "files_write": ["examples/demo-run/findings-robust.md"],
+      "acceptance": [
+        "каждый finding содержит файл:строку и конкретное предложение фикса",
+        "все findings относятся к реальному коду/тексту указанных файлов",
+        "отчёт сгруппирован: CRITICAL / MAJOR / MINOR"
+      ],
+      "deps": []
+    },
+    {
+      "id": "lens-docs",
+      "title": "ревью SKILL.md + README.md: сможет ли чужой агент запустить команду по инструкции",
+      "assignee": "docs-lens",
+      "lens": "docs",
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/SKILL.md",
+        "README.md"
+      ],
+      "files_write": ["examples/demo-run/findings-docs.md"],
+      "acceptance": [
+        "каждый finding содержит файл:строку и конкретное предложение правки",
+        "проверено расхождение команд/путей между документацией и фактическими файлами",
+        "отчёт сгруппирован: CRITICAL / MAJOR / MINOR"
+      ],
+      "deps": []
+    }
+  ]
+}

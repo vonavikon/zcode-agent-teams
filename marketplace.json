@@ -1,0 +1,15 @@
+{
+  "name": "zcode-agent-teams",
+  "plugins": [
+    {
+      "name": "agent-teams",
+      "source": "./plugins/agent-teams",
+      "version": "0.1.0",
+      "description": "Команды субагентов в ZCode: общий список задач с блокировками, mailbox-сообщения, гейт приёмки через верификаторов, отчёт прогона в Langfuse",
+      "displayName": "Agent Teams",
+      "displayName_i18n": { "ru": "Команды агентов" },
+      "description_i18n": { "ru": "Параллельные исполнители с непересекающимися файлами, гейт приёмки (exit-2-цикл), сообщения между агентами, аналитика в Langfuse" },
+      "category": "developer-tools"
+    }
+  ]
+}
