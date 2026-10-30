@@ -1,25 +1,23 @@
 # Backlog
 
-Движок (team.py) получил 30 findings в первом прогоне (examples/demo-run/findings-*.md). Ниже — принятое к работе; детали и номера строк в отчётах прогона.
+Движок получил 30 findings в первом прогоне (examples/demo-run/findings-*.md).
 
-## Движок, следующий релиз (v0.2.0)
+## Сделано в v0.2.0 (2026-10-30)
 
-- Гонки read-modify-write на tasks.json и mailbox: параллельные claim/verify/message теряют записи (findings-code M1/M2, findings-robust R-1/R-2/R-7). Фикс: командный лок `.tasks.lock` + уникальный tmp (pid+uuid) в save_tasks + атомарная запись mailbox
-- Path traversal: имена team/assignee/--to/--for без валидации попадают в пути (findings-code M4, findings-robust R-6). Фикс: regex `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` в argparse
-- Осиротевшие lock-файлы: при краше между os.open и save_tasks задача недоступна, команды unlock/release нет (findings-code M3, findings-robust R-3). Фикс: снятие лока при verify pass + подкоманда release + детекция протухшего лока
-- Windows PermissionError на replace при занятом файле (findings-robust R-4). Фикс: ретрай-цикл
-- Жёсткий парсинг events.jsonl в langfuse-экспорте роняет выгрузку на одной битой строке (findings-robust R-5). Фикс: пропускать битые с предупреждением
+- Гонки read-modify-write на tasks.json и mailbox: единый лок состояния `.state.lock` (O_EXCL, ретраи, подбор протухшего >2 ч) на все мутации + атомарные записи через уникальный tmp (pid+uuid) — findings-code M1/M2, findings-robust R-1/R-2/R-7
+- Path traversal: имена команды/агентов/id задач валидируются regex `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — findings-code M4, findings-robust R-6
+- Осиротевшие состояния: подкоманда `release` возвращает задачу в pending — findings-code M3, findings-robust R-3
+- Windows PermissionError на replace: ретрай с нарастающим ожиданием — findings-robust R-4
+- Битые строки events.jsonl не роняют langfuse-выгрузку — findings-robust R-5
+- Лимит кругов enforcement: после 2 провалов приёмки задача → `blocked`, фидбек ROUND LIMIT в mailbox — findings-robust R-9
+- Экономика: `tokens --task --add N`, счётчики в tasks.json/status, суммарные токены в trace-метаданных и span
 
-## Мелкое
+## Мелкое (открыто)
 
-- Мёртвый статус «verifying» — нигде не присваивается (findings-code m1)
-- Лимит «максимум 2 круга» не enforcement — только текст правила (findings-robust R-9)
 - Кодировка pipe на Windows для русского вывода (findings-robust R-11)
-- «круг 0» в status против «с 1 круга» в verify-сообщении — разная лексика, унифицировать
-- README: каталог examples/demo-run описан — теперь существует; перепроверить структуру после новых файлов
+- Мёртвый статус «verifying» — допускается verify, но не присваивается (findings-code m1); можно выкинуть
 
 ## Дистрибуция
 
-- Публикация репо на GitHub (публичный маркет по корню репозитория)
 - Валидация `zcode plugins validate` в CI
-- Пятиязычный README по практике публичных репо владельца — после первых внешних пользователей
+- Пятиязычный README — после первых внешних пользователей

@@ -4,7 +4,7 @@
     {
       "name": "agent-teams",
       "source": "./plugins/agent-teams",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Команды субагентов в ZCode: общий список задач с блокировками, mailbox-сообщения, гейт приёмки через верификаторов, отчёт прогона в Langfuse",
       "displayName": "Agent Teams",
       "displayName_i18n": { "ru": "Команды агентов" },

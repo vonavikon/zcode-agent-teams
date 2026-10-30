@@ -2,3 +2,5 @@
 .agent-teams/
 __pycache__/
 *.pyc
+.mcp.json
+.tmp-*/

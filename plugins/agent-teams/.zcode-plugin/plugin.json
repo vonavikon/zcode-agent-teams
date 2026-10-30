@@ -1,6 +1,6 @@
 {
   "name": "agent-teams",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Команды субагентов в ZCode: общий список задач с блокировками, mailbox-сообщения, гейт приёмки через верификаторов, отчёт прогона в Langfuse",
   "author": { "name": "vonavikon" },
   "skills": "./skills"

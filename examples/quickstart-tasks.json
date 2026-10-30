@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {
+      "id": "write-notes",
+      "title": "написать notes.md: что такое agent-teams и как работает гейт",
+      "assignee": "writer",
+      "lens": "docs",
+      "files_read": ["plugins/agent-teams/skills/agent-teams/SKILL.md"],
+      "files_write": ["notes.md"],
+      "acceptance": [
+        "файл notes.md существует в корне scratch-проекта",
+        "ровно три пункта: что делает команда, как выглядит гейт приёмки, что пишется в Langfuse",
+        "каждый пункт — одно предложение без выдуманных фактов (сверено со SKILL.md)"
+      ],
+      "deps": []
+    }
+  ]
+}

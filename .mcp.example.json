@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "langfuse": {
+      "type": "http",
+      "url": "http://127.0.0.1:3100/api/public/mcp",
+      "headers": { "Authorization": "Basic <base64(public_key:secret_key)>" }
+    }
+  }
+}

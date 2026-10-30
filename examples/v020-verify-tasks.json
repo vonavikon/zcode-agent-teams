@@ -1,0 +1,46 @@
+{
+  "tasks": [
+    {
+      "id": "audit-races",
+      "title": "аудит фикса гонок/атомарности v0.2.0",
+      "assignee": "aud-races",
+      "lens": "concurrency",
+      "files_read": ["plugins/agent-teams/skills/agent-teams/scripts/team.py"],
+      "files_write": ["examples/v020-verify/report-races.md"],
+      "acceptance": [
+        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка текущего team.py",
+        "чеклист: единый лок состояния на все мутации tasks.json и mailbox (claim/verify/message/read/release); уникальный tmp (pid+uuid) в атомарных записях; ретрай os.replace на PermissionError; подбор протухшего лока; живой конкурентный тест двух claim не проводим — только статический аудит кода",
+        "отдельным блоком: остаточные риски (что лок НЕ защищает)"
+      ],
+      "deps": []
+    },
+    {
+      "id": "audit-paths",
+      "title": "аудит валидации имён, release, лимита кругов v0.2.0",
+      "assignee": "aud-paths",
+      "lens": "safety",
+      "files_read": ["plugins/agent-teams/skills/agent-teams/scripts/team.py"],
+      "files_write": ["examples/v020-verify/report-paths.md"],
+      "acceptance": [
+        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка текущего team.py",
+        "чеклист: NAME_RE-валидация team/--by/--to/--for/id задач/assignee при init; release возвращает в pending; verify fail при rounds>=2 переводит в blocked и пишет ROUND LIMIT в mailbox; claim обновляет assignee на фактического исполнителя",
+        "отдельным блоком: остаточные риски"
+      ],
+      "deps": []
+    },
+    {
+      "id": "audit-docs",
+      "title": "аудит консистентности документации и манифестов v0.2.0",
+      "assignee": "aud-docs",
+      "lens": "docs",
+      "files_read": ["plugins/agent-teams/skills/agent-teams/SKILL.md", "README.md", "BACKLOG.md", "plugins/agent-teams/.zcode-plugin/plugin.json", "marketplace.json"],
+      "files_write": ["examples/v020-verify/report-docs.md"],
+      "acceptance": [
+        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка",
+        "чеклист: версия 0.2.0 в plugin.json и marketplace.json совпадает; каждая команда из SKILL.md существует в team.py с теми же флагами; README «Что внутри» соответствует механике v0.2.0 (лок состояния, blocked, release, tokens); BACKLOG «Сделано в v0.2.0» не обещает того, чего нет в коде",
+        "отдельным блоком: расхождения, найденные сверх чеклиста"
+      ],
+      "deps": []
+    }
+  ]
+}
