@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""agent-teams engine: общий список задач, mailbox-сообщения, гейт приёмки,
-журнал событий, отчёт прогона в Langfuse.
+"""agent-teams engine: shared task list, mailbox messages, acceptance gate,
+event log, run report to Langfuse.
 
-Только stdlib, Python 3.10+. Каталог команды: <root>/.agent-teams/<team>/
-  tasks.json   — список задач со статусами
-  inbox/       — mailbox-файлы по агентам
-  locks/       — лок состояния (.state.lock): сериализует все мутации
-  events.jsonl — журнал переходов (источник для Langfuse)
+Stdlib only, Python 3.10+. Team directory: <root>/.agent-teams/<team>/
+  tasks.json   — task list with statuses
+  inbox/       — per-agent mailbox files
+  locks/       — state lock (.state.lock): serializes all mutations
+  events.jsonl — transition log (the source for Langfuse)
 
-Конкурентность v0.2.0: любая мутация tasks.json/mailbox идёт под единым
-локом с ретраями и детекцией протухшего лока; записи атомарные
-(уникальный tmp + os.replace с ретраем на PermissionError — Windows).
+Concurrency v0.2.0: every mutation of tasks.json/mailbox runs under a
+single lock with retries and stale-lock detection; writes are atomic
+(unique tmp + os.replace with a PermissionError retry — Windows).
 """
 import argparse
 import base64
@@ -38,7 +38,7 @@ def now_iso() -> str:
 
 
 def hex32(s: str) -> str:
-    """Langfuse требует trace/span-id строго из 32 hex."""
+    """Langfuse requires trace/span ids to be exactly 32 hex chars."""
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
 
 
@@ -56,14 +56,14 @@ def team_dir(root: Path, team: str) -> Path:
 
 
 def replace_retry(src: Path, dst: Path, attempts: int = 5) -> None:
-    """os.replace с ретраем: на Windows dst может быть на мгновение занят."""
+    """os.replace with retries: on Windows dst can be briefly locked."""
     for i in range(attempts):
         try:
             os.replace(src, dst)
             return
         except PermissionError:
             time.sleep(0.2 * (i + 1))
-    os.replace(src, dst)  # последняя попытка — исключение наружу
+    os.replace(src, dst)  # final attempt — let the exception propagate
 
 
 def write_atomic(path: Path, data: dict) -> None:
@@ -77,7 +77,7 @@ def read_json(path: Path) -> dict:
 
 
 class StateLock:
-    """Единый лок на все мутации состояния. Протухший лок (>2 ч) подбирается."""
+    """Single lock for all state mutations. A stale lock (>2 h) gets reclaimed."""
 
     def __init__(self, d: Path, owner: str):
         self.path = d / "locks" / ".state.lock"
@@ -95,10 +95,10 @@ class StateLock:
                 try:
                     age = time.time() - self.path.stat().st_mtime
                     if age > LOCK_STALE_S:
-                        self.path.unlink(missing_ok=True)  # протух — подбираем
+                        self.path.unlink(missing_ok=True)  # stale — reclaim it
                         continue
                 except FileNotFoundError:
-                    continue  # лок уже освободили между проверками
+                    continue  # the lock was released between checks
                 if time.monotonic() > deadline:
                     sys.exit(f"не удалось взять лок состояния ({LOCK_TIMEOUT_S:.0f}с): {self.path}")
                 time.sleep(0.2)
@@ -185,7 +185,7 @@ def cmd_claim(args) -> None:
             if dt["status"] != "completed":
                 sys.exit(f"зависимость {dep} не завершена (status={dt['status']})")
         t.update(status="in_progress", claimed_at=now_iso(), last_event_ts=now_iso(),
-                 assignee=args.by)  # владелец = фактический исполнитель: фидбек приёмки идёт ему
+                 assignee=args.by)  # owner = actual executor: acceptance feedback goes to them
         write_atomic(d / "tasks.json", data)
         log_event(d, "task_claimed", actor=args.by, task=t["id"])
     print(f"OK claim {t['id']} → {args.by}")
@@ -211,7 +211,7 @@ def cmd_verify(args) -> None:
             print(f"OK задача {t['id']} закрыта, провалов приёмки: {t['rounds']}")
         else:
             if t["rounds"] >= MAX_ROUNDS:
-                # лимит кругов: дальше не возвращаем исполнителю — задача лиду
+                # round limit reached: don't return to the executor — the task goes to the lead
                 t.update(status="blocked", last_event_ts=now_iso())
                 write_atomic(d / "tasks.json", data)
                 log_event(d, "round_limit", actor=args.by, task=t["id"], round=t["rounds"])
@@ -226,7 +226,7 @@ def cmd_verify(args) -> None:
             t["last_event_ts"] = now_iso()
             write_atomic(d / "tasks.json", data)
             log_event(d, "verify_fail", actor=args.by, task=t["id"], round=t["rounds"])
-            # фидбек летит исполнителю в mailbox — цикл exit-2: работа не принята
+            # feedback goes to the executor's mailbox — exit-2 loop: work not accepted
             save_mailbox(d, t["assignee"], {
                 "id": uuid.uuid4().hex[:12], "from": args.by, "to": t["assignee"],
                 "text": f"VERIFY FAIL по задаче {t['id']} (круг {t['rounds']}): {args.feedback}",
@@ -262,7 +262,7 @@ def cmd_tokens(args) -> None:
         t = find_task(data, args.task)
         print(f"{t['id']}: {t.get('tokens', 0)} токенов")
         return
-    with StateLock(d, f"tokens:{args.by or 'lead'}"):  # чтение и запись под одним локом
+    with StateLock(d, f"tokens:{args.by or 'lead'}"):  # read and write under a single lock
         data = read_json(d / "tasks.json")
         t = find_task(data, args.task)
         t["tokens"] = t.get("tokens", 0) + args.add
@@ -352,8 +352,8 @@ def _post(url: str, payload: dict, pub: str, sec: str) -> None:
 
 
 def cmd_langfuse(args) -> None:
-    """Трейсы — OTLP-эндпоинтом (events_only не принимает legacy ingestion),
-    scores — отдельным POST /api/public/scores."""
+    """Traces go to the OTLP endpoint (events_only doesn't accept legacy ingestion),
+    scores go to a separate POST /api/public/scores."""
     root = Path(args.project_root).resolve()
     d = team_dir(root, args.team)
     pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
@@ -369,7 +369,7 @@ def cmd_langfuse(args) -> None:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
-            bad += 1  # битая строка журнала не должна ронять выгрузку
+            bad += 1  # a corrupt log line must not crash the upload
     if bad:
         print(f"предупреждение: пропущено битых строк журнала: {bad}")
 
