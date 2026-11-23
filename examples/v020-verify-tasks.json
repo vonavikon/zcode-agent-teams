@@ -2,43 +2,59 @@
   "tasks": [
     {
       "id": "audit-races",
-      "title": "аудит фикса гонок/атомарности v0.2.0",
+      "title": "audit of the v0.2.0 races and atomicity fix",
       "assignee": "aud-races",
       "lens": "concurrency",
-      "files_read": ["plugins/agent-teams/skills/agent-teams/scripts/team.py"],
-      "files_write": ["examples/v020-verify/report-races.md"],
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/scripts/team.py"
+      ],
+      "files_write": [
+        "examples/v020-verify/report-races.md"
+      ],
       "acceptance": [
-        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка текущего team.py",
-        "чеклист: единый лок состояния на все мутации tasks.json и mailbox (claim/verify/message/read/release); уникальный tmp (pid+uuid) в атомарных записях; ретрай os.replace на PermissionError; подбор протухшего лока; живой конкурентный тест двух claim не проводим — только статический аудит кода",
-        "отдельным блоком: остаточные риски (что лок НЕ защищает)"
+        "for every checklist item a verdict OK/NOK with a file:line of the current team.py",
+        "checklist: a single state lock on all mutations of tasks.json and the mailbox (claim/verify/message/read/release); a unique tmp file (pid+uuid) in atomic writes; an os.replace retry on PermissionError; reclaiming a stale lock; no live concurrency test of two claims, only a static audit of the code",
+        "in a separate block: residual risks (what the lock does NOT protect against)"
       ],
       "deps": []
     },
     {
       "id": "audit-paths",
-      "title": "аудит валидации имён, release, лимита кругов v0.2.0",
+      "title": "audit of the v0.2.0 name validation, release and round limit",
       "assignee": "aud-paths",
       "lens": "safety",
-      "files_read": ["plugins/agent-teams/skills/agent-teams/scripts/team.py"],
-      "files_write": ["examples/v020-verify/report-paths.md"],
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/scripts/team.py"
+      ],
+      "files_write": [
+        "examples/v020-verify/report-paths.md"
+      ],
       "acceptance": [
-        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка текущего team.py",
-        "чеклист: NAME_RE-валидация team/--by/--to/--for/id задач/assignee при init; release возвращает в pending; verify fail при rounds>=2 переводит в blocked и пишет ROUND LIMIT в mailbox; claim обновляет assignee на фактического исполнителя",
-        "отдельным блоком: остаточные риски"
+        "for every checklist item a verdict OK/NOK with a file:line of the current team.py",
+        "checklist: NAME_RE validation of team / --by / --to / --for / task ids / assignee at init; release returns a task to pending; verify fail with rounds>=2 moves the task to blocked and writes ROUND LIMIT to the mailbox; claim updates assignee to the actual executor",
+        "in a separate block: residual risks"
       ],
       "deps": []
     },
     {
       "id": "audit-docs",
-      "title": "аудит консистентности документации и манифестов v0.2.0",
+      "title": "audit of the v0.2.0 documentation and manifest consistency",
       "assignee": "aud-docs",
       "lens": "docs",
-      "files_read": ["plugins/agent-teams/skills/agent-teams/SKILL.md", "README.md", "BACKLOG.md", "plugins/agent-teams/.zcode-plugin/plugin.json", "marketplace.json"],
-      "files_write": ["examples/v020-verify/report-docs.md"],
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/SKILL.md",
+        "README.md",
+        "BACKLOG.md",
+        "plugins/agent-teams/.zcode-plugin/plugin.json",
+        "marketplace.json"
+      ],
+      "files_write": [
+        "examples/v020-verify/report-docs.md"
+      ],
       "acceptance": [
-        "по каждому пункту чеклиста вердикт OK/NOK с файл:строка",
-        "чеклист: версия 0.2.0 в plugin.json и marketplace.json совпадает; каждая команда из SKILL.md существует в team.py с теми же флагами; README «Что внутри» соответствует механике v0.2.0 (лок состояния, blocked, release, tokens); BACKLOG «Сделано в v0.2.0» не обещает того, чего нет в коде",
-        "отдельным блоком: расхождения, найденные сверх чеклиста"
+        "for every checklist item a verdict OK/NOK with a file:line",
+        "checklist: the version 0.2.0 in plugin.json and marketplace.json matches; every command from SKILL.md exists in team.py with the same flags; the README section \"What is inside\" matches the v0.2.0 mechanics (state lock, blocked, release, tokens); the BACKLOG section \"Done in v0.2.0\" does not promise anything that is not in the code",
+        "in a separate block: discrepancies found beyond the checklist"
       ],
       "deps": []
     }

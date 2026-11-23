@@ -1,62 +1,66 @@
-# agent-teams — команды агентов для ZCode
+# agent-teams: agent teams for ZCode
 
-Портирование подхода [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) на механику ZCode: несколько агентов работают над одной кодовой базой с общим списком задач, а приёмка встроена в цикл.
+A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) approach to ZCode mechanics: several agents work on one code base from a shared task list, and acceptance is part of the loop.
 
-## Что внутри
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-- **Общий список задач** — `.agent-teams/<team>/tasks.json`: статусы, зависимости, наборы файлов. Все мутации — под единым локом состояния с атомарной записью (v0.2.0)
-- **Mailbox-сообщения** — агенты пишут друг другу напрямую, минуя лида: `.agent-teams/<team>/inbox/<agent>.json`
-- **Журнал и блокировки** — `events.jsonl` фиксирует каждый переход статуса (источник Langfuse-отчёта), `locks/` держит лок состояния (O_EXCL, протухшие подбираются автоматически)
-- **Лимит кругов** — после двух провалов приёмки задача уходит в `blocked` и возвращается лиду через `release`
-- **Гейт приёмки (цикл exit-2)** — исполнитель не закрывает задачу сам. Верификатор-субагент проверяет каждый критерий по фактическим файлам; FAIL = фидбек в mailbox исполнителя, работа продолжается
-- **Langfuse-аналитика** — `team.py langfuse` выгружает прогон: trace на команду, span на задачу, score на каждый вердикт. Круги до прохождения, время по линзам, стоимость видна в UI
+**English** · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md)
 
-Роли: лид — основная сессия ZCode (планирует, порождает, сводит), тиммейты — субагенты, верификаторы — субагенты только-для-чтения.
+## What is inside
 
-## Установка
+- **Shared task list**: `.agent-teams/<team>/tasks.json` holds statuses, dependencies and file sets. Every mutation runs under a single state lock and is written atomically (since v0.2.0)
+- **Mailbox messages**: agents write to each other directly, without going through the lead: `.agent-teams/<team>/inbox/<agent>.json`
+- **Event log and locks**: `events.jsonl` records every status transition (it is the source for the Langfuse report). `locks/` holds the state lock (O_EXCL; stale locks are reclaimed automatically)
+- **Round limit**: a task that keeps failing verification goes to `blocked` and comes back to the lead through `release`. In v0.2.x the block happens on the third failed verification (see [BACKLOG.md](BACKLOG.md))
+- **Acceptance gate (exit-2 loop)**: an executor does not close its own task. A verifier subagent checks each criterion against the actual files. FAIL puts feedback into the executor's mailbox and the work continues
+- **Langfuse analytics**: `team.py langfuse` uploads the run: one trace per team, one span per task, one score per verdict. Rounds before passing, time per lens and cost are visible in the UI
 
-ZCode → Plugin Marketplace → Add → Add Plugin Marketplace → указать каталог этого репозитория (marketplace.json в корне). Затем Personal → zcode-agent-teams → agent-teams → Install.
+Roles: the lead is the main ZCode session (it plans, spawns and summarizes), teammates are subagents, verifiers are read-only subagents.
 
-Скилл появится в списке как `agent-teams`. Для Langfuse-отчёта нужны переменные окружения `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` (self-hosted поддерживается; трейсы пишутся OTLP-эндпоинтом `/api/public/otel/v1/traces`, scores — `/api/public/scores`, поэтому режима events_only достаточно).
+## Installation
 
-## Схема работы
+In ZCode: Plugin Marketplace → Add → Add Plugin Marketplace → point to the directory of this repository (marketplace.json is in the root). Then Personal → zcode-agent-teams → agent-teams → Install.
+
+The skill appears in the list as `agent-teams`. The Langfuse report needs the environment variables `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST`. Self-hosted instances work: traces go to the OTLP endpoint `/api/public/otel/v1/traces` and scores to `/api/public/scores`, so the events_only mode is enough.
+
+## How it works
 
 ```
-лид: tasks.json (непересекающиеся files_write, acceptance-критерии)
+lead: tasks.json (non-overlapping files_write, acceptance criteria)
   └─ team.py init
-  └─ spawn тиммейтов (Agent tool, background)      ← 2–5 агентов
-       └─ тиммейт: claim → работа → "VERIFICATION REQUEST"
-            └─ лид spawn верификатора (read-only)
+  └─ spawn teammates (Agent tool, background)      ← 2-5 agents
+       └─ teammate: claim → work → "VERIFICATION REQUEST"
+            └─ lead spawns a verifier (read-only)
                  ├─ PASS → team.py verify --verdict pass
                  └─ FAIL → verify --verdict fail --feedback "..."
-                      └─ фидбек в mailbox → SendMessage исполнителю → исправление
-  └─ team.py status → все completed
+                      └─ feedback to mailbox → SendMessage to executor → fix
+  └─ team.py status → all completed
   └─ team.py langfuse → trace + spans + scores
 ```
 
-## Рецепты
+## Recipes
 
-- **Ревью в N линз** — security / производительность / покрытие над одним объектом, у каждой линзы свой выходной файл
-- **Competing hypotheses** — N независимых следователей одного бага, входы не пересекаются, спор — отдельной задачей. Против якорения на первую гипотезу
-- **Параллельная реализация по слоям** — сплит на непересекающиеся файлы, `deps` задают порядок волн
+- **Review in N lenses**: security, performance and coverage over one object, each lens writes to its own output file
+- **Competing hypotheses**: N independent investigators of one bug, inputs do not overlap, the debate is a separate task. Guards against anchoring on the first hypothesis
+- **Parallel implementation by layers**: a split into non-overlapping files, `deps` set the order of waves
 
-## Когда команда не нужна
+## When a team is not needed
 
-Последовательные задачи, правки одного файла, много зависимостей — одна сессия или один субагент дешевле. Токены растут линейно на каждого тиммейта.
+Sequential tasks, edits to one file, many dependencies: one session or one subagent is cheaper. Tokens grow linearly with each teammate.
 
-## Структура
+## Structure
 
 ```
 plugins/agent-teams/
-  .zcode-plugin/plugin.json          манифест плагина
-  skills/agent-teams/SKILL.md        плейбук лида
-  skills/agent-teams/references/     промпты тиммейта и верификатора
-  skills/agent-teams/scripts/team.py движок (stdlib-only, Python 3.10+)
-marketplace.json                     каталог для установки
-examples/tasks-review.json           пример задач (ревью в 3 линзы)
-examples/demo-run/                   артефакты первого прогона
+  .zcode-plugin/plugin.json          plugin manifest
+  skills/agent-teams/SKILL.md         lead playbook
+  skills/agent-teams/references/      teammate and verifier prompts
+  skills/agent-teams/scripts/team.py  engine (stdlib-only, Python 3.10+)
+marketplace.json                     installation catalog
+examples/tasks-review.json           task example (review in 3 lenses)
+examples/demo-run/                   artifacts of the first run
 ```
 
-## Лицензия
+## License
 
 MIT

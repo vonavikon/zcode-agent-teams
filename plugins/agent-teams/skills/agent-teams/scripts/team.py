@@ -3,14 +3,14 @@
 event log, run report to Langfuse.
 
 Stdlib only, Python 3.10+. Team directory: <root>/.agent-teams/<team>/
-  tasks.json   — task list with statuses
-  inbox/       — per-agent mailbox files
-  locks/       — state lock (.state.lock): serializes all mutations
-  events.jsonl — transition log (the source for Langfuse)
+  tasks.json    task list with statuses
+  inbox/        per-agent mailbox files
+  locks/        state lock (.state.lock): serializes all mutations
+  events.jsonl  transition log (the source for Langfuse)
 
 Concurrency v0.2.0: every mutation of tasks.json/mailbox runs under a
 single lock with retries and stale-lock detection; writes are atomic
-(unique tmp + os.replace with a PermissionError retry — Windows).
+(unique tmp + os.replace with a PermissionError retry: Windows).
 """
 import argparse
 import base64
@@ -44,14 +44,14 @@ def hex32(s: str) -> str:
 
 def check_name(kind: str, value: str) -> None:
     if not NAME_RE.match(value or ""):
-        sys.exit(f"недопустимое имя {kind}: {value!r} (шаблон ^[A-Za-z0-9][A-Za-z0-9._-]{{0,63}}$)")
+        sys.exit(f"invalid {kind} name: {value!r} (pattern ^[A-Za-z0-9][A-Za-z0-9._-]{{0,63}}$)")
 
 
 def team_dir(root: Path, team: str) -> Path:
-    check_name("команды", team)
+    check_name("team", team)
     d = root / TEAMS_DIR / team
     if not (d / "tasks.json").exists():
-        sys.exit(f"команда не найдена: {d} (сначала init)")
+        sys.exit(f"team not found: {d} (run init first)")
     return d
 
 
@@ -63,7 +63,7 @@ def replace_retry(src: Path, dst: Path, attempts: int = 5) -> None:
             return
         except PermissionError:
             time.sleep(0.2 * (i + 1))
-    os.replace(src, dst)  # final attempt — let the exception propagate
+    os.replace(src, dst)  # final attempt, let the exception propagate
 
 
 def write_atomic(path: Path, data: dict) -> None:
@@ -95,12 +95,12 @@ class StateLock:
                 try:
                     age = time.time() - self.path.stat().st_mtime
                     if age > LOCK_STALE_S:
-                        self.path.unlink(missing_ok=True)  # stale — reclaim it
+                        self.path.unlink(missing_ok=True)  # stale, reclaim it
                         continue
                 except FileNotFoundError:
                     continue  # the lock was released between checks
                 if time.monotonic() > deadline:
-                    sys.exit(f"не удалось взять лок состояния ({LOCK_TIMEOUT_S:.0f}с): {self.path}")
+                    sys.exit(f"failed to acquire the state lock ({LOCK_TIMEOUT_S:.0f}s): {self.path}")
                 time.sleep(0.2)
 
     def __exit__(self, *exc) -> None:
@@ -123,7 +123,7 @@ def find_task(data: dict, tid: str) -> dict:
     for t in data["tasks"]:
         if t["id"] == tid:
             return t
-    sys.exit(f"задача не найдена: {tid}")
+    sys.exit(f"task not found: {tid}")
 
 
 def save_mailbox(d: Path, agent: str, msg: dict) -> None:
@@ -137,18 +137,18 @@ def save_mailbox(d: Path, agent: str, msg: dict) -> None:
 
 def cmd_init(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("команды", args.team)
+    check_name("team", args.team)
     src = Path(args.tasks).resolve()
     spec = json.loads(src.read_text(encoding="utf-8"))
     tasks, seen = [], set()
     for t in spec.get("tasks", []):
         for field in ("id", "title", "assignee", "acceptance"):
             if not t.get(field):
-                sys.exit(f"задача без обязательного поля {field}: {t}")
-        check_name("id задачи", t["id"])
-        check_name("исполнителя", t["assignee"])
+                sys.exit(f"task is missing the required field {field}: {t}")
+        check_name("task id", t["id"])
+        check_name("executor", t["assignee"])
         if t["id"] in seen:
-            sys.exit(f"дублирующийся id задачи: {t['id']}")
+            sys.exit(f"duplicate task id: {t['id']}")
         seen.add(t["id"])
         tasks.append({
             "id": t["id"], "title": t["title"], "assignee": t["assignee"],
@@ -160,107 +160,107 @@ def cmd_init(args) -> None:
         })
     d = root / TEAMS_DIR / args.team
     if d.exists():
-        sys.exit(f"каталог команды уже есть: {d}")
+        sys.exit(f"team directory already exists: {d}")
     (d / "inbox").mkdir(parents=True)
     (d / "locks").mkdir()
     write_atomic(d / "tasks.json", {"team": args.team, "created": now_iso(), "tasks": tasks})
     log_event(d, "team_created", tasks=len(tasks),
               teammates=sorted({t["assignee"] for t in tasks}))
-    print(f"OK команда {args.team}: {len(tasks)} задач, {d}")
+    print(f"OK team {args.team}: {len(tasks)} tasks, {d}")
 
 
 # ---------------------------------------------------------------- claim
 
 def cmd_claim(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("агента", args.by)
+    check_name("agent", args.by)
     d = team_dir(root, args.team)
     with StateLock(d, f"claim:{args.by}"):
         data = read_json(d / "tasks.json")
         t = find_task(data, args.task)
         if t["status"] != "pending":
-            sys.exit(f"задача {t['id']} не pending (status={t['status']})")
+            sys.exit(f"task {t['id']} is not pending (status={t['status']})")
         for dep in t.get("deps", []):
             dt = find_task(data, dep)
             if dt["status"] != "completed":
-                sys.exit(f"зависимость {dep} не завершена (status={dt['status']})")
+                sys.exit(f"dependency {dep} is not completed (status={dt['status']})")
         t.update(status="in_progress", claimed_at=now_iso(), last_event_ts=now_iso(),
                  assignee=args.by)  # owner = actual executor: acceptance feedback goes to them
         write_atomic(d / "tasks.json", data)
         log_event(d, "task_claimed", actor=args.by, task=t["id"])
-    print(f"OK claim {t['id']} → {args.by}")
+    print(f"OK claim {t['id']} -> {args.by}")
 
 
 # ---------------------------------------------------------------- verify
 
 def cmd_verify(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("агента", args.by)
+    check_name("agent", args.by)
     d = team_dir(root, args.team)
     with StateLock(d, f"verify:{args.by}"):
         data = read_json(d / "tasks.json")
         t = find_task(data, args.task)
         if t["status"] not in ("in_progress", "verifying"):
-            sys.exit(f"задача {t['id']} не в работе (status={t['status']})")
+            sys.exit(f"task {t['id']} is not in progress (status={t['status']})")
         if args.verdict == "fail" and not args.feedback:
-            sys.exit("вердикт fail требует --feedback (фидбек для исполнителя)")
+            sys.exit("verdict fail requires --feedback (the feedback for the executor)")
         if args.verdict == "pass":
             t.update(status="completed", completed_at=now_iso(), last_event_ts=now_iso())
             write_atomic(d / "tasks.json", data)
             log_event(d, "verify_pass", actor=args.by, task=t["id"], round=t["rounds"] + 1)
-            print(f"OK задача {t['id']} закрыта, провалов приёмки: {t['rounds']}")
+            print(f"OK task {t['id']} closed, failed verification rounds: {t['rounds']}")
         else:
             if t["rounds"] >= MAX_ROUNDS:
-                # round limit reached: don't return to the executor — the task goes to the lead
+                # round limit reached: don't return to the executor, the task goes to the lead
                 t.update(status="blocked", last_event_ts=now_iso())
                 write_atomic(d / "tasks.json", data)
                 log_event(d, "round_limit", actor=args.by, task=t["id"], round=t["rounds"])
                 save_mailbox(d, t["assignee"], {
                     "id": uuid.uuid4().hex[:12], "from": args.by, "to": t["assignee"],
-                    "text": f"ROUND LIMIT по задаче {t['id']}: {MAX_ROUNDS} провала приёмки — задача передана лиду (release или разбор вручную)",
+                    "text": f"ROUND LIMIT on task {t['id']}: the limit of {MAX_ROUNDS} failed verification rounds is reached, the task goes to the lead (release or handle manually)",
                     "ts": now_iso(), "read": False})
                 log_event(d, "message_sent", actor=args.by, to=t["assignee"], task=t["id"])
-                print(f"ROUND LIMIT: задача {t['id']} → blocked, разбирает лид")
+                print(f"ROUND LIMIT: task {t['id']} -> blocked, the lead takes over")
                 return
             t["rounds"] += 1
             t["last_event_ts"] = now_iso()
             write_atomic(d / "tasks.json", data)
             log_event(d, "verify_fail", actor=args.by, task=t["id"], round=t["rounds"])
-            # feedback goes to the executor's mailbox — exit-2 loop: work not accepted
+            # feedback goes to the executor's mailbox: exit-2 loop, work not accepted
             save_mailbox(d, t["assignee"], {
                 "id": uuid.uuid4().hex[:12], "from": args.by, "to": t["assignee"],
-                "text": f"VERIFY FAIL по задаче {t['id']} (круг {t['rounds']}): {args.feedback}",
+                "text": f"VERIFY FAIL on task {t['id']} (round {t['rounds']}): {args.feedback}",
                 "ts": now_iso(), "read": False})
             log_event(d, "message_sent", actor=args.by, to=t["assignee"], task=t["id"])
-            print(f"FAIL зафиксирован, фидбек в mailbox {t['assignee']}, круг {t['rounds']}")
+            print(f"FAIL recorded, feedback sent to mailbox {t['assignee']}, round {t['rounds']}")
 
 
 # ---------------------------------------------------------------- release / tokens
 
 def cmd_release(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("агента", args.by)
+    check_name("agent", args.by)
     d = team_dir(root, args.team)
     with StateLock(d, f"release:{args.by}"):
         data = read_json(d / "tasks.json")
         t = find_task(data, args.task)
         if t["status"] == "completed":
-            sys.exit(f"задача {t['id']} завершена — release не нужен")
+            sys.exit(f"task {t['id']} is completed, release is not needed")
         t.update(status="pending", claimed_at=None, last_event_ts=now_iso())
         write_atomic(d / "tasks.json", data)
         log_event(d, "task_released", actor=args.by, task=t["id"], rounds=t["rounds"])
-    print(f"OK release {t['id']} → pending (кругов было: {t['rounds']})")
+    print(f"OK release {t['id']} -> pending (rounds so far: {t['rounds']})")
 
 
 def cmd_tokens(args) -> None:
     root = Path(args.project_root).resolve()
     if args.by:
-        check_name("агента", args.by)
+        check_name("agent", args.by)
     d = team_dir(root, args.team)
     if not args.add:
         data = read_json(d / "tasks.json")
         t = find_task(data, args.task)
-        print(f"{t['id']}: {t.get('tokens', 0)} токенов")
+        print(f"{t['id']}: {t.get('tokens', 0)} tokens")
         return
     with StateLock(d, f"tokens:{args.by or 'lead'}"):  # read and write under a single lock
         data = read_json(d / "tasks.json")
@@ -270,27 +270,27 @@ def cmd_tokens(args) -> None:
         write_atomic(d / "tasks.json", data)
     log_event(d, "task_tokens", actor=args.by or "lead", task=t["id"], add=args.add,
               total=t["tokens"])
-    print(f"OK +{args.add} → {t['tokens']} у задачи {t['id']}")
+    print(f"OK +{args.add} -> {t['tokens']} on task {t['id']}")
 
 
 # ---------------------------------------------------------------- message / read
 
 def cmd_message(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("агента", args.to)
-    check_name("агента", args.by)
+    check_name("agent", args.to)
+    check_name("agent", args.by)
     d = team_dir(root, args.team)
     with StateLock(d, f"message:{args.by}"):
         save_mailbox(d, args.to, {
             "id": uuid.uuid4().hex[:12], "from": args.by, "to": args.to,
             "text": args.text, "ts": now_iso(), "read": False})
         log_event(d, "message_sent", actor=args.by, to=args.to)
-    print(f"OK сообщение {args.by} → {args.to}")
+    print(f"OK message {args.by} -> {args.to}")
 
 
 def cmd_read(args) -> None:
     root = Path(args.project_root).resolve()
-    check_name("агента", args.for_)
+    check_name("agent", args.for_)
     d = team_dir(root, args.team)
     mb = d / "inbox" / f"{args.for_}.json"
     if not mb.exists():
@@ -311,17 +311,17 @@ def cmd_status(args) -> None:
     root = Path(args.project_root).resolve()
     d = team_dir(root, args.team)
     data = read_json(d / "tasks.json")
-    print(f"команда {data['team']} (создана {data['created']})")
+    print(f"team {data['team']} (created {data['created']})")
     for t in data["tasks"]:
-        print(f"  {t['id']:<18} {t['status']:<12} провал.приёмки {t['rounds']}  "
-              f"токены {t.get('tokens', 0):<7} {t['assignee']:<14} {t['title']}")
+        print(f"  {t['id']:<18} {t['status']:<12} failed rounds {t['rounds']}  "
+              f"tokens {t.get('tokens', 0):<7} {t['assignee']:<14} {t['title']}")
     inbox = d / "inbox"
     if inbox.exists():
         for mb in sorted(inbox.glob("*.json")):
             box = read_json(mb)
             n = sum(1 for m in box["messages"] if not m["read"])
             if n:
-                print(f"  mailbox {mb.stem}: {n} непрочитанных")
+                print(f"  mailbox {mb.stem}: {n} unread")
 
 
 # ---------------------------------------------------------------- langfuse
@@ -345,7 +345,7 @@ def _post(url: str, payload: dict, pub: str, sec: str) -> None:
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            print(f"HTTP {resp.status} ← .../{url.split('/api/')[-1]}")
+            print(f"HTTP {resp.status} <- .../{url.split('/api/')[-1]}")
     except urllib.error.HTTPError as e:
         print(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:400]}")
         sys.exit(1)
@@ -360,7 +360,7 @@ def cmd_langfuse(args) -> None:
     sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
     host = os.environ.get("LANGFUSE_HOST", "http://127.0.0.1:3100").strip().rstrip("/")
     if not pub or not sec:
-        sys.exit("нет LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY в окружении")
+        sys.exit("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY are not set in the environment")
     data = read_json(d / "tasks.json")
     events, bad = [], 0
     for line in (d / "events.jsonl").read_text(encoding="utf-8").splitlines():
@@ -371,7 +371,7 @@ def cmd_langfuse(args) -> None:
         except json.JSONDecodeError:
             bad += 1  # a corrupt log line must not crash the upload
     if bad:
-        print(f"предупреждение: пропущено битых строк журнала: {bad}")
+        print(f"warning: skipped corrupt log lines: {bad}")
 
     trace_id = hex32(f"{root}|{args.team}")
     team_end = max((t["completed_at"] or t["last_event_ts"] or now_iso()) for t in data["tasks"])
@@ -421,8 +421,8 @@ def cmd_langfuse(args) -> None:
                   pub, sec)
     print(f"OK: trace {trace_id}, {len(spans)} span, "
           f"{sum(1 for e in events if e['type'].startswith('verify'))} score, "
-          f"токенов {sum(t.get('tokens', 0) for t in data['tasks'])}")
-    print(f"трейс: {host}/trace/{trace_id}")
+          f"tokens {sum(t.get('tokens', 0) for t in data['tasks'])}")
+    print(f"trace: {host}/trace/{trace_id}")
 
 
 # ---------------------------------------------------------------- main
@@ -437,46 +437,46 @@ def main() -> None:
         sp.add_argument("--project-root", default=".")
         return sp
 
-    sp = add("init", "создать команду из файла задач")
+    sp = add("init", "create a team from a tasks file")
     sp.add_argument("--tasks", required=True)
     sp.set_defaults(fn=cmd_init)
 
-    sp = add("claim", "забрать задачу (под общим локом состояния)")
+    sp = add("claim", "claim a task (under the shared state lock)")
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", required=True)
     sp.set_defaults(fn=cmd_claim)
 
-    sp = add("verify", "вердикт гейта приёмки")
+    sp = add("verify", "record an acceptance gate verdict")
     sp.add_argument("--task", required=True)
     sp.add_argument("--verdict", choices=["pass", "fail"], required=True)
     sp.add_argument("--feedback", default="")
     sp.add_argument("--by", default="verifier")
     sp.set_defaults(fn=cmd_verify)
 
-    sp = add("release", "вернуть задачу в pending (после ROUND LIMIT или сбоя)")
+    sp = add("release", "return a task to pending (after ROUND LIMIT or a failure)")
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", default="lead")
     sp.set_defaults(fn=cmd_release)
 
-    sp = add("tokens", "учесть токены задачи (--add N) или посмотреть")
+    sp = add("tokens", "add tokens to a task (--add N) or show them")
     sp.add_argument("--task", required=True)
     sp.add_argument("--add", type=int, default=0)
     sp.add_argument("--by", default="")
     sp.set_defaults(fn=cmd_tokens)
 
-    sp = add("message", "сообщение агенту в mailbox")
+    sp = add("message", "send a message to an agent's mailbox")
     sp.add_argument("--to", required=True)
     sp.add_argument("--by", required=True)
     sp.add_argument("--text", required=True)
     sp.set_defaults(fn=cmd_message)
 
-    sp = add("read", "прочитать свои непрочитанные")
+    sp = add("read", "read your unread messages")
     sp.add_argument("--for", dest="for_", required=True)
     sp.set_defaults(fn=cmd_read)
 
-    add("status", "статус задач и mailbox").set_defaults(fn=cmd_status)
+    add("status", "status of tasks and mailboxes").set_defaults(fn=cmd_status)
 
-    sp = add("langfuse", "выгрузить прогон в Langfuse")
+    sp = add("langfuse", "upload the run to Langfuse")
     sp.add_argument("--name", default="")
     sp.set_defaults(fn=cmd_langfuse)
 
