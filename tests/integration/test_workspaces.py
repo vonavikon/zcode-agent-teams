@@ -54,7 +54,8 @@ class TestWorktreeCreation:
         claim = engine.op_claim(git_project, "t", "a", "w1")
         ws = Path(claim["workspace"])
         assert ws.exists() and (ws / ".git").exists()
-        assert ws.parent.parent.parent.name == "t"  # .agent-teams/t/tasks/a/workspace
+        # .agent-teams/t/tasks/a/attempts/1/workspace (per-attempt dirs)
+        assert "attempts" in ws.parts and ws.parts[-2] == "1"
         row = engine.op_status(git_project, "t")["tasks"][0]
         assert claim["execution_token"]
         # the branch exists and records the base commit
@@ -79,7 +80,10 @@ class TestWorktreeCreation:
         engine.op_verify(git_project, "t", "a", "fail", "f2", lead)
         engine.op_release(git_project, "t", "a", lead)
         second = engine.op_claim(git_project, "t", "a", "w2")
-        assert second["workspace"] == first["workspace"]
+        # a new attempt gets a fresh directory (fencing), grown from the
+        # last submitted checkpoint: the committed draft carries over
+        assert second["workspace"] != first["workspace"]
+        assert Path(second["workspace"]).parts[-2] == "2"
         assert (Path(second["workspace"]) / "out" / "a.md").read_text(
             encoding="utf-8") == "draft"
 

@@ -82,6 +82,12 @@ Mailbox: `message`, `read`. All commands take `--project-root`.
 
 ## Rules for the lead
 
+- Call `team.py recover --team <id> --lead-token <tok>` in your loop:
+  every time a teammate notification arrives or you are about to wait,
+  recover first. It requeues tasks of silent executors (heartbeat and
+  execution timeouts), fences their tokens and quarantines their
+  workspaces; it is idempotent and a no-op when everyone is alive.
+
 - The lead does not implement: it plans, verifies and integrates.
 - The lead token is printed once; if lost, start a new run. Never paste
   it into teammate prompts.

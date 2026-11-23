@@ -59,25 +59,61 @@ def is_git_project(root: Path) -> bool:
         return False
 
 
-def workspace_dir(team_root: Path, task_id: str) -> Path:
+def workspace_dir(team_root: Path, task_id: str, attempt: int = 1) -> Path:
+    """Per-attempt workspace (hardening spec 3.3): every execution attempt
+    gets its own directory, so a fenced-out executor cannot touch the new
+    attempt's files."""
     if not task_id or "/" in task_id or ".." in task_id:
         raise UsageError(f"invalid task id for a workspace path: {task_id!r}")
-    return team_root / "tasks" / task_id / "workspace"
+    attempt = max(1, int(attempt))
+    return team_root / "tasks" / task_id / "attempts" / str(attempt) / "workspace"
 
 
-def branch_name(team: str, task_id: str) -> str:
-    return f"agent-teams/{team}/{task_id}"
+def attempt_dir(team_root: Path, task_id: str, attempt: int) -> Path:
+    return workspace_dir(team_root, task_id, attempt).parent
+
+
+def quarantine_dir(team_root: Path, task_id: str, attempt: int) -> Path:
+    stamp = now_iso_filesafe()
+    return team_root / "tasks" / task_id / "quarantine" / f"{attempt}-{stamp}"
+
+
+def now_iso_filesafe() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def quarantine_attempt(team_root: Path, task_id: str,
+                        attempt: int) -> Path | None:
+    """Move a fenced attempt aside; its files stay inspectable for manual
+    salvage but are never reused as an active workspace."""
+    import shutil
+
+    source = attempt_dir(team_root, task_id, attempt)
+    if not source.exists():
+        return None
+    target = quarantine_dir(team_root, task_id, attempt)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    return target
+
+
+def branch_name(team: str, task_id: str, attempt: int = 1) -> str:
+    """Per-attempt branch: attempts never share mutable refs either."""
+    return f"agent-teams/{team}/{task_id}/a{max(1, int(attempt))}"
 
 
 def create_workspace(project_root: Path, team_root: Path, team: str,
-                     task_id: str, base_commit: str | None = None) -> WorkspaceInfo:
-    """Create (or reuse) the worktree of a task; returns its info."""
+                     task_id: str, base_commit: str | None = None,
+                     attempt: int = 1) -> WorkspaceInfo:
+    """Create the per-attempt worktree of a task; returns its info."""
     if not is_git_project(project_root):
         raise ExternalError(
             f"no git repository at {project_root}: configure workspace "
             "'shared' or run outside git")
-    target = workspace_dir(team_root, task_id)
-    branch = branch_name(team, task_id)
+    target = workspace_dir(team_root, task_id, attempt)
+    branch = branch_name(team, task_id, attempt)
     if base_commit is None:
         base_commit = _git(["rev-parse", "HEAD"], project_root).stdout.strip()
     if target.exists() and (target / ".git").exists():
@@ -178,14 +214,22 @@ def write_set_violations(diff: WorkspaceDiff, files_write: list[str]) -> list[st
 
 
 def remove_workspace(project_root: Path, team_root: Path, team: str,
-                     task_id: str, *, keep_branch: bool = False) -> None:
-    """Remove the worktree and (optionally) its branch after integration."""
-    target = workspace_dir(team_root, task_id)
+                     task_id: str, *, keep_branch: bool = False,
+                     attempt: int = 1) -> None:
+    """Remove the worktree and (optionally) its branches after integration."""
+    target = workspace_dir(team_root, task_id, attempt)
     if target.exists():
         _git(["worktree", "remove", "--force", str(target)], project_root)
     if not keep_branch:
-        subprocess.run(["git", "branch", "-D", branch_name(team, task_id)],
-                       cwd=str(project_root), capture_output=True, text=True)
+        # all attempt branches of the task
+        proc = subprocess.run(
+            ["git", "for-each-ref", f"refs/heads/agent-teams/{team}/{task_id}",
+             "--format=%(refname:short)"],
+            cwd=str(project_root), capture_output=True, text=True, timeout=30)
+        for branch in proc.stdout.split():
+            subprocess.run(["git", "branch", "-D", branch],
+                           cwd=str(project_root), capture_output=True,
+                           text=True)
 
 
 def submission_ref(team: str, task_id: str, submission_id: str) -> str:
