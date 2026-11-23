@@ -470,7 +470,8 @@ def _build_submission(store: Store, d: Path, team: str, task: dict) -> dict:
 
 def op_verify(root: Path, team: str, task_id: str, verdict: str,
               feedback: str, lead_token: str, *, by: str = "verifier",
-              report: dict | None = None) -> dict:
+              report: dict | None = None,
+              override_reason: str = "") -> dict:
     if verdict not in ("pass", "fail"):
         raise UsageError("verdict must be pass or fail")
     store, d, team_row = _open_team(root, team)
@@ -514,6 +515,29 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                 finally:
                     if snapshot_dir is not None:
                         workspaces.drop_snapshot(project_root, d, task_id)
+                # Verification enforcement (hardening spec 4.2): a PASS
+                # needs a structured report bound to this submission, or
+                # an explicit lead override with a reason (audited).
+                override = False
+                if verdict == "pass":
+                    if submission is None or not submission.get("commit_sha"):
+                        pass  # shared mode: no snapshot to bind a report to
+                    elif report is None:
+                        if override_reason.strip():
+                            override = True
+                        else:
+                            raise UsageError(
+                                "VERIFICATION_REPORT_MISSING: a PASS "
+                                "requires --report (the verifier's JSON) or "
+                                "--override-reason with an explicit lead "
+                                "decision",
+                                detail={"code": "VERIFICATION_REPORT_MISSING"})
+                    else:
+                        from .verification import validate_report
+
+                        validate_report(report, task=task,
+                                        submission=submission)
+
                 if verdict == "pass" and forced:
                     verdict = "fail"
                     feedback = ("Quality Gate override: " + "; ".join(forced))
@@ -524,6 +548,12 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                 if verdict == "pass" and submission is not None:
                     store.update_submission(
                         submission["id"], verification_status="passed",
+                        verifier=by,
+                        report=report or {"override_reason": override_reason}
+                        if override else (report or {}))
+                if override and submission is not None:
+                    store.update_submission(
+                        submission["id"], verification_status="overridden",
                         verifier=by)
 
                 if verdict == "pass":
@@ -532,6 +562,15 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                         "task_id": task_id, "attempt": attempt_no, "verifier": by,
                         "actor": "lead", "verdict": "pass",
                         "report": report or {}, "feedback": ""})
+                    if override:
+                        recorded.append(eventlog.append_event(
+                            store.conn, event_type="verification_passed",
+                            team_id=team, run_id=run_id, task_id=task_id,
+                            actor_id="lead",
+                            metadata={"override": True,
+                                      "override_reason": override_reason,
+                                      "submission_id":
+                                          (submission or {}).get("id")}))
                     accepted_sha = (submission or {}).get("commit_sha") or None
                     if accepted_sha:
                         store.update_task(team, task_id,

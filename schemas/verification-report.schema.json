@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vonavikon/zcode-agent-teams/schemas/verification-report.schema.json",
+  "title": "agent-teams verification report",
+  "description": "Structured verdict of an independent verifier for one task submission (hardening spec 4.1). The engine validates structure and cross-checks team_id, task_id, submission_id, commit_sha and criterion coverage before accepting a PASS. Manual criteria may justify with reason alone; criteria that analyze content need file:line evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "team_id", "task_id", "submission_id",
+               "commit_sha", "verifier", "criteria", "verdict"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "team_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "submission_id": {"type": "string", "minLength": 1},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["subagent", "human"]}
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion_id", "status"],
+        "properties": {
+          "criterion_id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["pass", "fail"]},
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "line_start": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+                "claim": {"type": "string"}
+              }
+            }
+          },
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "verdict": {"enum": ["pass", "fail"]}
+  }
+}

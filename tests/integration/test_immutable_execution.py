@@ -45,6 +45,11 @@ def task(tid, assignee="w1", **kw):
     return base
 
 
+def pass_ok(project, team, tid, lead, by="v", reason="test acceptance"):
+    return engine.op_verify(project, team, tid, "pass", "", lead, by=by,
+                            override_reason=reason)
+
+
 def init_team(project, tasks, team="t"):
     spec_file = project / "spec.json"
     spec_file.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
@@ -139,8 +144,7 @@ class TestImmutableSnapshot:
         # the executor breaks the LIVE tree after submit: the snapshot
         # must still verify clean
         (ws / "out" / "a.md").unlink()
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "",
-                                   created["lead_token"])
+        outcome = pass_ok(git_project, "t", "a", created["lead_token"])
         assert outcome["status"] == "completed"
 
     def test_branch_moved_after_pass_not_integrated(self, git_project):
@@ -148,7 +152,7 @@ class TestImmutableSnapshot:
         lead = created["lead_token"]
         claim, ws = claim_and_commit(git_project, "t", "a")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         # an unverified commit lands on the task branch after PASS
         (ws / "out" / "smuggled.md").write_text("not verified\n",
                                                 encoding="utf-8")
@@ -165,7 +169,7 @@ class TestImmutableSnapshot:
         lead = created["lead_token"]
         claim, ws = claim_and_commit(git_project, "t", "a")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         with open_store(git_project / ".agent-teams" / "t") as store:
             with store.transaction():
                 store.update_task("t", "a",
@@ -195,7 +199,7 @@ class TestApplyGuards:
         lead = created["lead_token"]
         claim, _ = claim_and_commit(git_project, "t", "a")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         engine.op_integrate(git_project, "t", lead)
         (git_project / "dirty.txt").write_text("x\n", encoding="utf-8")
         with pytest.raises(StateRejected,
@@ -209,7 +213,7 @@ class TestApplyGuards:
         lead = created["lead_token"]
         claim, _ = claim_and_commit(git_project, "t", "a")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         engine.op_integrate(git_project, "t", lead)
         (git_project / "moved.txt").write_text("x\n", encoding="utf-8")
         git(git_project, "add", "-A")
@@ -230,7 +234,7 @@ class TestApplyGuards:
             claim, _ = claim_and_commit(git_project, "t", tid)
             engine.op_submit(git_project, "t", tid, "w1",
                              claim["execution_token"])
-            engine.op_verify(git_project, "t", tid, "pass", "", lead)
+            pass_ok(git_project, "t", tid, lead)
         result = engine.op_integrate(git_project, "t", lead)
         order = [entry["task"] for entry in result["merged"]]
         assert order.index("a") < order.index("b")
