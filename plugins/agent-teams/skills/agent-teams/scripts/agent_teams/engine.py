@@ -816,6 +816,65 @@ def op_integrate(root: Path, team: str, lead_token: str,
         store.close()
 
 
+# ---------------------------------------------------------------- metrics
+
+
+def op_metrics(root: Path, team: str) -> dict:
+    from .observability import collect_metrics
+
+    store, d, _team = _open_team(root, team)
+    try:
+        run = _current_run(store, team)
+        return collect_metrics(store, team, run_id=run["id"] if run else None)
+    finally:
+        store.close()
+
+
+def op_usage(root: Path, team: str, task_id: str, agent_id: str,
+             notification_path: Path) -> dict:
+    """Record token usage from a subagent notification file (spec 9.1)."""
+    import hashlib
+
+    from .observability import parse_notification, record_usage
+
+    text = Path(notification_path).read_text(encoding="utf-8")
+    record = parse_notification(text)
+    if record is None:
+        raise UsageError(
+            "no <usage> block found in the notification: nothing was "
+            "recorded (the runtime did not provide the numbers)")
+    record["dedup_key"] = hashlib.sha1(
+        f"{team}|{task_id}|{agent_id}|{text[:400]}".encode()).hexdigest()
+    store, d, _team = _open_team(root, team)
+    try:
+        with StateLock(d, f"usage:{agent_id}"):
+            task = store.get_task(team, task_id)
+            if task is None:
+                raise NotFoundError(f"task not found: {task_id}")
+            run = _current_run(store, team)
+            with store.transaction():
+                row_id = record_usage(store, team, run["id"] if run else "",
+                                      task_id, agent_id, record)
+                if row_id is None:
+                    return {"recorded": False, "reason": "duplicate"}
+                store.update_task(team, task_id,
+                                  tokens=task["tokens"]
+                                  + (record.get("total_tokens") or 0))
+                eventlog.append_event(
+                    store.conn, event_type="token_usage_recorded",
+                    team_id=team, run_id=run["id"] if run else "",
+                    task_id=task_id, actor_id=agent_id,
+                    metadata={"add": record.get("total_tokens"),
+                              "source": "notification"})
+            _refresh_mirrors(store, team)
+            return {"recorded": True,
+                    "total_tokens": record.get("total_tokens"),
+                    "tool_uses": record.get("tool_uses"),
+                    "duration_ms": record.get("duration_ms")}
+    finally:
+        store.close()
+
+
 # ---------------------------------------------------------------- status
 
 

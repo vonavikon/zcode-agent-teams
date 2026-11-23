@@ -79,7 +79,11 @@ def _build_payload(store: Store, team: str, run: dict, name: str,
             _attr("langfuse.observation.type", "span"),
             _attr("langfuse.trace.metadata", {
                 "team": team, "run": run["number"], "project": project_root.name,
-                "tokens_total": sum(u.get("total_tokens") or 0 for u in usage)}),
+                "tokens_total": sum(u.get("total_tokens") or 0 for u in usage),
+                "models": sorted({u.get("model") for u in usage
+                                  if u.get("model")}),
+                "cost_usd": round(sum(
+                    (u.get("cost_usd") or 0) for u in usage), 6)}),
         ],
     }]
     scores = []
