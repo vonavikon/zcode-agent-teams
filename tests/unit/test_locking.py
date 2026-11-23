@@ -106,8 +106,10 @@ class TestReadHolder:
         assert locking.read_holder(tmp_path) is None
 
     def test_holder_alive_own_pid(self, tmp_path):
-        with locking.StateLock(tmp_path, "me", "op"):
-            holder = locking.read_holder(tmp_path)
+        with locking.StateLock(tmp_path, "me", "op") as lock:
+            # holder() reads through the locking descriptor: it works while
+            # the lock is held on every platform.
+            holder = lock.holder()
             assert locking.holder_alive(holder) is True
 
     def test_holder_alive_dead_pid(self, tmp_path):
