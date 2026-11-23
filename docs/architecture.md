@@ -22,7 +22,12 @@ Team directory: `<project_root>/.agent-teams/<team>/`
     integration/workspace/  the integration gate's worktree
     tasks.json, inbox/<agent>.json, events.jsonl   v0.2-compatible mirrors
 
-Entry points: `team.py` (the engine CLI), `team_v02.py` (the legacy
+Hardening (v2.0): immutable submissions (pinned git refs + the
+submissions table), per-attempt workspaces with quarantine, an
+ephemeral verification snapshot, SHA-bound integration with separate
+apply, and a run state machine (active, integration_running,
+integration_failed, apply_pending, finished). Entry points:
+`team.py` (the engine CLI), `team_v02.py` (the legacy
 single-file engine for teams created before v0.3).
 
 ## Design rules

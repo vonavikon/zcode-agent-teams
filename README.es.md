@@ -11,9 +11,10 @@ Una adaptación del enfoque de [Claude Code Agent Teams](https://code.claude.com
 - **Máquina de estados y estado en SQLite**: cada cambio de estado de una tarea es una transición protegida con cadena de hash en `state.db`; sin actualizaciones perdidas, auditoría completa, copias y migraciones automáticas
 - **Espacios de trabajo aislados**: un worktree y una rama de git por tarea, con el commit base registrado; el trabajo sin confirmar sobrevive a caídas y releases
 - **Control de escrituras**: el diff real se compara con el `files_write` de la tarea; cualquier escritura fuera del conjunto tumba la puerta
-- **Puerta de aceptación mecánica**: el motor ejecuta los criterios que llevan comando de verificación; un criterio obligatorio fallido anula un veredicto PASS. El ejecutor nunca verifica su propio trabajo: los veredictos exigen el token del lead, los envíos el token de ejecución
-- **Puerta de integración**: las ramas aceptadas se fusionan en una rama de integración y un comando de comprobación opcional corre en el árbol fusionado; los conflictos y regresiones dejan la ejecución activa y la rama del proyecto intacta
-- **Recuperación**: leases, heartbeats, límites de reinicio, reencolado automático de ejecutores perdidos
+- **Ejecución inmutable**: el submit exige un worktree limpio, fija una instantánea inmutable (git ref + SQLite) y la verificación se hace sobre esa instantánea; lo aprobado es byte a byte lo integrado
+- **Puerta de aceptación mecánica**: el motor ejecuta los criterios con comando; un criterio obligatorio fallido anula un PASS. Un PASS exige además un informe de verificación estructurado (o un override del lead auditado). El ejecutor nunca verifica su propio trabajo: los veredictos exigen el token del lead, los envíos el token de ejecución
+- **Puerta de integración y apply**: los SHA aceptados se fusionan en orden DAG en una rama de integración con comprobación opcional; apply es un paso aparte de fast-forward que rechaza un proyecto sucio o una base movida
+- **Recuperación y fencing**: timeouts de lease, heartbeat y del intento completo; los intentos perdidos se aislan (token muerto, worktree en cuarentena conservado) y vuelven a la cola dentro de los límites
 - **Observabilidad**: tokens desde las notificaciones de los subagentes, coste con indicadores de calidad explícitos, métricas de la ejecución incluida la comparación equipo frente a un solo agente, un informe HTML autosuficiente y una exportación idempotente a Langfuse
 
 Roles: el lead es la sesión principal de ZCode; los teammates y verificadores son subagentes (los perfiles de rol están en `agents/`).

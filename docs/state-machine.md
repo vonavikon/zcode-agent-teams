@@ -24,6 +24,10 @@ Every transition (`agent_teams/statemachine.py`):
    execution token on completion/blocking, and so on),
 4. appends one hash-chained event with the actor and the reason.
 
+Run statuses (v2.0): active -> integration_running -> (failed ->
+integration_failed | ok -> apply_pending) -> finished; apply is a
+separate command and a failed apply never finishes the run.
+
 The verification limit counts failed verdicts immediately: with
 `max_verification_failures: 2` (default) the second FAIL blocks the
 task. The v0.2 engine blocked on the third FAIL; the off-by-one was

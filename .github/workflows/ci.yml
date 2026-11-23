@@ -37,6 +37,52 @@ jobs:
       - name: Run the test suite
         run: python -m pytest
 
+  schemas:
+    name: Schemas, manifests and plugin structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate JSON schemas and manifests
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          try:
+              import jsonschema
+          except ImportError:
+              sys.exit("pip install jsonschema")
+          for schema in ("schemas/tasks.schema.json",
+                         "schemas/verification-report.schema.json"):
+              data = json.loads(pathlib.Path(schema).read_text())
+              jsonschema.Draft202012Validator.check_schema(data)
+              print("schema ok:", schema)
+          plugin = json.loads(pathlib.Path(
+              "plugins/agent-teams/.zcode-plugin/plugin.json").read_text())
+          market = json.loads(pathlib.Path("marketplace.json").read_text())
+          assert plugin["version"] == market["plugins"][0]["version"] == "2.0.0"
+          print("manifests ok, version", plugin["version"])
+          required = [
+              "plugins/agent-teams/skills/agent-teams/SKILL.md",
+              "plugins/agent-teams/skills/agent-teams/scripts/team.py",
+              "plugins/agent-teams/agents/team-executor.md",
+              "plugins/agent-teams/agents/team-verifier.md",
+              "SPEC.md", "LICENSE",
+          ]
+          for path in required:
+              assert pathlib.Path(path).exists(), path
+          print("plugin structure ok:", len(required), "files")
+          PY
+      - name: Optional zcode plugins validate (non-blocking)
+        continue-on-error: true
+        run: |
+          if ! command -v zcode >/dev/null 2>&1; then
+            echo "zcode CLI not installed; skipping validation"
+            exit 0
+          fi
+          zcode plugins validate plugins/agent-teams || true
+
   min-python:
     name: Minimum Python version check
     runs-on: ubuntu-latest

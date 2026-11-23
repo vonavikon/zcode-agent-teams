@@ -4,7 +4,7 @@
     {
       "name": "agent-teams",
       "source": "./plugins/agent-teams",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "description": "Subagent teams for ZCode: isolated git worktrees per task, machine-checked acceptance criteria, an integration gate, run metrics and Langfuse export",
       "displayName": "Agent Teams",
       "displayName_i18n": {

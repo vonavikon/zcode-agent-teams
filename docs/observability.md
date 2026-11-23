@@ -9,7 +9,10 @@ Token usage comes from what the runtime actually provides:
 - `tokens --add N --model M`: manual entry,
 - absent numbers stay absent; the engine never invents values.
 
-`metrics` computes the run set: task success rate, verification pass and
+`metrics` computes the run set plus the hardening counters
+(attempts, submissions, first-submit lag, fix time, first-pass rate,
+overrides, timeouts, quarantine, integration conflicts and applies),
+with source-quality labels on the speedup comparison: task success rate, verification pass and
 fail rates, average rework rounds, average task duration, restarts and
 recovery rate, tokens per task, cost per task and per successful task,
 wall time versus the sequential estimate, and the speedup number
