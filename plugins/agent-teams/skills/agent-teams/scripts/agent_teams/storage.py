@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .errors import CorruptStateError, ExternalError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DB_FILENAME = "state.db"
 
 _MIGRATION_V1 = """
@@ -190,7 +190,31 @@ _MIGRATION_V2 = """
 ALTER TABLE teams ADD COLUMN lead_token_hash TEXT;
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_V1), (2, _MIGRATION_V2)]
+_MIGRATION_V3 = """
+CREATE TABLE IF NOT EXISTS submissions(
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  run_id TEXT,
+  task_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  commit_sha TEXT NOT NULL,
+  base_commit_sha TEXT,
+  branch TEXT,
+  created_at TEXT NOT NULL,
+  changed_files_json TEXT NOT NULL DEFAULT '[]',
+  verification_status TEXT NOT NULL DEFAULT 'pending',
+  verifier TEXT,
+  report_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_submissions_team_task
+  ON submissions(team_id, task_id, created_at);
+ALTER TABLE tasks ADD COLUMN accepted_commit_sha TEXT;
+ALTER TABLE runs ADD COLUMN integration_base_commit TEXT;
+ALTER TABLE runs ADD COLUMN integration_commit_sha TEXT;
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_V1), (2, _MIGRATION_V2),
+                                     (3, _MIGRATION_V3)]
 
 _JSON_SUFFIX = "_json"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
@@ -458,6 +482,45 @@ class Store:
                 " AND read_at IS NULL", (read_at, team_id, mid))
             changed += cursor.rowcount
         return changed
+
+    def add_submission(self, submission: dict) -> dict:
+        submission = {**submission,
+                      "created_at": submission.get("created_at", now_iso())}
+        self.run(
+            "INSERT INTO submissions(id, team_id, run_id, task_id, attempt,"
+            " commit_sha, base_commit_sha, branch, created_at,"
+            " changed_files_json, verification_status, verifier, report_json)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (submission["id"], submission["team_id"], submission.get("run_id"),
+             submission["task_id"], submission["attempt"],
+             submission["commit_sha"], submission.get("base_commit_sha"),
+             submission.get("branch"), submission["created_at"],
+             _encode(submission.get("changed_files", [])),
+             submission.get("verification_status", "pending"),
+             submission.get("verifier"),
+             _encode(submission.get("report", {}))))
+        return submission
+
+    def get_submission(self, submission_id: str) -> dict | None:
+        return self.one("SELECT * FROM submissions WHERE id = ?", (submission_id,))
+
+    def latest_submission(self, team_id: str,
+                          task_id: str) -> dict | None:
+        return self.one(
+            "SELECT * FROM submissions WHERE team_id = ? AND task_id = ?"
+            " ORDER BY created_at DESC, id DESC LIMIT 1", (team_id, task_id))
+
+    def update_submission(self, submission_id: str, **fields) -> None:
+        self._update("submissions", {"id": submission_id}, fields)
+
+    def list_submissions(self, team_id: str,
+                         task_id: str | None = None) -> list[dict]:
+        if task_id is None:
+            return self.all("SELECT * FROM submissions WHERE team_id = ?"
+                            " ORDER BY created_at, id", (team_id,))
+        return self.all("SELECT * FROM submissions WHERE team_id = ? AND"
+                        " task_id = ? ORDER BY created_at, id",
+                        (team_id, task_id))
 
     def add_attempt(self, attempt: dict) -> dict:
         attempt = {**attempt, "created_at": attempt.get("created_at", now_iso())}

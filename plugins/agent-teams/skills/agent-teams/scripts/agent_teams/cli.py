@@ -216,6 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--out", required=True)
     sp.set_defaults(fn=_cmd_report)
 
+    sp = sub.add_parser("apply", help="apply the validated integration "
+                                      "branch to the project (fast-forward)")
+    _add_common(sp)
+    sp.add_argument("--lead-token", required=True)
+    sp.set_defaults(fn=_cmd_apply)
+
     sp = sub.add_parser("langfuse", help="export the run to Langfuse")
     _add_common(sp)
     sp.add_argument("--name", default="")
@@ -342,6 +348,11 @@ def _cmd_workspace(args):
 def _cmd_report(args):
     return engine.op_report(Path(args.project_root), args.team,
                             Path(args.out))
+
+
+def _cmd_apply(args):
+    return engine.op_apply(Path(args.project_root), args.team,
+                           args.lead_token)
 
 
 def _cmd_langfuse(args):

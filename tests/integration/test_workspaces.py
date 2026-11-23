@@ -69,8 +69,10 @@ class TestWorktreeCreation:
         first = engine.op_claim(git_project, "t", "a", "w1")
         (Path(first["workspace"]) / "out" / "a.md").write_text("draft",
                                                                encoding="utf-8")
+        git(first["workspace"], "add", "-A")
+        git(first["workspace"], "commit", "-qm", "draft")
         # two failed rounds block the task; release and reclaim: the
-        # uncommitted work must survive
+        # committed work must survive
         engine.op_submit(git_project, "t", "a", "w1", first["execution_token"])
         engine.op_verify(git_project, "t", "a", "fail", "f", lead)
         engine.op_submit(git_project, "t", "a", "w1", first["execution_token"])
@@ -89,10 +91,14 @@ class TestDiffCapture:
         claim = engine.op_claim(git_project, "t", "a", "w1")
         ws = Path(claim["workspace"])
         (ws / "out" / "a.md").write_text("result\n", encoding="utf-8")
+        git(ws, "add", "-A")
+        git(ws, "commit", "-qm", "work")
         result = engine.op_submit(git_project, "t", "a", "w1",
                                   claim["execution_token"])
         assert result["changed_files"] == 1
         assert result["write_set_violations"] == []
+        assert result["submission_id"]
+        assert result["commit_sha"].startswith(git(ws, "rev-parse", "HEAD").strip()[:8])
 
     def test_writes_outside_files_write_recorded(self, git_project):
         created = init_team(git_project, [task("a", "w1")])
@@ -103,6 +109,8 @@ class TestDiffCapture:
         (ws / "src" / "engine.py").parent.mkdir(exist_ok=True)
         (ws / "src" / "engine.py").write_text("hacked\n", encoding="utf-8")
         (ws / "README.md").write_text("tampered\n", encoding="utf-8")
+        git(ws, "add", "-A")
+        git(ws, "commit", "-qm", "work with violations")
         result = engine.op_submit(git_project, "t", "a", "w1",
                                   claim["execution_token"])
         assert sorted(result["write_set_violations"]) == [
@@ -132,6 +140,8 @@ class TestDiffCapture:
             parents=True, exist_ok=True)
         (Path(claim["workspace"]) / "out" / "deep" / "file.md").write_text(
             "x", encoding="utf-8")
+        git(claim["workspace"], "add", "-A")
+        git(claim["workspace"], "commit", "-qm", "work")
         result = engine.op_submit(git_project, "t", "a", "w1",
                                   claim["execution_token"])
         assert result["write_set_violations"] == []
@@ -200,6 +210,8 @@ class TestLifecycle:
         claim = engine.op_claim(git_project, "t", "a", "w1")
         ws = Path(claim["workspace"])
         (ws / "out" / "a.md").write_text("partial\n", encoding="utf-8")
+        git(ws, "add", "-A")
+        git(ws, "commit", "-qm", "partial")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
         engine.op_verify(git_project, "t", "a", "fail", "1", lead)
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])

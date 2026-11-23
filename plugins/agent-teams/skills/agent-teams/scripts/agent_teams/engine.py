@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +27,13 @@ from .config import merge_config
 from .errors import NotFoundError, PermissionDenied, StateRejected, UsageError
 from .locking import StateLock
 from .storage import Store, now_iso, open_store
+
+import agent_teams.workspaces as _ws
+
+
+def workspaces_ref():
+    return _ws
+
 from .validation import NAME_RE, normalize_acceptance, validate_team_spec
 
 TEAMS_DIR = ".agent-teams"
@@ -192,10 +200,16 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
     else:
         result_warnings = []
 
+    run_base = None
+    if workspaces_ref().is_git_project(root):
+        run_base = workspaces_ref()._git(["rev-parse", "HEAD"],
+                                         root).stdout.strip()
+
     d.mkdir(parents=True)
     with open_store(d) as store:
         with StateLock(d, "init:lead"), store.transaction():
             store.create_team({"id": team, "project_root": str(root),
+                               "base_commit": run_base,
                                "config": config, "spec": spec,
                                "created_at": now_iso()})
             store.update_team(team, lead_token_hash=_sha256(lead_token))
@@ -230,7 +244,7 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
             _recorded(store, team, recorded)
         _refresh_mirrors(store, team)
     return {"team": team, "tasks": len(spec["tasks"]), "dir": str(d),
-            "lead_token": lead_token,
+            "lead_token": lead_token, "run_base": run_base,
             "warnings": [i.message for i in result.warnings] + result_warnings}
 
 
@@ -250,7 +264,14 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
             task = store.get_task(team, task_id)
             if task is None:
                 raise NotFoundError(f"task not found: {task_id}")
-            workspace = _prepare_workspace(root, d, team, task, config)
+            checkpoint = None
+            last = store.latest_submission(team, task_id)
+            if last and last.get("verification_status") in ("passed",
+                                                            "failed"):
+                checkpoint = last["commit_sha"]
+            workspace = _prepare_workspace(root, d, team, task, config,
+                                           run_base=team_row.get("base_commit"),
+                                           checkpoint=checkpoint)
             with store.transaction():
                 recorded = []
                 agent = store.get_agent(team, by)
@@ -312,7 +333,8 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
 
 
 def _prepare_workspace(root: Path, d: Path, team: str, task: dict,
-                       config: dict):
+                       config: dict, *, run_base: str | None = None,
+                       checkpoint: str | None = None):
     """Create or reuse the task worktree when the team uses isolation.
 
     Runs under the state lock but outside the SQLite transaction: git is
@@ -331,14 +353,23 @@ def _prepare_workspace(root: Path, d: Path, team: str, task: dict,
         # Reuse: crash recovery or a repeated claim after release.
         return workspaces.WorkspaceInfo(task["workspace_path"], task["branch"],
                                         task["base_commit"])
-    return workspaces.create_workspace(
-        project_root, d, team, task["id"], task.get("base_commit"))
+    # New worktree grows from the run base, or from the task's last
+    # submitted checkpoint when one exists (a rework attempt continues
+    # from verified work, not from a stale executor's leftovers).
+    base = task.get("base_commit") or checkpoint or run_base
+    return workspaces.create_workspace(project_root, d, team, task["id"], base)
 
 
 # ---------------------------------------------------------------- submit
 
 
 def op_submit(root: Path, team: str, task_id: str, by: str, token: str) -> dict:
+    """Submit for verification: clean worktree only, immutable snapshot.
+
+    The accepted-for-verification artifact is the committed HEAD, pinned
+    with a git ref and recorded in SQLite. Uncommitted files can no
+    longer pass the gate and then vanish from the integration.
+    """
     store, d, _team = _open_team(root, team)
     try:
         with StateLock(d, f"submit:{by}"):
@@ -352,59 +383,88 @@ def op_submit(root: Path, team: str, task_id: str, by: str, token: str) -> dict:
                 raise PermissionDenied(
                     "invalid or stale execution token (the current attempt's "
                     "token is printed once by claim)")
-            diff, violations = _capture_task_diff(task)
+
+            submission = _build_submission(store, d, team, task)
             with store.transaction():
                 recorded = []
+                run_id = _current_run(store, team)["id"]
                 statemachine.apply_transition(
                     store.conn, task, statemachine.TaskStatus.AWAITING_VERIFICATION,
                     event_type="task_submitted",
-                    run_id=_current_run(store, team)["id"], actor_id=by,
-                    initiator=statemachine.EXECUTOR, timestamp=now_iso())
+                    run_id=run_id, actor_id=by,
+                    initiator=statemachine.EXECUTOR, timestamp=now_iso(),
+                    metadata={"submission_id": submission["id"]})
                 recorded.append(_last_event(store, team))
-                fields = {}
-                if diff is not None:
-                    fields["head_commit"] = diff.head_commit
-                    fields["metadata"] = {**task.get("metadata", {}),
-                                          "changed_files": list(diff.changed),
-                                          "workspace_violations": violations,
-                                          "uncommitted_changes":
-                                              diff.has_uncommitted}
-                if fields:
-                    store.update_task(team, task_id, **fields)
-                if violations:
+                store.add_submission({**submission, "run_id": run_id})
+                store.update_task(team, task_id,
+                                  head_commit=submission["commit_sha"],
+                                  metadata={**task.get("metadata", {}),
+                                            "changed_files":
+                                                submission["changed_files"],
+                                            "workspace_violations":
+                                                submission["violations"],
+                                            "submission_id": submission["id"]})
+                if submission["violations"]:
                     recorded.append(eventlog.append_event(
                         store.conn, event_type="workspace_conflict",
-                        team_id=team, run_id=_current_run(store, team)["id"],
-                        task_id=task_id, actor_id=by,
-                        metadata={"violations": violations}))
+                        team_id=team, run_id=run_id, task_id=task_id,
+                        actor_id=by,
+                        metadata={"violations": submission["violations"]}))
                 store.update_agent(team, by, status="waiting_verification",
                                    current_task=task_id)
                 _recorded(store, team, recorded)
                 _refresh_mirrors(store, team)
             result = {"task": task_id, "status": "awaiting_verification",
                       "by": by}
-            if diff is not None:
-                result["changed_files"] = len(diff.changed)
-                result["write_set_violations"] = violations
+            if submission["commit_sha"]:
+                result.update(submission_id=submission["id"],
+                              commit_sha=submission["commit_sha"],
+                              changed_files=len(submission["changed_files"]),
+                              write_set_violations=submission["violations"])
             return result
     finally:
         store.close()
 
 
-def _capture_task_diff(task: dict):
-    """Diff of the task worktree versus its base, plus write-set violations.
-
-    Returns (None, []) for teams without workspace isolation.
-    """
+def _build_submission(store: Store, d: Path, team: str, task: dict) -> dict:
+    """Validate the worktree and build the immutable submission record."""
     from . import workspaces
 
     ws_path = task.get("workspace_path")
     base = task.get("base_commit")
+    common = {"team_id": team, "task_id": task["id"], "attempt": task["attempt"],
+              "id": uuid.uuid4().hex}
     if not ws_path or not base or not Path(ws_path).exists():
-        return None, []
-    diff = workspaces.capture_diff(Path(ws_path), base)
+        # Shared mode: no git, no snapshot; the weaker contract is warned
+        # about at init and documented.
+        return {**common, "commit_sha": "", "base_commit_sha": None,
+                "branch": None, "changed_files": [], "violations": []}
+
+    ws = Path(ws_path)
+    project_root = Path(d).parents[1]
+    dirty = workspaces.dirty_entries(ws)
+    if dirty:
+        raise StateRejected(
+            "SUBMIT_REJECTED_DIRTY_WORKTREE: commit your work first, then "
+            "resubmit. Uncommitted files:\n  "
+            + "\n  ".join(dirty[:20])
+            + (f"\n  ... and {len(dirty) - 20} more" if len(dirty) > 20 else ""),
+            detail={"code": "SUBMIT_REJECTED_DIRTY_WORKTREE", "files": dirty})
+    head = workspaces.head_sha(ws)
+    if not workspaces.is_ancestor(project_root, base, head):
+        raise StateRejected(
+            f"SUBMIT_REJECTED_DETACHED_HEAD: HEAD {head[:12]} is not a "
+            f"descendant of the task base {base[:12]}; rebase or redo the "
+            "work on top of the task base",
+            detail={"code": "SUBMIT_REJECTED_DETACHED_HEAD", "head": head,
+                    "base": base})
+    diff = workspaces.capture_diff(ws, base)
     violations = workspaces.write_set_violations(diff, task["files_write"])
-    return diff, violations
+    workspaces.pin_submission(project_root, team, task["id"], common["id"],
+                              head)
+    return {**common, "commit_sha": head, "base_commit_sha": base,
+            "branch": task.get("branch"),
+            "changed_files": list(diff.changed), "violations": violations}
 
 
 # ---------------------------------------------------------------- verify
@@ -436,11 +496,26 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
 
                 # Machine gate (spec 7.2): required command-backed criteria
                 # and write-set violations block a PASS no matter who says
-                # otherwise; the verdict is overridden to FAIL.
-                from . import quality
+                # otherwise; the verdict is overridden to FAIL. Checks run
+                # against the immutable submission snapshot, never against
+                # the executor's live worktree (hardening spec 2.3).
+                from . import quality, workspaces
 
-                forced, criteria_report = quality.forced_failures(
-                    task, Path(root).resolve())
+                submission = store.latest_submission(team, task_id)
+                snapshot_task = task
+                snapshot_dir = None
+                project_root = Path(team_row["project_root"])
+                if submission and submission.get("commit_sha"):
+                    snapshot_dir = workspaces.checkout_snapshot(
+                        project_root, d, task_id, submission["commit_sha"])
+                    snapshot_task = {**task,
+                                     "workspace_path": str(snapshot_dir)}
+                try:
+                    forced, criteria_report = quality.forced_failures(
+                        snapshot_task, project_root)
+                finally:
+                    if snapshot_dir is not None:
+                        workspaces.drop_snapshot(project_root, d, task_id)
                 if verdict == "pass" and forced:
                     verdict = "fail"
                     feedback = ("Quality Gate override: " + "; ".join(forced))
@@ -448,18 +523,30 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                 report.setdefault("criteria", criteria_report)
                 report.setdefault("forced_failures", forced)
 
+                if verdict == "pass" and submission is not None:
+                    store.update_submission(
+                        submission["id"], verification_status="passed",
+                        verifier=by)
+
                 if verdict == "pass":
                     store.add_attempt({
                         "id": uuid.uuid4().hex, "team_id": team, "run_id": run_id,
                         "task_id": task_id, "attempt": attempt_no, "verifier": by,
                         "actor": "lead", "verdict": "pass",
                         "report": report or {}, "feedback": ""})
+                    accepted_sha = (submission or {}).get("commit_sha") or None
+                    if accepted_sha:
+                        store.update_task(team, task_id,
+                                          accepted_commit_sha=accepted_sha)
                     statemachine.apply_transition(
                         store.conn, task, statemachine.TaskStatus.COMPLETED,
                         event_type="verification_passed", run_id=run_id,
                         actor_id=by, initiator=statemachine.GATE,
                         timestamp=now_iso(),
-                        metadata={"attempt": attempt_no})
+                        metadata={"attempt": attempt_no,
+                                  "accepted_commit_sha": accepted_sha,
+                                  "submission_id":
+                                      (submission or {}).get("id")})
                     recorded.append(_last_event(store, team))
                     recorded.append(eventlog.append_event(
                         store.conn, event_type="task_completed", team_id=team,
@@ -470,6 +557,10 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                     outcome = {"task": task_id, "status": "completed",
                                "failed_rounds": task["verification_failures"]}
                 else:
+                    if submission is not None:
+                        store.update_submission(
+                            submission["id"], verification_status="failed",
+                            verifier=by)
                     failures = task["verification_failures"] + 1
                     store.add_attempt({
                         "id": uuid.uuid4().hex, "team_id": team, "run_id": run_id,
@@ -741,15 +832,24 @@ def op_read(root: Path, team: str, agent: str) -> list[dict]:
 # ---------------------------------------------------------------- integrate
 
 
+def _integration_order(store: Store, team: str) -> list[dict]:
+    """Accepted tasks in topological order of their dependencies."""
+    from .validation import topological_order
+
+    tasks = store.list_tasks(team)
+    order = topological_order(tasks) or sorted(t["id"] for t in tasks)
+    by_id = {t["id"]: t for t in tasks}
+    return [by_id[tid] for tid in order]
+
+
 def op_integrate(root: Path, team: str, lead_token: str,
                  check_command: str = "", *, apply: bool = False) -> dict:
-    """Integration gate (spec 7.3): merge accepted branches, run checks.
-
-    Individual PASS of every task is not enough: the merged result must
-    also build cleanly. On a conflict or a failed check the run stays
-    active and nothing is applied to the project branch.
+    """Integration gate (hardening spec 5): merge the ACCEPTED commit SHAs
+    in DAG order into a fresh integration branch, run the check command
+    there. Branches are mutable; only the pinned SHA that passed
+    verification may be integrated. Apply is a separate command.
     """
-    from . import quality
+    from . import quality, workspaces
 
     store, d, team_row = _open_team(root, team)
     try:
@@ -763,9 +863,8 @@ def op_integrate(root: Path, team: str, lead_token: str,
                     + ", ".join(unfinished))
             run = _current_run(store, team)
             run_id = run["id"] if run else ""
-            branches = [t["branch"] for t in tasks if t.get("branch")]
-            if not branches:
-                # shared workspaces: nothing to merge, finish the run
+            git_tasks = [t for t in tasks if t.get("accepted_commit_sha")]
+            if not git_tasks:
                 with store.transaction():
                     store.update_run(run_id, status="finished",
                                      finished_at=now_iso())
@@ -774,11 +873,38 @@ def op_integrate(root: Path, team: str, lead_token: str,
                         run_id=run_id, actor_id="lead",
                         metadata={"mode": "shared"})]
                     _recorded(store, team, recorded)
-                return {"ok": True, "mode": "shared", "applied": False}
+                result = {"ok": True, "mode": "shared", "applied": False}
+                if apply:
+                    result["applied"] = False
+                return result
 
             project_root = Path(team_row["project_root"])
-            result = quality.merge_branches(project_root, d, team, branches,
-                                            check_command=check_command)
+            if not workspaces.is_git_project(project_root):
+                raise StateRejected(
+                    "accepted snapshots exist but the project is not a git "
+                    "repository anymore")
+            ordered = _integration_order(store, team)
+            shas = [{"task": t["id"], "sha": t["accepted_commit_sha"]}
+                    for t in ordered if t.get("accepted_commit_sha")]
+            for entry in shas:
+                ref = workspaces.submission_ref(team, entry["task"], "*")
+                # The ref itself is not needed for the merge (the SHA is
+                # pinned), but the commit must still exist.
+                probe = subprocess.run(
+                    ["git", "cat-file", "-e", entry["sha"] + "^{commit}"],
+                    cwd=str(project_root), capture_output=True, text=True)
+                if probe.returncode != 0:
+                    raise StateRejected(
+                        f"accepted commit {entry['sha'][:12]} of task "
+                        f"{entry['task']} is missing from the repository "
+                        "(garbage collected?)")
+
+            with store.transaction():
+                store.update_run(run_id, status="integration_running")
+            result = quality.merge_shas(
+                project_root, d, team,
+                [entry["sha"] for entry in shas],
+                check_command=check_command)
             if not result["ok"]:
                 with store.transaction():
                     recorded = [eventlog.append_event(
@@ -787,33 +913,109 @@ def op_integrate(root: Path, team: str, lead_token: str,
                         metadata={"conflicts": result["conflicts"],
                                   "check": result["check"]})]
                     _recorded(store, team, recorded)
+                    store.update_run(run_id, status="integration_failed")
                 quality.cleanup_integration(project_root, d, team,
                                             keep_branch=False)
                 return {"ok": False, "mode": "worktree", **result,
                         "applied": False}
+            integration_sha = workspaces.head_sha(Path(result["workspace"]))
+            integration_base = quality.integration_base_of(project_root, team)
             with store.transaction():
                 recorded = [eventlog.append_event(
                     store.conn, event_type="workspace_integrated",
                     team_id=team, run_id=run_id, actor_id="lead",
-                    metadata={"branches": result["integrated"],
-                              "check": result["check"]})]
-                store.update_run(run_id, status="finished",
-                                 finished_at=now_iso())
-                recorded.append(eventlog.append_event(
-                    store.conn, event_type="team_completed", team_id=team,
-                    run_id=run_id, actor_id="lead",
-                    metadata={"branches": result["integrated"]}))
+                    metadata={"merged": shas, "check": result["check"],
+                              "integration_commit_sha": integration_sha})]
+                store.update_run(run_id, status="apply_pending",
+                                 integration_base_commit=integration_base,
+                                 integration_commit_sha=integration_sha,
+                                 finished_at=None)
                 _recorded(store, team, recorded)
                 _refresh_mirrors(store, team)
-            applied = False
             if apply:
-                applied = quality.apply_integration(project_root, team)["applied"]
-            return {"ok": True, "mode": "worktree", "applied": applied,
-                    "integrated": result["integrated"],
-                    "check": result["check"],
-                    "workspace": result["workspace"]}
+                applied = _apply_locked(store, d, team_row, lead_token,
+                                         team=team)
+                result["applied"] = applied.get("applied", False)
+                result["apply_error"] = applied.get("error")
+            else:
+                result["applied"] = False
+            return {"ok": True, "mode": "worktree",
+                    "merged": shas, "check": result["check"],
+                    "workspace": result["workspace"],
+                    "integration_commit_sha": integration_sha,
+                    "applied": result["applied"]}
     finally:
         store.close()
+
+
+def op_apply(root: Path, team: str, lead_token: str) -> dict:
+    """Apply the validated integration branch to the project branch."""
+    store, d, team_row = _open_team(root, team)
+    try:
+        with StateLock(d, "apply:lead"):
+            return _apply_locked(store, d, team_row, lead_token)
+    finally:
+        store.close()
+
+
+def _apply_locked(store: Store, d: Path, team_row: dict,
+                  lead_token: str, team: str | None = None) -> dict:
+    """Apply core; the caller holds the state lock (hardening spec 5.3).
+
+    Fast-forward only: if the project moved or the worktree is dirty, the
+    run stays apply_pending and the lead re-integrates against the new
+    base. A failed apply never finishes the run.
+    """
+    import subprocess as _sp
+
+    from . import workspaces
+
+    team = team or team_row["id"]
+    _require_lead(team_row, lead_token)
+    run = _current_run(store, team)
+    if not run or run["status"] not in ("apply_pending",
+                                        "integration_validated"):
+        raise StateRejected(
+            f"nothing to apply: run status is "
+            f"{run['status'] if run else 'none'}; run integrate first")
+    project_root = Path(team_row["project_root"])
+    dirty = workspaces.dirty_entries(project_root)
+    if dirty:
+        raise StateRejected(
+            "APPLY_REJECTED_DIRTY_PROJECT: the project worktree has "
+            "uncommitted changes:\n  " + "\n  ".join(dirty[:20]),
+            detail={"code": "APPLY_REJECTED_DIRTY_PROJECT",
+                    "files": dirty})
+    current = workspaces.head_sha(project_root)
+    expected = run.get("integration_base_commit")
+    if expected and current != expected:
+        raise StateRejected(
+            "APPLY_REJECTED_BASE_MOVED: the project branch changed "
+            f"after integration ({expected[:12]} -> {current[:12]}); "
+            "run integrate again against the new base",
+            detail={"code": "APPLY_REJECTED_BASE_MOVED",
+                    "expected": expected, "current": current})
+    branch = f"agent-teams/{team_row['id']}/integration"
+    proc = _sp.run(["git", "merge", "--ff-only", branch],
+                   cwd=str(project_root), capture_output=True,
+                   text=True, timeout=180)
+    if proc.returncode != 0:
+        raise StateRejected(
+            "apply failed (fast-forward merge refused): "
+            + proc.stderr.strip()[:200])
+    run_id = run["id"]
+    with store.transaction():
+        recorded = [eventlog.append_event(
+            store.conn, event_type="workspace_integrated",
+            team_id=team_row["id"], run_id=run_id, actor_id="lead",
+            metadata={"applied": True, "applied_at": now_iso()})]
+        store.update_run(run_id, status="finished", finished_at=now_iso())
+        recorded.append(eventlog.append_event(
+            store.conn, event_type="team_completed", team_id=team_row["id"],
+            run_id=run_id, actor_id="lead", metadata={"applied": True}))
+        _recorded(store, team, recorded)
+        _refresh_mirrors(store, team_row["id"])
+    return {"applied": True, "run": "finished"}
 
 
 # ---------------------------------------------------------------- metrics
