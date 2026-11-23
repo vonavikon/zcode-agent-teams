@@ -109,6 +109,67 @@ def _git(args: list[str], cwd: Path, *, check: bool = True
     return proc
 
 
+def integration_base_of(project_root: Path, team: str) -> str:
+    """The project HEAD an integration branch was built from."""
+    return _git(["rev-parse", "HEAD"], project_root).stdout.strip()
+
+
+def merge_shas(project_root: Path, team_root: Path, team: str,
+               shas: list[str], *, check_command: str = ""
+               ) -> dict:
+    """Integration gate over immutable accepted SHAs (hardening spec 5).
+
+    Same contract as the former branch merge: a fresh integration
+    branch and worktree, sequential merges, an optional check command;
+    conflicts and failed checks change nothing that was accepted.
+    """
+    integration_branch = f"agent-teams/{team}/integration"
+    workspace = team_root / "integration" / "workspace"
+    # The worktree holds a checkout ref: remove it before deleting the
+    # branch, or the deletion silently fails and the recreate explodes.
+    _git(["worktree", "remove", "--force", str(workspace)], project_root,
+         check=False)
+    _git(["branch", "-D", integration_branch], project_root, check=False)
+    base = _git(["rev-parse", "HEAD"], project_root).stdout.strip()
+    _git(["branch", integration_branch, base], project_root)
+    _git(["worktree", "add", str(workspace), integration_branch], project_root)
+
+    integrated: list[str] = []
+    try:
+        for sha in shas:
+            proc = _git(["merge", "--no-edit", sha], workspace, check=False)
+            if proc.returncode != 0:
+                conflicts = _git(["diff", "--name-only", "--diff-filter=U"],
+                                 workspace).stdout.split()
+                _git(["merge", "--abort"], workspace, check=False)
+                return {"ok": False, "integrated": integrated,
+                        "conflicts": {"sha": sha,
+                                      "files": [f.replace("\\", "/")
+                                                for f in conflicts]},
+                        "check": None, "workspace": str(workspace)}
+            integrated.append(sha)
+        check_result = None
+        if check_command:
+            try:
+                proc = subprocess.run(check_command, shell=True,
+                                      cwd=str(workspace), capture_output=True,
+                                      text=True, timeout=CHECK_TIMEOUT_S)
+                check_result = {"exit_code": proc.returncode,
+                                "output": (proc.stdout + proc.stderr)[:2000]}
+                if proc.returncode != 0:
+                    return {"ok": False, "integrated": integrated,
+                            "conflicts": None, "check": check_result,
+                            "workspace": str(workspace)}
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                check_result = {"exit_code": None, "output": str(exc)[:500]}
+                return {"ok": False, "integrated": integrated, "conflicts": None,
+                        "check": check_result, "workspace": str(workspace)}
+        return {"ok": True, "integrated": integrated, "conflicts": None,
+                "check": check_result, "workspace": str(workspace)}
+    finally:
+        pass
+
+
 def merge_branches(project_root: Path, team_root: Path, team: str,
                    branches: list[str], *, check_command: str = ""
                    ) -> dict:

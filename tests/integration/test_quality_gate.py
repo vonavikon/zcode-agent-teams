@@ -35,7 +35,10 @@ def git_project(tmp_path):
 def init_team(project, tasks):
     spec_file = project / "spec.json"
     spec_file.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-    return engine.op_init(project, "t", spec_file)
+    created = engine.op_init(project, "t", spec_file)
+    git(project, "add", "-A")
+    git(project, "commit", "-qm", "team spec")
+    return created
 
 
 def checked_task(tid, command, **kw):
@@ -151,15 +154,20 @@ class TestIntegrationGate:
         result = engine.op_integrate(git_project, "t", lead,
                                      check_command="python3 itest.py")
         assert result["ok"] is True
-        assert sorted(result["integrated"]) == [
-            "agent-teams/t/a", "agent-teams/t/b"]
+        merged_shas = {entry["sha"] for entry in result["merged"]}
+        assert len(merged_shas) == 2
         # the merged tree has both tasks' files
         ws = Path(result["workspace"])
         assert (ws / "out" / "a.md").exists()
         assert (ws / "out" / "b.md").exists()
-        # the run is finished
+        # nothing applied to the project yet: the run waits for apply
         status = engine.op_status(git_project, "t")
-        assert status["run"]["status"] == "finished"
+        assert status["run"]["status"] == "apply_pending"
+        assert not (git_project / "out" / "a.md").exists()
+        applied = engine.op_apply(git_project, "t", lead)
+        assert applied == {"applied": True, "run": "finished"}
+        assert (git_project / "out" / "a.md").exists()
+        assert engine.op_status(git_project, "t")["run"]["status"] == "finished"
 
     def test_apply_merges_into_project(self, git_project):
         created = init_team(git_project, [checked_task("a", "exit 0")])
@@ -195,9 +203,10 @@ class TestIntegrationGate:
         result = engine.op_integrate(git_project, "t", lead)
         assert result["ok"] is False
         assert result["conflicts"]["files"] == ["out/shared.md"]
-        # the run stays active: the team is not completed
+        assert result["conflicts"]["sha"]
+        # the run stops at integration_failed: the team is not completed
         status = engine.op_status(git_project, "t")
-        assert status["run"]["status"] == "active"
+        assert status["run"]["status"] == "integration_failed"
         # and the project branch is untouched
         assert not (git_project / "out" / "shared.md").exists()
 
@@ -211,7 +220,7 @@ class TestIntegrationGate:
         assert result["ok"] is False
         assert result["check"]["exit_code"] == 7
         status = engine.op_status(git_project, "t")
-        assert status["run"]["status"] == "active"
+        assert status["run"]["status"] == "integration_failed"
 
     def test_incomplete_team_rejected(self, git_project):
         created = init_team(git_project, [checked_task("a", "exit 0")])

@@ -38,10 +38,11 @@ class WorkspaceDiff:
     raw_status: str
 
 
-def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+def _git(args: list[str], cwd: Path, *,
+         check: bool = True) -> subprocess.CompletedProcess:
     proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
                           text=True, timeout=120)
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         raise ExternalError(
             f"git {' '.join(args[:2])} failed in {cwd}: "
             f"{proc.stderr.strip()[:300]}")
@@ -185,6 +186,70 @@ def remove_workspace(project_root: Path, team_root: Path, team: str,
     if not keep_branch:
         subprocess.run(["git", "branch", "-D", branch_name(team, task_id)],
                        cwd=str(project_root), capture_output=True, text=True)
+
+
+def submission_ref(team: str, task_id: str, submission_id: str) -> str:
+    return f"refs/agent-teams/{team}/{task_id}/{submission_id}"
+
+
+def pin_submission(project_root: Path, team: str, task_id: str,
+                   submission_id: str, commit_sha: str) -> str:
+    """Protect an accepted-for-verification commit from garbage collection."""
+    ref = submission_ref(team, task_id, submission_id)
+    _git(["update-ref", ref, commit_sha], project_root)
+    return ref
+
+
+def is_ancestor(project_root: Path, ancestor: str, descendant: str) -> bool:
+    proc = subprocess.run(["git", "merge-base", "--is-ancestor", ancestor,
+                           descendant], cwd=str(project_root),
+                          capture_output=True, text=True, timeout=30)
+    return proc.returncode == 0
+
+
+def head_sha(workspace: Path) -> str:
+    return _git(["rev-parse", "HEAD"], workspace).stdout.strip()
+
+
+def dirty_entries(workspace: Path) -> list[str]:
+    """Staged, unstaged and untracked files (gitignored files excluded)."""
+    status = _git(["status", "--porcelain", "-z", "--untracked-files=all"],
+                  workspace)
+    entries, index = [], 0
+    records = [chunk for chunk in status.stdout.split("\0") if chunk]
+    while index < len(records):
+        record = records[index]
+        path = record[3:].replace("\\", "/")
+        index += 1
+        if record[:2].startswith("R") or record[:2].startswith("C"):
+            index += 1  # rename/copy source follows
+        entries.append(path)
+    return entries
+
+
+def checkout_snapshot(project_root: Path, team_root: Path, task_id: str,
+                      commit_sha: str) -> Path:
+    """Ephemeral clean worktree at an exact SHA for verification.
+
+    Removed by drop_snapshot after the checks; recreated on demand, so no
+    per-submission directory accumulates on disk.
+    """
+    target = team_root / "tasks" / task_id / "verify-ws"
+    _git(["worktree", "remove", "--force", str(target)], project_root,
+         check=False)
+    _git(["worktree", "add", "--detach", str(target), commit_sha],
+         project_root)
+    return target
+
+
+def drop_snapshot(project_root: Path, team_root: Path, task_id: str) -> None:
+    target = team_root / "tasks" / task_id / "verify-ws"
+    _git(["worktree", "remove", "--force", str(target)], project_root,
+         check=False)
+
+
+def merge_sha(workspace: Path, sha: str) -> subprocess.CompletedProcess:
+    return _git(["merge", "--no-edit", sha], workspace, check=False)
 
 
 def list_worktrees(project_root: Path) -> list[str]:
