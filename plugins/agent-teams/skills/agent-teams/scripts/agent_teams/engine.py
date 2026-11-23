@@ -349,15 +349,13 @@ def _prepare_workspace(root: Path, d: Path, team: str, task: dict,
     project_root = Path(root).resolve()
     if mode == "auto" and not workspaces.is_git_project(project_root):
         return None
-    if task.get("workspace_path") and Path(task["workspace_path"]).exists():
-        # Reuse: crash recovery or a repeated claim after release.
-        return workspaces.WorkspaceInfo(task["workspace_path"], task["branch"],
-                                        task["base_commit"])
-    # New worktree grows from the run base, or from the task's last
-    # submitted checkpoint when one exists (a rework attempt continues
-    # from verified work, not from a stale executor's leftovers).
-    base = task.get("base_commit") or checkpoint or run_base
-    return workspaces.create_workspace(project_root, d, team, task["id"], base)
+    # Every execution attempt gets a fresh workspace and branch
+    # (hardening spec 3.3): a fenced-out old executor physically cannot
+    # touch the new attempt's directory. The base is the task's last
+    # submitted checkpoint (verified work carries over), else the run base.
+    base = checkpoint or run_base or task.get("base_commit")
+    return workspaces.create_workspace(project_root, d, team, task["id"],
+                                        base, attempt=task["attempt"] + 1)
 
 
 # ---------------------------------------------------------------- submit
@@ -674,6 +672,19 @@ def op_cancel(root: Path, team: str, task_id: str, lead_token: str,
 
 def op_recover(root: Path, team: str, lead_token: str,
                task_id: str | None = None) -> dict:
+    """Recovery (hardening spec 3): requeue tasks of lost executors.
+
+    A task is stale when ANY of these holds:
+    - the lease expired (no heartbeat within execution_timeout_s),
+    - heartbeat_timeout_s passed since the last heartbeat,
+    - the whole attempt exceeded execution_timeout_s (heartbeats cannot
+      extend the attempt forever).
+    The old attempt is fenced: its execution token dies with the state
+    transition and its workspace moves to quarantine for manual salvage.
+    Idempotent: a repeated call on an already-recovered task is a no-op.
+    """
+    from . import workspaces
+
     store, d, team_row = _open_team(root, team)
     try:
         with StateLock(d, "recover:lead"):
@@ -687,9 +698,8 @@ def op_recover(root: Path, team: str, lead_token: str,
                 for task in candidates:
                     if task is None:
                         raise NotFoundError(f"task not found: {task_id}")
-                    lease = task.get("lease_expires_at")
-                    stale = lease and _parse_iso(lease) < now
-                    if not stale:
+                    reason = _staleness(task, config, now)
+                    if reason is None:
                         continue
                     restarts = task["restarts"] + 1
                     run_id = _current_run(store, team)["id"]
@@ -711,29 +721,73 @@ def op_recover(root: Path, team: str, lead_token: str,
                         store.conn, event_type="agent_timeout", team_id=team,
                         run_id=run_id, task_id=task["id"],
                         actor_id=task["owner"] or "unknown",
-                        metadata={"restarts": restarts})]
+                        metadata={"restarts": restarts, "reason": reason})]
                     statemachine.apply_transition(
                         store.conn, task, statemachine.TaskStatus.BLOCKED,
                         event_type="task_blocked", run_id=run_id,
                         actor_id="recovery", initiator=statemachine.RECOVERY,
                         timestamp=now_iso(),
-                        reason="execution lease expired (agent lost or stuck)")
+                        reason=f"executor lost: {reason}")
                     recorded.append(_last_event(store, team))
                     statemachine.apply_transition(
                         store.conn, {**task, "status": "blocked"},
                         statemachine.TaskStatus.PENDING,
                         event_type="task_released", run_id=run_id,
                         actor_id="recovery", initiator=statemachine.RECOVERY,
-                        timestamp=now_iso(), reason="lease expired, back to queue")
+                        timestamp=now_iso(),
+                        reason="executor lost, back to queue")
                     recorded.append(_last_event(store, team))
                     store.update_task(team, task["id"], restarts=restarts)
                     _recorded(store, team, recorded)
                     recovered.append({"task": task["id"], "action": "requeued",
-                                      "restarts": restarts})
-                _refresh_mirrors(store, team)
+                                      "reason": reason, "restarts": restarts})
+            # Quarantine outside the transaction: filesystem moves must not
+            # sit inside the SQLite critical section.
+            for entry in recovered:
+                if entry["action"] != "requeued":
+                    continue
+                task = store.get_task(team, entry["task"])
+                if task and task.get("workspace_path"):
+                    source = Path(task["workspace_path"])
+                    attempt_no = task["attempt"]
+                    quarantined = workspaces.quarantine_attempt(
+                        d, entry["task"], attempt_no)
+                    if quarantined is not None:
+                        with store.transaction():
+                            store.update_task(
+                                team, entry["task"], workspace_path=None,
+                                branch=None,
+                                metadata={**task.get("metadata", {}),
+                                          "quarantined_at": now_iso(),
+                                          "quarantine_dir": str(quarantined)})
+                            eventlog.append_event(
+                                store.conn, event_type="agent_timeout",
+                                team_id=team,
+                                run_id=_current_run(store, team)["id"],
+                                task_id=entry["task"], actor_id="recovery",
+                                metadata={"quarantine": str(quarantined),
+                                          "attempt": attempt_no})
+                entry["quarantined"] = str(entry.get("quarantine", "") or "")
+            _refresh_mirrors(store, team)
             return {"recovered": recovered}
     finally:
         store.close()
+
+
+def _staleness(task: dict, config: dict, now: datetime) -> str | None:
+    """Why a task counts as lost; None when the executor looks alive."""
+    lease = task.get("lease_expires_at")
+    if lease and _parse_iso(lease) < now:
+        return "lease expired"
+    beat = task.get("heartbeat_at")
+    if beat and _parse_iso(beat) < now - timedelta(
+            seconds=config["heartbeat_timeout_s"]):
+        return "heartbeat timeout"
+    started = task.get("claimed_at")
+    if started and _parse_iso(started) < now - timedelta(
+            seconds=config["execution_timeout_s"]):
+        return "execution timeout"
+    return None
 
 
 def op_heartbeat(root: Path, team: str, by: str, token: str) -> dict:
@@ -759,6 +813,7 @@ def op_heartbeat(root: Path, team: str, by: str, token: str) -> dict:
             return {"agent": by, "task": task["id"], "heartbeat_at": ts}
     finally:
         store.close()
+
 
 
 # ---------------------------------------------------------------- tokens / mailbox
