@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .errors import CorruptStateError, ExternalError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_FILENAME = "state.db"
 
 _MIGRATION_V1 = """
@@ -186,7 +186,11 @@ CREATE INDEX IF NOT EXISTS idx_usage_team_run ON token_usage(team_id, run_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_team_dedup ON token_usage(team_id, dedup_key);
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_V1)]
+_MIGRATION_V2 = """
+ALTER TABLE teams ADD COLUMN lead_token_hash TEXT;
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_V1), (2, _MIGRATION_V2)]
 
 _JSON_SUFFIX = "_json"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
@@ -283,7 +287,14 @@ class Store:
             self.backup()
             # executescript() commits any open transaction by itself, so the
             # script runs outside transaction() and is idempotent instead.
-            self.conn.executescript(sql)
+            try:
+                self.conn.executescript(sql)
+            except sqlite3.OperationalError as exc:
+                # ALTER TABLE ... ADD COLUMN cannot use IF NOT EXISTS. A crash
+                # between the ALTER and the user_version update would leave the
+                # column in place; that state is safe to finish, not an error.
+                if "duplicate column" not in str(exc).lower():
+                    raise
             with self.transaction():
                 self.conn.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",

@@ -573,8 +573,9 @@ def validate_team_spec(spec: object, project_root: Path,
             if overlap.ordered:
                 warnings.append(Issue(
                     "W_WRITE_OVERLAP_ORDERED",
-                    f"tasks {overlap.task_a} and {overlap.task_b} both write "
-                    f"{overlap.path_a!r} but run in a fixed order (deps)",
+                    f"write overlap between tasks {overlap.task_a} and "
+                    f"{overlap.task_b} on {overlap.path_a!r}, but they run in "
+                    "a fixed order (deps)",
                     task_ids=pair))
             elif config.get("allow_write_overlaps") is True:
                 warnings.append(Issue(

@@ -51,6 +51,12 @@ EXECUTOR, LEAD, RECOVERY, GATE = "executor", "lead", "recovery", "gate"
 
 P, IP, AV, DONE, BLOCKED, CANCELLED = tuple(TaskStatus)
 
+# Long aliases for callers that prefer full names.
+PENDING = TaskStatus.PENDING
+IN_PROGRESS = TaskStatus.IN_PROGRESS
+AWAITING_VERIFICATION = TaskStatus.AWAITING_VERIFICATION
+COMPLETED = TaskStatus.COMPLETED
+
 ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     P: frozenset({IP, CANCELLED}),
     IP: frozenset({AV, BLOCKED}),
@@ -177,7 +183,7 @@ def apply_transition(
     # The guard on the previous status turns a lost update (a writer that
     # bypassed the state lock) into a visible rejection.
     columns = ", ".join(f"{name} = ?" for name in assignments)
-    params = [timestamp, *assignments.values(), task["team_id"], task_id, source.value]
+    params = [*assignments.values(), timestamp, task["team_id"], task_id, source.value]
     cursor = conn.execute(
         f"UPDATE tasks SET {columns}, updated_at = ? "
         f"WHERE team_id = ? AND id = ? AND status = ?",
