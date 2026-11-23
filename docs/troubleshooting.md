@@ -13,6 +13,13 @@
 - `this command requires --lead-token` / `invalid lead token` - the lead
   token is printed once by init and stored hashed; if lost, there is no
   recovery path by design: start a new run or a new team.
+- `SUBMIT_REJECTED_DIRTY_WORKTREE` - commit your work, then resubmit;
+  the message lists the files. `SUBMIT_REJECTED_DETACHED_HEAD` - your
+  HEAD left the task's base; redo the work on top of it.
+- `VERIFICATION_REPORT_MISSING` - a PASS needs `--report` or an
+  audited `--override-reason`.
+- `APPLY_REJECTED_DIRTY_PROJECT` / `APPLY_REJECTED_BASE_MOVED` -
+  clean or re-integrate against the new base, then apply again.
 - `task ... is blocked` - the verification limit was hit: `release`
   (respecting the execution retry limit), fix manually, or `cancel`.
 - `cannot integrate: tasks not completed` - finish or cancel every task

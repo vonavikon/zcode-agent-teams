@@ -11,9 +11,10 @@ Un portage de l'approche [Claude Code Agent Teams](https://code.claude.com/docs/
 - **Machine à états et état SQLite** : chaque changement de statut est une transition protégée à chaîne de hash dans `state.db` ; aucune mise à jour perdue, piste d'audit complète, sauvegardes et migrations automatiques
 - **Espaces de travail isolés** : un worktree et une branche git par tâche, commit de base enregistré, le travail non commité survit aux crashes et aux releases
 - **Contrôle des écritures** : le diff réel est comparé au `files_write` de la tâche ; toute écriture hors ensemble fait tomber la porte
-- **Porte d'acceptation machine** : le moteur exécute lui-même les critères portant une commande de vérification ; un critère obligatoire échoué annule un verdict PASS. L'exécutant ne valide jamais son propre travail : les verdicts exigent le token du lead, les soumissions le token d'exécution
-- **Porte d'intégration** : les branches acceptées fusionnent dans une branche d'intégration, une commande de contrôle facultative tourne dans l'arbre fusionné ; conflits et régressions laissent le run actif et la branche du projet intacte
-- **Récupération** : leases, heartbeats, limites de redémarrage, remise en file automatique des exécutants perdus
+- **Exécution immuable** : le submit exige un worktree propre, épingle un instantané immuable (git ref + SQLite) et la vérification porte sur cet instantané ; ce qui est accepté est octet pour octet ce qui est intégré
+- **Porte d'acceptation machine** : le moteur exécute lui-même les critères à commande ; un critère obligatoire échoué annule un PASS. Un PASS exige en plus un rapport de vérification structuré (ou un override du lead audité). L'exécutant ne valide jamais son propre travail : les verdicts exigent le token du lead, les soumissions le token d'exécution
+- **Porte d'intégration et apply** : les SHA acceptés fusionnent en ordre DAG dans une branche d'intégration avec contrôle facultatif ; apply est une étape séparée en fast-forward qui refuse un projet sale ou une base déplacée
+- **Récupération et fencing** : timeouts de lease, de heartbeat et de la tentative entière ; les tentatives perdues sont isolées (token mort, worktree en quarantaine conservé) et remises en file dans les limites
 - **Observabilité** : tokens tirés des notifications des sous-agents, coût avec des indicateurs de qualité explicites, métriques de run dont la comparaison équipe contre agent unique, un rapport HTML autonome et un export Langfuse idempotent
 
 Rôles : le lead est la session ZCode principale ; teammates et vérificateurs sont des sous-agents (les profils de rôle sont dans `agents/`).

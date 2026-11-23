@@ -8,6 +8,13 @@ Each task gets `agent-teams/<team>/<task>` branch and a worktree under
 `.agent-teams/<team>/tasks/<task>/workspace`, with the base commit
 recorded on the task row.
 
+Every execution attempt gets its own directory
+`tasks/<task>/attempts/<n>/workspace` and branch `a<n>`, grown from
+the last verified submission or the run base. A fenced attempt moves
+to `tasks/<task>/quarantine/` and stays inspectable for manual
+salvage. Submit requires a clean worktree (uncommitted files are
+rejected with the list) and pins an immutable snapshot ref.
+
 Lifecycle:
 
 - claim creates the worktree (or reuses an existing one: after a crash,

@@ -11,9 +11,10 @@ A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-te
 - **State machine and SQLite state**: every task status change is a guarded, hash-chained transition in `state.db`; no lost updates, full audit trail, automatic backups and migrations
 - **Isolated workspaces**: one git worktree and branch per task, base commit recorded, uncommitted work survives crashes and releases
 - **Write-set control**: the actual diff is compared against the task's `files_write`; any write outside the set fails the gate
-- **Machine acceptance gate**: criteria with a verification command are run by the engine itself; a failed required criterion overrides a PASS verdict. The executor never verifies its own work: verdicts require the lead token, submissions the execution token
-- **Integration gate**: accepted branches merge into an integration branch, an optional check command runs in the merged tree; conflicts and regressions leave the run active and the project branch untouched
-- **Recovery**: leases, heartbeats, restart limits, automatic requeue of lost executors
+- **Immutable execution**: submit demands a clean worktree, pins an immutable snapshot (git ref + SQLite), and verification runs against that snapshot; what passed is byte-for-byte what integrates
+- **Machine acceptance gate**: criteria with a verification command are run by the engine itself; a failed required criterion overrides a PASS verdict. A PASS additionally requires a structured verification report (or an audited lead override). The executor never verifies its own work: verdicts require the lead token, submissions the execution token
+- **Integration gate and apply**: accepted commit SHAs merge in DAG order into an integration branch with an optional check; apply is a separate fast-forward step that refuses a dirty project or a moved base
+- **Recovery and fencing**: lease, heartbeat and execution timeouts; lost attempts are fenced (dead token, quarantined workspace kept for salvage) and requeued within restart limits
 - **Observability**: token usage from subagent notifications, cost with explicit quality flags, run metrics including the multi-agent vs single-agent comparison, a self-contained HTML report and an idempotent Langfuse export
 
 Roles: the lead is the main ZCode session; teammates and verifiers are subagents (role profiles ship in `agents/`).

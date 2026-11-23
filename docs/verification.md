@@ -5,6 +5,14 @@ Flow: executor `claim` (gets the execution token) -> work -> `submit`
 verifier subagent reads the criteria and the diff -> lead `verify`
 (requires the lead token).
 
+Verification reports (v2.0): a PASS requires a structured report
+(schemas/verification-report.schema.json) bound to the current
+submission id and commit SHA, with full criterion coverage and
+file:line evidence on content criteria; a lead override with an
+audited reason is the only exception and still cannot bypass the
+machine gate. The engine validates the report; it cannot prove the
+author was independent.
+
 The engine runs every command-backed criterion itself (`test`,
 `file_check`, `security_check` types) in the task workspace with a 120 s
 timeout. Verdict computation:

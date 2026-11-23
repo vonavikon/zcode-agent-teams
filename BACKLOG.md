@@ -1,5 +1,19 @@
 # Backlog
 
+## Done in the production hardening (2026-11-24, v1.1.0 - v2.0.0)
+
+- v1.1.0: immutable execution (clean submit, pinned snapshots,
+  verification against the snapshot, accepted SHA, DAG-ordered SHA
+  integration, separate apply, single run base)
+- v1.2.0: recovery and fencing (dual timeouts, per-attempt workspaces
+  and branches, quarantine, dead old tokens, idempotent recovery)
+- v1.3.0: enforced verification reports (schema, submission binding,
+  coverage and evidence rules, audited lead overrides)
+- v1.4.0: observability counters, source-quality labels, report
+  sections for submissions, recovery and integration
+- v2.0.0: SPEC.md, explicit versioning, docs and README x5 updates,
+  schema and manifest CI checks
+
 The engine received 30 findings in its first run (examples/demo-run/findings-*.md).
 
 ## Done in v0.2.1 (2026-11-23)

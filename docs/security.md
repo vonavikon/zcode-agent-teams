@@ -28,6 +28,11 @@ isolation needs a trusted coordinator service outside the workspace.
 
 ## Residual risks
 
+- Verification reports are validated structurally and bound to the
+  pinned submission, but the engine cannot cryptographically prove
+  an independent agent wrote them; lead overrides are audited
+  events, not proofs.
+
 - `files_read` is a declaration for the verifier's checks; reads are not
   technically restricted.
 - In `shared` workspace mode (non-git projects) write isolation is absent
