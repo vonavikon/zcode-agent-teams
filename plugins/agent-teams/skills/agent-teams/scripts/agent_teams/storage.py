@@ -569,18 +569,35 @@ class Store:
 
     # -- internals ------------------------------------------------------
 
+    _table_columns: dict[str, frozenset[str]] = {}
+
+    def _columns_of(self, table: str) -> frozenset[str]:
+        cached = Store._table_columns.get(table)
+        if cached is None:
+            rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+            cached = frozenset(row[1] for row in rows)
+            Store._table_columns[table] = cached
+        return cached
+
     def _update(self, table: str, key: dict, fields: dict) -> None:
         if not _SAFE_NAME.match(table):
             raise ExternalError(f"bad table name {table!r}")
         if not fields:
             return
-        columns = sorted(k for k in fields if _SAFE_NAME.match(k))
-        unknown = sorted(set(fields) - set(columns))
-        if unknown:
-            raise ExternalError(f"unknown column(s) for {table}: {', '.join(unknown)}")
-        assignments = ", ".join(f"{name} = ?" for name in columns)
-        values = [fields[name] if not name.endswith(_JSON_SUFFIX)
-                  else _encode(fields[name]) for name in columns]
+        real_columns = self._columns_of(table)
+        resolved: dict[str, tuple[str, object]] = {}
+        for name, value in fields.items():
+            if not _SAFE_NAME.match(name):
+                raise ExternalError(f"bad column name {name!r} for {table}")
+            if name in real_columns:
+                resolved[name] = (name, value)
+            elif f"{name}{_JSON_SUFFIX}" in real_columns:
+                # Callers may say `metadata=`; the column is `metadata_json`.
+                resolved[name] = (f"{name}{_JSON_SUFFIX}", _encode(value))
+            else:
+                raise ExternalError(f"unknown column {name!r} for {table}")
+        assignments = ", ".join(f"{col} = ?" for col, _ in resolved.values())
+        values = [value for _, value in resolved.values()]
         where = " AND ".join(f"{name} = ?" for name in key)
         self.run(f"UPDATE {table} SET {assignments} WHERE {where}",
                  [*values, *key.values()])

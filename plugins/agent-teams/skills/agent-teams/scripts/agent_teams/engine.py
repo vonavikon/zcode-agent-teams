@@ -173,6 +173,25 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
     config = merge_config(spec.get("config"))
     lead_token = secrets.token_urlsafe(24)
 
+    from . import workspaces
+
+    workspace_note = None
+    if config["workspace"] == "shared":
+        workspace_note = ("workspace mode 'shared': executors write directly "
+                          "into the project, there is NO isolation")
+    elif config["workspace"] == "auto" and not workspaces.is_git_project(root):
+        workspace_note = ("no git repository found: workspace falls back to "
+                          "'shared', executors write directly into the project "
+                          "and there is NO isolation")
+    elif config["workspace"] == "worktree" and not workspaces.is_git_project(root):
+        raise UsageError(
+            "config.workspace is 'worktree' but the project is not a git "
+            "repository: use 'auto' or 'shared'")
+    if workspace_note:
+        result_warnings = [workspace_note]
+    else:
+        result_warnings = []
+
     d.mkdir(parents=True)
     with open_store(d) as store:
         with StateLock(d, "init:lead"), store.transaction():
@@ -212,7 +231,7 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
         _refresh_mirrors(store, team)
     return {"team": team, "tasks": len(spec["tasks"]), "dir": str(d),
             "lead_token": lead_token,
-            "warnings": [i.message for i in result.warnings]}
+            "warnings": [i.message for i in result.warnings] + result_warnings}
 
 
 def _last_event(store: Store, team_id: str) -> dict:
@@ -224,56 +243,96 @@ def _last_event(store: Store, team_id: str) -> dict:
 
 
 def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
-    store, d, _team = _open_team(root, team)
+    store, d, team_row = _open_team(root, team)
     try:
-        with StateLock(d, f"claim:{by}"), store.transaction():
-            recorded = []
+        with StateLock(d, f"claim:{by}"):
+            config = merge_config(team_row["config"])
             task = store.get_task(team, task_id)
             if task is None:
                 raise NotFoundError(f"task not found: {task_id}")
-            agent = store.get_agent(team, by)
-            if agent and agent["role"] not in ("executor", "lead"):
-                raise StateRejected(
-                    f"agent {by!r} has role {agent['role']!r}: only executors "
-                    "can claim tasks")
-            config = merge_config(store.get_team(team)["config"])
-            for dep in task["deps"]:
-                dep_row = store.get_task(team, dep)
-                if dep_row is None:
-                    raise NotFoundError(f"dependency not found: {dep}")
-                if dep_row["status"] != "completed":
+            workspace = _prepare_workspace(root, d, team, task, config)
+            with store.transaction():
+                recorded = []
+                agent = store.get_agent(team, by)
+                if agent and agent["role"] not in ("executor", "lead"):
                     raise StateRejected(
-                        f"dependency {dep} is not completed "
-                        f"(status={dep_row['status']})")
-            token = secrets.token_hex(16)
-            ts = now_iso()
-            lease = (datetime.now(timezone.utc)
-                     + timedelta(seconds=config["execution_timeout_s"]))
-            statemachine.apply_transition(
-                store.conn, task, statemachine.TaskStatus.IN_PROGRESS,
-                event_type="task_claimed",
-                run_id=_current_run(store, team)["id"], actor_id=by,
-                initiator=statemachine.EXECUTOR, timestamp=ts,
-                metadata={"assignee": task["assignee"]})
-            recorded.append(_last_event(store, team))
-            store.update_task(team, task_id, owner=by,
-                              execution_token_hash=_sha256(token),
-                              attempt=task["attempt"] + 1,
-                              lease_expires_at=lease.isoformat(
-                                  timespec="milliseconds").replace("+00:00", "Z"),
-                              heartbeat_at=ts)
-            store.update_agent(team, by, status="running", current_task=task_id,
-                               heartbeat_at=ts)
-            recorded.append(eventlog.append_event(
-                store.conn, event_type="agent_started", team_id=team,
-                run_id=_current_run(store, team)["id"], task_id=task_id,
-                actor_id=by, metadata={"attempt": task["attempt"] + 1}))
-            _recorded(store, team, recorded)
-            _refresh_mirrors(store, team)
-        return {"task": task_id, "owner": by, "execution_token": token,
-                "attempt": task["attempt"] + 1}
+                        f"agent {by!r} has role {agent['role']!r}: only executors "
+                        "can claim tasks")
+                for dep in task["deps"]:
+                    dep_row = store.get_task(team, dep)
+                    if dep_row is None:
+                        raise NotFoundError(f"dependency not found: {dep}")
+                    if dep_row["status"] != "completed":
+                        raise StateRejected(
+                            f"dependency {dep} is not completed "
+                            f"(status={dep_row['status']})")
+                token = secrets.token_hex(16)
+                ts = now_iso()
+                lease = (datetime.now(timezone.utc)
+                         + timedelta(seconds=config["execution_timeout_s"]))
+                statemachine.apply_transition(
+                    store.conn, task, statemachine.TaskStatus.IN_PROGRESS,
+                    event_type="task_claimed",
+                    run_id=_current_run(store, team)["id"], actor_id=by,
+                    initiator=statemachine.EXECUTOR, timestamp=ts,
+                    metadata={"assignee": task["assignee"]})
+                recorded.append(_last_event(store, team))
+                fields = {
+                    "owner": by, "execution_token_hash": _sha256(token),
+                    "attempt": task["attempt"] + 1,
+                    "lease_expires_at": lease.isoformat(
+                        timespec="milliseconds").replace("+00:00", "Z"),
+                    "heartbeat_at": ts}
+                if workspace is not None:
+                    fields.update(workspace_path=workspace.path,
+                                  branch=workspace.branch,
+                                  base_commit=workspace.base_commit)
+                    recorded.append(eventlog.append_event(
+                        store.conn, event_type="workspace_created", team_id=team,
+                        run_id=_current_run(store, team)["id"], task_id=task_id,
+                        actor_id=by, metadata={"branch": workspace.branch,
+                                               "base": workspace.base_commit}))
+                store.update_task(team, task_id, **fields)
+                store.update_agent(team, by, status="running", current_task=task_id,
+                                   heartbeat_at=ts)
+                recorded.append(eventlog.append_event(
+                    store.conn, event_type="agent_started", team_id=team,
+                    run_id=_current_run(store, team)["id"], task_id=task_id,
+                    actor_id=by, metadata={"attempt": task["attempt"] + 1}))
+                _recorded(store, team, recorded)
+                _refresh_mirrors(store, team)
+            result = {"task": task_id, "owner": by,
+                      "execution_token": token,
+                      "attempt": task["attempt"] + 1}
+            if workspace is not None:
+                result["workspace"] = workspace.path
+            return result
     finally:
         store.close()
+
+
+def _prepare_workspace(root: Path, d: Path, team: str, task: dict,
+                       config: dict):
+    """Create or reuse the task worktree when the team uses isolation.
+
+    Runs under the state lock but outside the SQLite transaction: git is
+    slow and must not hold the database. An orphaned worktree (a claim
+    that failed later) is simply reused by the next claim.
+    """
+    from . import workspaces
+
+    mode = config.get("workspace", "auto")
+    if mode == "shared":
+        return None
+    project_root = Path(root).resolve()
+    if mode == "auto" and not workspaces.is_git_project(project_root):
+        return None
+    if task.get("workspace_path") and Path(task["workspace_path"]).exists():
+        # Reuse: crash recovery or a repeated claim after release.
+        return workspaces.WorkspaceInfo(task["workspace_path"], task["branch"],
+                                        task["base_commit"])
+    return workspaces.create_workspace(
+        project_root, d, team, task["id"], task.get("base_commit"))
 
 
 # ---------------------------------------------------------------- submit
@@ -282,8 +341,7 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
 def op_submit(root: Path, team: str, task_id: str, by: str, token: str) -> dict:
     store, d, _team = _open_team(root, team)
     try:
-        with StateLock(d, f"submit:{by}"), store.transaction():
-            recorded = []
+        with StateLock(d, f"submit:{by}"):
             task = store.get_task(team, task_id)
             if task is None:
                 raise NotFoundError(f"task not found: {task_id}")
@@ -294,19 +352,59 @@ def op_submit(root: Path, team: str, task_id: str, by: str, token: str) -> dict:
                 raise PermissionDenied(
                     "invalid or stale execution token (the current attempt's "
                     "token is printed once by claim)")
-            statemachine.apply_transition(
-                store.conn, task, statemachine.TaskStatus.AWAITING_VERIFICATION,
-                event_type="task_submitted",
-                run_id=_current_run(store, team)["id"], actor_id=by,
-                initiator=statemachine.EXECUTOR, timestamp=now_iso())
-            recorded.append(_last_event(store, team))
-            store.update_agent(team, by, status="waiting_verification",
-                               current_task=task_id)
-            _recorded(store, team, recorded)
-            _refresh_mirrors(store, team)
-        return {"task": task_id, "status": "awaiting_verification", "by": by}
+            diff, violations = _capture_task_diff(task)
+            with store.transaction():
+                recorded = []
+                statemachine.apply_transition(
+                    store.conn, task, statemachine.TaskStatus.AWAITING_VERIFICATION,
+                    event_type="task_submitted",
+                    run_id=_current_run(store, team)["id"], actor_id=by,
+                    initiator=statemachine.EXECUTOR, timestamp=now_iso())
+                recorded.append(_last_event(store, team))
+                fields = {}
+                if diff is not None:
+                    fields["head_commit"] = diff.head_commit
+                    fields["metadata"] = {**task.get("metadata", {}),
+                                          "changed_files": list(diff.changed),
+                                          "workspace_violations": violations,
+                                          "uncommitted_changes":
+                                              diff.has_uncommitted}
+                if fields:
+                    store.update_task(team, task_id, **fields)
+                if violations:
+                    recorded.append(eventlog.append_event(
+                        store.conn, event_type="workspace_conflict",
+                        team_id=team, run_id=_current_run(store, team)["id"],
+                        task_id=task_id, actor_id=by,
+                        metadata={"violations": violations}))
+                store.update_agent(team, by, status="waiting_verification",
+                                   current_task=task_id)
+                _recorded(store, team, recorded)
+                _refresh_mirrors(store, team)
+            result = {"task": task_id, "status": "awaiting_verification",
+                      "by": by}
+            if diff is not None:
+                result["changed_files"] = len(diff.changed)
+                result["write_set_violations"] = violations
+            return result
     finally:
         store.close()
+
+
+def _capture_task_diff(task: dict):
+    """Diff of the task worktree versus its base, plus write-set violations.
+
+    Returns (None, []) for teams without workspace isolation.
+    """
+    from . import workspaces
+
+    ws_path = task.get("workspace_path")
+    base = task.get("base_commit")
+    if not ws_path or not base or not Path(ws_path).exists():
+        return None, []
+    diff = workspaces.capture_diff(Path(ws_path), base)
+    violations = workspaces.write_set_violations(diff, task["files_write"])
+    return diff, violations
 
 
 # ---------------------------------------------------------------- verify
