@@ -1,23 +1,29 @@
 # Backlog
 
-Движок получил 30 findings в первом прогоне (examples/demo-run/findings-*.md).
+The engine received 30 findings in its first run (examples/demo-run/findings-*.md).
 
-## Сделано в v0.2.0 (2026-10-30)
+## Done in v0.2.1 (2026-11-23)
 
-- Гонки read-modify-write на tasks.json и mailbox: единый лок состояния `.state.lock` (O_EXCL, ретраи, подбор протухшего >2 ч) на все мутации + атомарные записи через уникальный tmp (pid+uuid) — findings-code M1/M2, findings-robust R-1/R-2/R-7
-- Path traversal: имена команды/агентов/id задач валидируются regex `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — findings-code M4, findings-robust R-6
-- Осиротевшие состояния: подкоманда `release` возвращает задачу в pending — findings-code M3, findings-robust R-3
-- Windows PermissionError на replace: ретрай с нарастающим ожиданием — findings-robust R-4
-- Битые строки events.jsonl не роняют langfuse-выгрузку — findings-robust R-5
-- Лимит кругов enforcement: после 2 провалов приёмки задача → `blocked`, фидбек ROUND LIMIT в mailbox — findings-robust R-9
-- Экономика: `tokens --task --add N`, счётчики в tasks.json/status, суммарные токены в trace-метаданных и span
+- English translation of the whole repository and of all engine output. The output is pure ASCII now, which also closes the Windows pipe encoding issue (findings-robust R-11)
+- README in five languages: en, ru, es, fr, zh
+- Localized marketplace and plugin manifest metadata (ru, es, fr, zh-CN)
+- Repository topics on GitHub
 
-## Мелкое (открыто)
+## Done in v0.2.0 (2026-10-30)
 
-- Кодировка pipe на Windows для русского вывода (findings-robust R-11)
-- Мёртвый статус «verifying» — допускается verify, но не присваивается (findings-code m1); можно выкинуть
+- Read-modify-write races on tasks.json and the mailbox: one state lock `.state.lock` (O_EXCL, retries, reclaim of a lock that is stale for more than 2 h) on all mutations + atomic writes through a unique tmp file (pid + uuid): findings-code M1/M2, findings-robust R-1/R-2/R-7
+- Path traversal: team, agent and task id names are validated with the regex `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`: findings-code M4, findings-robust R-6
+- Orphaned states: the `release` subcommand returns a task to pending: findings-code M3, findings-robust R-3
+- Windows PermissionError on replace: a retry with a growing delay: findings-robust R-4
+- Corrupt events.jsonl lines do not crash the langfuse upload: findings-robust R-5
+- Round limit enforcement: after failed verification rounds a task goes to `blocked` and a ROUND LIMIT feedback goes to the mailbox: findings-robust R-9
+- Economics: `tokens --task --add N`, counters in tasks.json and status, total tokens in the trace metadata and in the span
 
-## Дистрибуция
+## Minor (open)
 
-- Валидация `zcode plugins validate` в CI
-- Пятиязычный README — после первых внешних пользователей
+- The dead "verifying" status: verify accepts it, but nothing assigns it (findings-code m1). It can be removed
+- Round limit is off by one: with MAX_ROUNDS = 2 a task is blocked on the third failed verification, because the counter is compared before it is incremented. Fix together with configurable limits in v0.3.0
+
+## Distribution
+
+- `zcode plugins validate` in CI

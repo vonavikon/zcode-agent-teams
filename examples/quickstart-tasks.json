@@ -2,15 +2,19 @@
   "tasks": [
     {
       "id": "write-notes",
-      "title": "написать notes.md: что такое agent-teams и как работает гейт",
+      "title": "write notes.md: what agent-teams is and how the gate works",
       "assignee": "writer",
       "lens": "docs",
-      "files_read": ["plugins/agent-teams/skills/agent-teams/SKILL.md"],
-      "files_write": ["notes.md"],
+      "files_read": [
+        "plugins/agent-teams/skills/agent-teams/SKILL.md"
+      ],
+      "files_write": [
+        "notes.md"
+      ],
       "acceptance": [
-        "файл notes.md существует в корне scratch-проекта",
-        "ровно три пункта: что делает команда, как выглядит гейт приёмки, что пишется в Langfuse",
-        "каждый пункт — одно предложение без выдуманных фактов (сверено со SKILL.md)"
+        "the file notes.md exists in the root of the scratch project",
+        "exactly three points: what the team does, what the acceptance gate looks like, what goes to Langfuse",
+        "each point is one sentence without invented facts (checked against SKILL.md)"
       ],
       "deps": []
     }

@@ -4,11 +4,21 @@
     {
       "name": "agent-teams",
       "source": "./plugins/agent-teams",
-      "version": "0.2.0",
-      "description": "Команды субагентов в ZCode: общий список задач с блокировками, mailbox-сообщения, гейт приёмки через верификаторов, отчёт прогона в Langfuse",
+      "version": "0.2.1",
+      "description": "Subagent teams for ZCode: a shared task list with locking, a mailbox between agents, an acceptance gate with verifiers, and run analytics in Langfuse",
       "displayName": "Agent Teams",
-      "displayName_i18n": { "ru": "Команды агентов" },
-      "description_i18n": { "ru": "Параллельные исполнители с непересекающимися файлами, гейт приёмки (exit-2-цикл), сообщения между агентами, аналитика в Langfuse" },
+      "displayName_i18n": {
+        "ru": "Команды агентов",
+        "es": "Equipos de agentes",
+        "fr": "Équipes d'agents",
+        "zh-CN": "智能体团队"
+      },
+      "description_i18n": {
+        "ru": "Параллельные исполнители с непересекающимися файлами, гейт приёмки (exit-2-цикл), сообщения между агентами, аналитика в Langfuse",
+        "es": "Ejecutores en paralelo con archivos que no se solapan, puerta de aceptación (ciclo exit-2), mensajes entre agentes y analítica en Langfuse",
+        "fr": "Exécutants en parallèle sur des fichiers disjoints, porte d'acceptation (boucle exit-2), messages entre agents et analytique dans Langfuse",
+        "zh-CN": "并行执行者写入互不重叠的文件，验收门禁（exit-2 循环），智能体之间互发消息，运行分析上报 Langfuse"
+      },
       "category": "developer-tools"
     }
   ]
