@@ -32,6 +32,11 @@ def git_project(tmp_path):
     return tmp_path
 
 
+def pass_ok(project, team, tid, lead, by="v", reason="test acceptance"):
+    return engine.op_verify(project, team, tid, "pass", "", lead, by=by,
+                            override_reason=reason)
+
+
 def init_team(project, tasks):
     spec_file = project / "spec.json"
     spec_file.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
@@ -73,7 +78,7 @@ class TestMachineGate:
         created = init_team(git_project, [checked_task("a", "exit 3")])
         lead = created["lead_token"]
         complete(git_project, "a")
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        outcome = pass_ok(git_project, "t", "a", lead)
         assert outcome["status"] == "in_progress"  # forced FAIL
         messages = engine.op_read(git_project, "t", "w1")
         assert "Quality Gate override" in messages[0]["text"]
@@ -92,7 +97,7 @@ class TestMachineGate:
                             [checked_task("a", "python3 check.py")])
         lead = created["lead_token"]
         complete(git_project, "a")
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        outcome = pass_ok(git_project, "t", "a", lead)
         assert outcome["status"] == "completed"
 
     def test_optional_criterion_does_not_block(self, git_project):
@@ -101,7 +106,7 @@ class TestMachineGate:
         created = init_team(git_project, [task_spec])
         lead = created["lead_token"]
         complete(git_project, "a")
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        outcome = pass_ok(git_project, "t", "a", lead)
         assert outcome["status"] == "completed"
 
     def test_violation_blocks_pass(self, git_project):
@@ -114,7 +119,7 @@ class TestMachineGate:
         git(ws, "add", "-A")
         git(ws, "commit", "-qm", "work")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        outcome = pass_ok(git_project, "t", "a", lead)
         assert outcome["status"] == "in_progress"
         messages = engine.op_read(git_project, "t", "w1")
         assert "write outside files_write: evil.txt" in messages[0]["text"]
@@ -130,7 +135,7 @@ class TestMachineGate:
                             [checked_task("a", "python3 check.py")])
         lead = created["lead_token"]
         complete(git_project, "a")  # writes out/a.md in the workspace
-        outcome = engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        outcome = pass_ok(git_project, "t", "a", lead)
         assert outcome["status"] == "completed"
 
 
@@ -140,9 +145,9 @@ class TestIntegrationGate:
             checked_task("a", "exit 0"), checked_task("b", "exit 0")])
         lead = created["lead_token"]
         complete(git_project, "a", "w1")
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         complete(git_project, "b", "w1")
-        engine.op_verify(git_project, "t", "b", "pass", "", lead)
+        pass_ok(git_project, "t", "b", lead)
 
         (git_project / "itest.py").write_text(
             "import sys, pathlib\n"
@@ -173,7 +178,7 @@ class TestIntegrationGate:
         created = init_team(git_project, [checked_task("a", "exit 0")])
         lead = created["lead_token"]
         complete(git_project, "a", "w1")
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         result = engine.op_integrate(git_project, "t", lead, apply=True)
         assert result["applied"] is True
         assert (git_project / "out" / "a.md").exists()
@@ -199,7 +204,7 @@ class TestIntegrationGate:
             git(ws, "commit", "-qm", tid)
             engine.op_submit(git_project, "t", tid, "w1",
                              claim["execution_token"])
-            engine.op_verify(git_project, "t", tid, "pass", "", lead)
+            pass_ok(git_project, "t", tid, lead)
         result = engine.op_integrate(git_project, "t", lead)
         assert result["ok"] is False
         assert result["conflicts"]["files"] == ["out/shared.md"]
@@ -214,7 +219,7 @@ class TestIntegrationGate:
         created = init_team(git_project, [checked_task("a", "exit 0")])
         lead = created["lead_token"]
         complete(git_project, "a", "w1")
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
         result = engine.op_integrate(git_project, "t", lead,
                                      check_command="exit 7")
         assert result["ok"] is False
@@ -244,7 +249,7 @@ class TestIntegrationGate:
         lead = created["lead_token"]
         claim = engine.op_claim(tmp_path, "t", "a", "w1")
         engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(tmp_path, "t", "a", "pass", "", lead)
+        pass_ok(tmp_path, "t", "a", lead)
         result = engine.op_integrate(tmp_path, "t", lead)
         assert result == {"ok": True, "mode": "shared", "applied": False}
         assert engine.op_status(tmp_path, "t")["run"]["status"] == "finished"

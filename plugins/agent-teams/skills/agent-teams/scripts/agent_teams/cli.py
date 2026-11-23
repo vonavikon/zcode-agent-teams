@@ -94,7 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--by", default="verifier",
                     help="recorded actor name, not an authority")
     sp.add_argument("--report", default="",
-                    help="path to the verifier's JSON report (optional)")
+                    help="path to the verifier's JSON report")
+    sp.add_argument("--override-reason", default="",
+                    help="lead override: accept without a report, with an "
+                         "audited reason")
     sp.set_defaults(fn=_cmd_verify)
 
     sp = sub.add_parser("release", help="lead returns a blocked task to pending")
@@ -251,7 +254,8 @@ def _cmd_verify(args):
         report = json.loads(Path(args.report).read_text(encoding="utf-8"))
     return engine.op_verify(Path(args.project_root), args.team, args.task,
                             args.verdict, args.feedback, args.lead_token,
-                            by=args.by, report=report)
+                            by=args.by, report=report,
+                            override_reason=args.override_reason)
 
 
 def _cmd_release(args):

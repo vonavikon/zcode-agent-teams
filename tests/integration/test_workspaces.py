@@ -32,6 +32,11 @@ def git_project(tmp_path):
     return tmp_path
 
 
+def pass_ok(project, team, tid, lead, by="v", reason="test acceptance"):
+    return engine.op_verify(project, team, tid, "pass", "", lead, by=by,
+                            override_reason=reason)
+
+
 def init_team(project, tasks, **config):
     spec = {"config": config, "tasks": tasks}
     spec_file = project / "spec.json"
@@ -184,7 +189,7 @@ class TestLifecycle:
         git(ws, "add", "-A")
         git(ws, "commit", "-qm", "final")
         engine.op_submit(git_project, "t", "a", "w1", claim["execution_token"])
-        engine.op_verify(git_project, "t", "a", "pass", "", lead)
+        pass_ok(git_project, "t", "a", lead)
 
         from agent_teams.storage import open_store
 
