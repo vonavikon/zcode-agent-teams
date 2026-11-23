@@ -112,8 +112,39 @@ def _read_record(lock_path: Path) -> dict | None:
 
 
 def read_holder(team_dir: Path) -> dict | None:
-    """Read the holder record for a team directory without acquiring."""
+    """Read the holder record for a team directory without acquiring.
+
+    On Windows this returns None while another process holds the lock:
+    the region lock denies reads through separate handles. The holder
+    itself reads its own record through the locking descriptor
+    (StateLock.holder).
+    """
     return _read_record(Path(team_dir) / LOCK_RELPATH)
+
+
+def _read_record_fd(fd: int) -> dict | None:
+    """Read the holder record through the locking descriptor itself.
+
+    Region locks permit I/O through the handle that owns them, so this
+    works on Windows even while the lock is held.
+    """
+    try:
+        position = os.lseek(fd, 0, os.SEEK_CUR)
+        os.lseek(fd, 0, os.SEEK_SET)
+        chunks = []
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        os.lseek(fd, position, os.SEEK_SET)
+        raw = b"".join(chunks).decode("utf-8", "replace").strip()
+        if not raw:
+            return None
+        holder = json.loads(raw)
+        return holder if isinstance(holder, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def holder_alive(holder: dict | None) -> bool | None:
@@ -249,7 +280,7 @@ class StateLock:
             return
         fd, self._fd = self._fd, None
         try:
-            current = _read_record(self.path)
+            current = _read_record_fd(fd)
             if current and current.get("token") == self.token:
                 # Still our record: clear it while holding the lock. Never
                 # touch a record another process wrote after us.
@@ -266,4 +297,8 @@ class StateLock:
 
     def holder(self) -> dict | None:
         """The holder record currently in the lock file (may be foreign)."""
+        if self._fd is not None:
+            # We hold the lock: read through the locking descriptor, which
+            # also works on Windows (separate handles are locked out).
+            return _read_record_fd(self._fd)
         return _read_record(self.path)

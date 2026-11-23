@@ -53,8 +53,14 @@ class TestAcquireRelease:
             pass
 
     def test_release_keeps_foreign_record(self, tmp_path):
+        import sys
+
         lock = locking.StateLock(tmp_path, "a", "op")
         with lock:
+            if sys.platform == "win32":
+                # A separate handle cannot write into the locked region on
+                # Windows; the foreign-record path is POSIX-only.
+                return
             # Simulate a foreign writer having replaced the record while we
             # hold the lock (a stale writer bypassing the OS lock).
             (tmp_path / locking.LOCK_RELPATH).write_text(
@@ -137,10 +143,17 @@ class TestTimeout:
                     pass
             assert excinfo.value.code == 3
             message = str(excinfo.value)
-            assert "child-proc" in message
-            assert str(p.pid) in message
-            assert "Do not delete the lock file" in message
-            assert excinfo.value.detail["holder"]["token"] == child_token
+            import sys
+
+            if sys.platform == "win32":
+                # Region locks deny reads through separate handles, so the
+                # holder record is legitimately unreadable there.
+                assert "unreadable" in message
+            else:
+                assert "child-proc" in message
+                assert str(p.pid) in message
+                assert "Do not delete the lock file" in message
+                assert excinfo.value.detail["holder"]["token"] == child_token
         finally:
             p.join(timeout=10)
         # After the holder exits, the lock is acquirable again.
