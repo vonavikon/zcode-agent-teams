@@ -1,0 +1,39 @@
+{
+  "team": "demo-v1",
+  "created": "2026-11-23T16:23:36.111Z",
+  "run": {
+    "id": "d9b04738a015480b9c7570e7ecd070d4",
+    "number": 1,
+    "status": "finished"
+  },
+  "tasks": [
+    {
+      "id": "lens-coverage",
+      "status": "completed",
+      "owner": "cov",
+      "assignee": "cov",
+      "title": "lens-coverage review",
+      "failed_rounds": 0,
+      "tokens": 35000
+    },
+    {
+      "id": "lens-perf",
+      "status": "completed",
+      "owner": "perf",
+      "assignee": "perf",
+      "title": "lens-perf review",
+      "failed_rounds": 0,
+      "tokens": 38000
+    },
+    {
+      "id": "lens-security",
+      "status": "completed",
+      "owner": "sec",
+      "assignee": "sec",
+      "title": "lens-security review",
+      "failed_rounds": 1,
+      "tokens": 41000
+    }
+  ],
+  "unread": {}
+}

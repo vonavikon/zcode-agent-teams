@@ -875,6 +875,138 @@ def op_usage(root: Path, team: str, task_id: str, agent_id: str,
         store.close()
 
 
+# ---------------------------------------------------------------- inspection extras
+
+
+def op_graph(root: Path, team: str) -> dict:
+    """ASCII DAG of the current statuses."""
+    store, d, _team = _open_team(root, team)
+    try:
+        tasks = store.list_tasks(team)
+        lines = []
+        for task in tasks:
+            prefix = " -> ".join(task["deps"] + [task["id"]]) \
+                if task["deps"] else task["id"]
+            lines.append(f"{prefix} [{task['status']}]")
+        return {"graph": lines, "tasks": len(tasks)}
+    finally:
+        store.close()
+
+
+def op_agents(root: Path, team: str) -> dict:
+    store, d, _team = _open_team(root, team)
+    try:
+        return {"agents": [
+            {"id": a["id"], "role": a["role"], "status": a["status"],
+             "current_task": a["current_task"], "restarts": a["restarts"],
+             "heartbeat_at": a["heartbeat_at"]}
+            for a in store.list_agents(team)]}
+    finally:
+        store.close()
+
+
+def op_logs(root: Path, team: str, limit: int = 40,
+            task_id: str | None = None) -> list[dict]:
+    store, d, _team = _open_team(root, team)
+    try:
+        rows = eventlog.list_events(store.conn, team, task_id=task_id)
+        return [{"seq": e["seq"], "ts": e["timestamp"],
+                 "type": e["event_type"], "actor": e["actor_id"],
+                 "task": e["task_id"]} for e in rows[-limit:]]
+    finally:
+        store.close()
+
+
+def op_diff(root: Path, team: str, task_id: str) -> dict:
+    store, d, _team = _open_team(root, team)
+    try:
+        task = store.get_task(team, task_id)
+        if task is None:
+            raise NotFoundError(f"task not found: {task_id}")
+        meta = task.get("metadata", {})
+        return {"task": task_id, "changed_files": meta.get("changed_files", []),
+                "write_set_violations": meta.get("workspace_violations", []),
+                "head_commit": task.get("head_commit"),
+                "base_commit": task.get("base_commit")}
+    finally:
+        store.close()
+
+
+def op_cost(root: Path, team: str) -> dict:
+    from .observability import compute_cost
+
+    store, d, _team = _open_team(root, team)
+    try:
+        run = _current_run(store, team)
+        usage = store.list_usage(team, run_id=run["id"] if run else None)
+        by_task: dict[str, dict] = {}
+        for record in usage:
+            slot = by_task.setdefault(record["task_id"] or "-",
+                                      {"tokens": 0, "cost_usd": 0.0})
+            slot["tokens"] += record.get("total_tokens") or 0
+            cost, _quality = compute_cost(record)
+            slot["cost_usd"] += cost or 0.0
+        total = round(sum(v["cost_usd"] for v in by_task.values()), 6)
+        return {"per_task": {k: {"tokens": v["tokens"],
+                                 "cost_usd": round(v["cost_usd"], 6)}
+                             for k, v in by_task.items()},
+                "total_usd": total, "quality": "estimated" if total else "unknown"}
+    finally:
+        store.close()
+
+
+def op_plan(root: Path, tasks_path: Path, *, check_fs: bool = True) -> dict:
+    """Validate a spec and show the DAG without creating anything."""
+    root = Path(root).resolve()
+    from .validation import topological_order, validate_team_spec
+
+    spec = json.loads(Path(tasks_path).read_text(encoding="utf-8"))
+    result = validate_team_spec(spec, root, check_fs=check_fs)
+    order = topological_order(spec.get("tasks", [])) if result.ok else None
+    return {"ok": result.ok,
+            "errors": [f"[{i.code}] {i.message}" for i in result.errors],
+            "warnings": [f"[{i.code}] {i.message}" for i in result.warnings],
+            "topological_order": order}
+
+
+def op_workspace(root: Path, team: str, clean_task: str | None = None) -> dict:
+    """List task worktrees, or clean one completed task's worktree."""
+    from . import workspaces
+
+    store, d, team_row = _open_team(root, team)
+    try:
+        tasks = store.list_tasks(team)
+        if clean_task:
+            task = store.get_task(team, clean_task)
+            if task is None:
+                raise NotFoundError(f"task not found: {clean_task}")
+            if task["status"] != "completed":
+                raise StateRejected(
+                    "only completed tasks can have their workspace cleaned")
+            workspaces.remove_workspace(Path(team_row["project_root"]), d, team,
+                                        clean_task, keep_branch=True)
+            return {"cleaned": clean_task}
+        return {"workspaces": [
+            {"task": t["id"], "path": t["workspace_path"], "branch": t["branch"],
+             "base": t["base_commit"],
+             "exists": bool(t["workspace_path"])
+             and Path(t["workspace_path"]).exists()}
+            for t in tasks if t.get("workspace_path")]}
+    finally:
+        store.close()
+
+
+def op_report(root: Path, team: str, out_path: Path) -> dict:
+    from .report import write_report
+
+    store, d, _team = _open_team(root, team)
+    try:
+        path = write_report(store, team, Path(out_path))
+        return {"report": str(path)}
+    finally:
+        store.close()
+
+
 # ---------------------------------------------------------------- status
 
 

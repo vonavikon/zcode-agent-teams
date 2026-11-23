@@ -37,6 +37,8 @@ def _print_result(result, *, json_mode=False) -> None:
                   f"(attempt {result['attempt']})")
             print(f"execution token (pass it to the executor, shown once): "
                   f"{result['execution_token']}")
+            if result.get("workspace"):
+                print(f"workspace={result['workspace']}")
             return
         print("OK " + " ".join(f"{k}={v}" for k, v in result.items()
                                if not isinstance(v, (dict, list))))
@@ -176,6 +178,44 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--notification", required=True)
     sp.set_defaults(fn=_cmd_usage)
 
+    sp = sub.add_parser("plan", help="validate a spec and show the DAG")
+    sp.add_argument("--tasks", required=True)
+    sp.add_argument("--project-root", default=".")
+    sp.set_defaults(fn=_cmd_plan)
+
+    sp = sub.add_parser("graph", help="ASCII graph of task statuses")
+    _add_common(sp)
+    sp.set_defaults(fn=_cmd_graph)
+
+    sp = sub.add_parser("agents", help="agents with roles and states")
+    _add_common(sp)
+    sp.set_defaults(fn=_cmd_agents)
+
+    sp = sub.add_parser("logs", help="recent events")
+    _add_common(sp)
+    sp.add_argument("--task", default="")
+    sp.add_argument("--limit", type=int, default=40)
+    sp.set_defaults(fn=_cmd_logs)
+
+    sp = sub.add_parser("diff", help="changed files of a submitted task")
+    _add_common(sp)
+    sp.add_argument("--task", required=True)
+    sp.set_defaults(fn=_cmd_diff)
+
+    sp = sub.add_parser("cost", help="cost breakdown per task")
+    _add_common(sp)
+    sp.set_defaults(fn=_cmd_cost)
+
+    sp = sub.add_parser("workspace", help="list worktrees or clean one")
+    _add_common(sp)
+    sp.add_argument("--clean", default="", help="task id to clean")
+    sp.set_defaults(fn=_cmd_workspace)
+
+    sp = sub.add_parser("report", help="write the HTML run report")
+    _add_common(sp)
+    sp.add_argument("--out", required=True)
+    sp.set_defaults(fn=_cmd_report)
+
     sp = sub.add_parser("langfuse", help="export the run to Langfuse")
     _add_common(sp)
     sp.add_argument("--name", default="")
@@ -267,6 +307,41 @@ def _cmd_metrics(args):
 def _cmd_usage(args):
     return engine.op_usage(Path(args.project_root), args.team, args.task,
                            args.agent, Path(args.notification))
+
+
+def _cmd_plan(args):
+    return engine.op_plan(Path(args.project_root), Path(args.tasks))
+
+
+def _cmd_graph(args):
+    return engine.op_graph(Path(args.project_root), args.team)
+
+
+def _cmd_agents(args):
+    return engine.op_agents(Path(args.project_root), args.team)
+
+
+def _cmd_logs(args):
+    return engine.op_logs(Path(args.project_root), args.team, args.limit,
+                          args.task or None)
+
+
+def _cmd_diff(args):
+    return engine.op_diff(Path(args.project_root), args.team, args.task)
+
+
+def _cmd_cost(args):
+    return engine.op_cost(Path(args.project_root), args.team)
+
+
+def _cmd_workspace(args):
+    return engine.op_workspace(Path(args.project_root), args.team,
+                               args.clean or None)
+
+
+def _cmd_report(args):
+    return engine.op_report(Path(args.project_root), args.team,
+                            Path(args.out))
 
 
 def _cmd_langfuse(args):

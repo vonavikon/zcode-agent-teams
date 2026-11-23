@@ -1,0 +1,29 @@
+# Testing
+
+Run from the repository root:
+
+    python -m pytest tests/ -q
+
+Layers:
+
+- `tests/unit/`: every module in isolation (locking, validation, DAG,
+  storage and migrations, events and the hash chain, state machine,
+  observability, extras).
+- `tests/security/`: path rules (absolute, traversal, reserved
+  directories, symlink escapes, case collisions) and the authority
+  battery (forged lead token, executor self-verify, stale execution
+  token, wrong owner, verifier-role claim).
+- `tests/concurrency/`: real multi-process suites: counter contention
+  under the lock, crash release through the OS, killed SQLite
+  transactions, concurrent event writers with chain verification.
+- `tests/integration/`: spec scenarios A-F end to end, workspace
+  isolation on real git repositories, the machine quality gate, the
+  integration gate (including a real merge conflict), CLI subprocess
+  smoke tests with exit codes.
+
+CI (`.github/workflows/ci.yml`): ubuntu, macos and windows times Python
+3.10-3.14, plus a vermin check that the engine stays 3.10-compatible.
+
+What is deliberately absent: no test calls an LLM or the network; the
+Langfuse uploader is exercised only through its idempotency and error
+paths.

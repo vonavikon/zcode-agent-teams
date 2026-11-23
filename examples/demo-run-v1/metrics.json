@@ -1,0 +1,21 @@
+{
+  "tasks_total": 3,
+  "task_success_rate": 1.0,
+  "verification_attempts": 4,
+  "verification_pass_rate": 0.75,
+  "verification_fail_rate": 0.25,
+  "average_rework_rounds": 0.333,
+  "average_task_duration_s": 0.951,
+  "agent_restarts": 0,
+  "recovered_tasks": 0,
+  "recovery_rate": null,
+  "tokens_total": 114000,
+  "tokens_per_task": 38000.0,
+  "cost_total_usd": 0.2052,
+  "cost_quality": "estimated",
+  "cost_per_task": 0.0684,
+  "cost_per_successful_task": 0.0684,
+  "parallel_execution_time_s": 1.247,
+  "sequential_execution_estimate_s": 2.854,
+  "speedup_estimate": 2.289
+}
