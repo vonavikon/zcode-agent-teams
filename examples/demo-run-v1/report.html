@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>agent-teams report: demo-v1</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 2rem;
+         color: #1a1a1a; background: #fafafa; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .3rem; }
+  .card { background: #fff; border: 1px solid #e2e2e2; border-radius: 8px;
+           padding: 1rem 1.2rem; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .3rem .5rem;
+            border-bottom: 1px solid #eee; vertical-align: top; }
+  th { color: #666; font-weight: 600; }
+  .meta { color: #444; font-size: .85rem; margin: .2rem 0; }
+  .st { padding: .05rem .45rem; border-radius: 10px; font-size: .78rem; }
+  .st-completed { background: #d8f3dc; }
+  .st-in_progress, .st-awaiting_verification { background: #fff3cd; }
+  .st-blocked { background: #f8d7da; }
+  .st-pending { background: #e9ecef; }
+  .st-cancelled { background: #dee2e6; color: #777; }
+  .violations { color: #a4161a; font-size: .85rem; font-weight: 600; }
+  .fb { max-width: 34rem; }
+  footer { color: #888; font-size: .78rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<h1>agent-teams report: demo-v1</h1>
+<p class="meta">created 2026-11-23T16:23:36.111Z
+   | run #1
+   finished
+   | project /private/tmp/zat-demo/project</p>
+
+<div class="card">
+<h2>Task graph</h2>
+<table>
+  <tr><th>task</th><th>depends on</th><th>status</th><th>current owner</th></tr>
+        <tr><td>lens-coverage</td><td>-</td><td><span class="st st-completed">completed</span></td><td>cov</td></tr>      <tr><td>lens-perf</td><td>-</td><td><span class="st st-completed">completed</span></td><td>perf</td></tr>      <tr><td>lens-security</td><td>-</td><td><span class="st st-completed">completed</span></td><td>sec</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>Metrics and cost</h2>
+<table>
+      <tr><td>tasks total</td><td>3</td></tr>      <tr><td>task success rate</td><td>1.0</td></tr>      <tr><td>verification attempts</td><td>4</td></tr>      <tr><td>verification pass rate</td><td>0.75</td></tr>      <tr><td>verification fail rate</td><td>0.25</td></tr>      <tr><td>average rework rounds</td><td>0.333</td></tr>      <tr><td>average task duration s</td><td>0.951</td></tr>      <tr><td>agent restarts</td><td>0</td></tr>      <tr><td>recovered tasks</td><td>0</td></tr>      <tr><td>recovery rate</td><td></td></tr>      <tr><td>tokens total</td><td>114000</td></tr>      <tr><td>tokens per task</td><td>38000.0</td></tr>      <tr><td>cost total usd</td><td>0.2052</td></tr>      <tr><td>cost quality</td><td>estimated</td></tr>      <tr><td>cost per task</td><td>0.0684</td></tr>      <tr><td>cost per successful task</td><td>0.0684</td></tr>      <tr><td>parallel execution time s</td><td>1.247</td></tr>      <tr><td>sequential execution estimate s</td><td>2.854</td></tr>      <tr><td>speedup estimate</td><td>2.289</td></tr>
+</table>
+</div>
+
+
+    <section class="card">
+      <h2>lens-coverage: lens-coverage review</h2>
+      <p class="meta">status <b class="st st-completed">
+        completed</b>, owner cov
+        (assignee cov),
+        attempts 1, failed rounds
+        0, tokens 35000,
+        cost $0.0630</p>
+      <p class="meta">writes: reports/coverage.md
+        | reads: README.md</p>
+      
+      <table>
+        <tr><th>attempt</th><th>verdict</th><th>verifier</th>
+            <th>feedback</th><th>at</th></tr>
+                <tr><td>#1</td><td>pass</td><td>verifier</td><td class="fb"></td><td>2026-11-23T16:23:37.584Z</td></tr>
+      </table>
+    </section>
+    <section class="card">
+      <h2>lens-perf: lens-perf review</h2>
+      <p class="meta">status <b class="st st-completed">
+        completed</b>, owner perf
+        (assignee perf),
+        attempts 1, failed rounds
+        0, tokens 38000,
+        cost $0.0684</p>
+      <p class="meta">writes: reports/perf.md
+        | reads: README.md</p>
+      
+      <table>
+        <tr><th>attempt</th><th>verdict</th><th>verifier</th>
+            <th>feedback</th><th>at</th></tr>
+                <tr><td>#1</td><td>pass</td><td>verifier</td><td class="fb"></td><td>2026-11-23T16:23:37.481Z</td></tr>
+      </table>
+    </section>
+    <section class="card">
+      <h2>lens-security: lens-security review</h2>
+      <p class="meta">status <b class="st st-completed">
+        completed</b>, owner sec
+        (assignee sec),
+        attempts 1, failed rounds
+        1, tokens 41000,
+        cost $0.0738</p>
+      <p class="meta">writes: reports/security.md
+        | reads: README.md</p>
+      
+      <table>
+        <tr><th>attempt</th><th>verdict</th><th>verifier</th>
+            <th>feedback</th><th>at</th></tr>
+                <tr><td>#1</td><td>fail</td><td>verifier</td><td class="fb">findings need a file:line reference</td><td>2026-11-23T16:23:37.064Z</td></tr>        <tr><td>#2</td><td>pass</td><td>verifier</td><td class="fb"></td><td>2026-11-23T16:23:37.403Z</td></tr>
+      </table>
+    </section>
+
+<div class="card">
+<h2>Blocks and conflicts</h2>
+<table>
+  <tr><th>kind</th><th>task</th><th>detail</th><th>at</th></tr>
+  
+  
+  
+  <tr><td colspan="4">none</td></tr>
+</table>
+<p class="meta">0 unread mailbox messages</p>
+</div>
+
+<footer>generated by agent-teams v1.0.0 from the engine state, no Langfuse
+required</footer>
+</body>
+</html>

@@ -1,0 +1,70 @@
+{
+  "tasks": [
+    {
+      "id": "lens-security",
+      "title": "lens-security review",
+      "assignee": "sec",
+      "lens": "security",
+      "files_read": [
+        "README.md"
+      ],
+      "files_write": [
+        "reports/security.md"
+      ],
+      "acceptance": [
+        "report exists with an evidenced finding",
+        {
+          "id": "AC-1",
+          "description": "report file present",
+          "type": "file_check",
+          "verification": "test -f reports/security.md"
+        }
+      ],
+      "deps": []
+    },
+    {
+      "id": "lens-perf",
+      "title": "lens-perf review",
+      "assignee": "perf",
+      "lens": "perf",
+      "files_read": [
+        "README.md"
+      ],
+      "files_write": [
+        "reports/perf.md"
+      ],
+      "acceptance": [
+        "report exists with an evidenced finding",
+        {
+          "id": "AC-1",
+          "description": "report file present",
+          "type": "file_check",
+          "verification": "test -f reports/perf.md"
+        }
+      ],
+      "deps": []
+    },
+    {
+      "id": "lens-coverage",
+      "title": "lens-coverage review",
+      "assignee": "cov",
+      "lens": "coverage",
+      "files_read": [
+        "README.md"
+      ],
+      "files_write": [
+        "reports/coverage.md"
+      ],
+      "acceptance": [
+        "report exists with an evidenced finding",
+        {
+          "id": "AC-1",
+          "description": "report file present",
+          "type": "file_check",
+          "verification": "test -f reports/coverage.md"
+        }
+      ],
+      "deps": []
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+OK team demo-v1: 3 tasks, /private/tmp/zat-demo/project/.agent-teams/demo-v1
+lead token (shown once, keep it in the lead session): <REDACTED>

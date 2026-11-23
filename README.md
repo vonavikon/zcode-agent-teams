@@ -1,6 +1,6 @@
 # agent-teams: agent teams for ZCode
 
-A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) approach to ZCode mechanics: several agents work on one code base from a shared task list, and acceptance is part of the loop.
+A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) approach to ZCode, with the acceptance loop enforced by the engine instead of agent discipline: several agents work in isolated git worktrees over one code base, every result passes a machine-checked gate before integration.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -8,58 +8,76 @@ A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-te
 
 ## What is inside
 
-- **Shared task list**: `.agent-teams/<team>/tasks.json` holds statuses, dependencies and file sets. Every mutation runs under a single state lock and is written atomically (since v0.2.0)
-- **Mailbox messages**: agents write to each other directly, without going through the lead: `.agent-teams/<team>/inbox/<agent>.json`
-- **Event log and locks**: `events.jsonl` records every status transition (it is the source for the Langfuse report). `locks/` holds the state lock (O_EXCL; stale locks are reclaimed automatically)
-- **Round limit**: a task that keeps failing verification goes to `blocked` and comes back to the lead through `release`. In v0.2.x the block happens on the third failed verification (see [BACKLOG.md](BACKLOG.md))
-- **Acceptance gate (exit-2 loop)**: an executor does not close its own task. A verifier subagent checks each criterion against the actual files. FAIL puts feedback into the executor's mailbox and the work continues
-- **Langfuse analytics**: `team.py langfuse` uploads the run: one trace per team, one span per task, one score per verdict. Rounds before passing, time per lens and cost are visible in the UI
+- **State machine and SQLite state**: every task status change is a guarded, hash-chained transition in `state.db`; no lost updates, full audit trail, automatic backups and migrations
+- **Isolated workspaces**: one git worktree and branch per task, base commit recorded, uncommitted work survives crashes and releases
+- **Write-set control**: the actual diff is compared against the task's `files_write`; any write outside the set fails the gate
+- **Machine acceptance gate**: criteria with a verification command are run by the engine itself; a failed required criterion overrides a PASS verdict. The executor never verifies its own work: verdicts require the lead token, submissions the execution token
+- **Integration gate**: accepted branches merge into an integration branch, an optional check command runs in the merged tree; conflicts and regressions leave the run active and the project branch untouched
+- **Recovery**: leases, heartbeats, restart limits, automatic requeue of lost executors
+- **Observability**: token usage from subagent notifications, cost with explicit quality flags, run metrics including the multi-agent vs single-agent comparison, a self-contained HTML report and an idempotent Langfuse export
 
-Roles: the lead is the main ZCode session (it plans, spawns and summarizes), teammates are subagents, verifiers are read-only subagents.
+Roles: the lead is the main ZCode session; teammates and verifiers are subagents (role profiles ship in `agents/`).
 
 ## Installation
 
-In ZCode: Plugin Marketplace → Add → Add Plugin Marketplace → point to the directory of this repository (marketplace.json is in the root). Then Personal → zcode-agent-teams → agent-teams → Install.
+ZCode → Plugin Marketplace → Add → Add Plugin Marketplace → point to the directory of this repository (marketplace.json is in the root). Then Personal → zcode-agent-teams → agent-teams → Install.
 
-The skill appears in the list as `agent-teams`. The Langfuse report needs the environment variables `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST`. Self-hosted instances work: traces go to the OTLP endpoint `/api/public/otel/v1/traces` and scores to `/api/public/scores`, so the events_only mode is enough.
+The skill appears as `agent-teams`. The engine needs Python 3.10+ and nothing else (stdlib only). The Langfuse export additionally needs `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and optionally `LANGFUSE_HOST` (self-hosted works; traces go to the OTLP endpoint, so the events_only mode is enough).
 
 ## How it works
 
 ```
-lead: tasks.json (non-overlapping files_write, acceptance criteria)
-  └─ team.py init
+lead: tasks.json (validated: DAG, paths, write overlaps)
+  └─ team.py init                     prints the LEAD TOKEN once
   └─ spawn teammates (Agent tool, background)      ← 2-5 agents
-       └─ teammate: claim → work → "VERIFICATION REQUEST"
-            └─ lead spawns a verifier (read-only)
-                 ├─ PASS → team.py verify --verdict pass
-                 └─ FAIL → verify --verdict fail --feedback "..."
-                      └─ feedback to mailbox → SendMessage to executor → fix
-  └─ team.py status → all completed
-  └─ team.py langfuse → trace + spans + scores
+       └─ teammate: claim (execution token, worktree) → work → submit
+            └─ lead spawns a verifier (read-only) on each VERIFICATION REQUEST
+                 ├─ engine runs command-backed criteria itself
+                 ├─ PASS → team.py verify --verdict pass --lead-token ...
+                 └─ FAIL → verify --verdict fail --feedback "..." → executor fixes
+                      (2nd FAIL by default → blocked → release or handle)
+  └─ team.py integrate --lead-token ... [--check CMD] [--apply]
+  └─ team.py status → all completed; report --out run.html; metrics; langfuse
 ```
 
 ## Recipes
 
-- **Review in N lenses**: security, performance and coverage over one object, each lens writes to its own output file
-- **Competing hypotheses**: N independent investigators of one bug, inputs do not overlap, the debate is a separate task. Guards against anchoring on the first hypothesis
-- **Parallel implementation by layers**: a split into non-overlapping files, `deps` set the order of waves
+- **Review in N lenses**: security, performance and coverage over one object, each lens writes its own output file
+- **Competing hypotheses**: N independent investigators of one bug, the debate is a separate task. Guards against anchoring on the first hypothesis
+- **Parallel implementation by layers**: a split into non-overlapping files, `deps` set the order of waves, the integration gate merges the result
 
 ## When a team is not needed
 
-Sequential tasks, edits to one file, many dependencies: one session or one subagent is cheaper. Tokens grow linearly with each teammate.
+Sequential tasks, edits to one file, many dependencies: one session or one subagent is cheaper. Tokens grow linearly with each teammate; check `metrics` for the actual speedup.
 
 ## Structure
 
 ```
 plugins/agent-teams/
-  .zcode-plugin/plugin.json          plugin manifest
-  skills/agent-teams/SKILL.md         lead playbook
-  skills/agent-teams/references/      teammate and verifier prompts
-  skills/agent-teams/scripts/team.py  engine (stdlib-only, Python 3.10+)
+  .zcode-plugin/plugin.json          manifest (skills + agents)
+  agents/                            executor and verifier role profiles
+  skills/agent-teams/SKILL.md        the lead playbook
+  skills/agent-teams/references/     teammate and verifier prompts
+  skills/agent-teams/scripts/
+    team.py                          engine CLI (v1.0)
+    team_v02.py                      legacy v0.2 engine for old teams
+    agent_teams/                     the package (engine, storage, locks,
+                                     validation, workspaces, quality,
+                                     observability, report, langfuse)
+docs/                                architecture, state machine, security,
+                                     workspace isolation, verification,
+                                     observability, cost model, testing,
+                                     troubleshooting
+schemas/tasks.schema.json            JSON Schema for the task spec
+tests/                               unit, security, concurrency (real
+                                     processes), integration (scenarios A-F)
 marketplace.json                     installation catalog
-examples/tasks-review.json           task example (review in 3 lenses)
-examples/demo-run/                   artifacts of the first run
+examples/                            task examples and run artifacts
 ```
+
+## Compatibility
+
+Teams created by the v0.2 engine (JSON files without `state.db`) keep working through `team_v02.py`. New teams use `team.py` and the SQLite engine. The v0.2 mirrors (`tasks.json`, `inbox/`, `events.jsonl`) are still written for every mutation.
 
 ## License
 

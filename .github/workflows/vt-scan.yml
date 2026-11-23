@@ -1,0 +1,42 @@
+name: vt-scan
+# Tarball scan of the default branch in VirusTotal. The key comes from
+# the VT_API_KEY secret and is never printed. The badge in the README is
+# updated from the logged N/M clean numbers by the owner or an agent.
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Tarball the default branch and scan it
+        env:
+          VT: ${{ secrets.VT_API_KEY }}
+        run: |
+          set -e -o pipefail
+          TARBALL=/tmp/zcode-agent-teams.tar.gz
+          git clone -q "https://github.com/vonavikon/zcode-agent-teams.git" pub
+          tar -czf "$TARBALL" -C pub .
+          echo "tarball: $(stat -c%s "$TARBALL") bytes"
+          if [ -z "$VT" ]; then echo "VT_API_KEY secret is not set, skipping"; exit 0; fi
+          UP=$(curl -sS -X POST "https://www.virustotal.com/api/v3/files" \
+                -H "x-apikey: $VT" -F "file=@$TARBALL")
+          ID=$(echo "$UP" | jq -r '.data.id // empty')
+          if [ -z "$ID" ]; then echo "$UP" | head -c 400; exit 3; fi
+          echo "analysis: $ID"
+          for i in $(seq 1 40); do
+            sleep 15
+            RES=$(curl -sS -H "x-apikey: $VT" "https://www.virustotal.com/api/v3/analyses/$ID")
+            ST=$(echo "$RES" | jq -r '.data.attributes.status')
+            echo "poll $i: $ST"
+            [ "$ST" = "completed" ] && break
+          done
+          [ "$ST" = "completed" ] || { echo "analysis did not complete"; exit 4; }
+          MAL=$(echo "$RES" | jq -r '.data.attributes.stats.malicious')
+          SUS=$(echo "$RES" | jq -r '.data.attributes.stats.suspicious')
+          TOT=$(echo "$RES" | jq '.data.attributes.stats | to_entries | map(.value) | add')
+          CLEAN=$((TOT - MAL - SUS))
+          HASH=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          echo "RESULT: $CLEAN/$TOT clean (malicious=$MAL suspicious=$SUS)"
+          echo "REPORT: https://www.virustotal.com/gui/file/$HASH"

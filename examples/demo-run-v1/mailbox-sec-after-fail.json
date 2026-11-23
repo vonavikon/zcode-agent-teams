@@ -1,0 +1,11 @@
+[
+  {
+    "id": "8174097905c9",
+    "from": "gate",
+    "to": "sec",
+    "text": "VERIFY FAIL on task lens-security (round 1): findings need a file:line reference",
+    "ts": "2026-11-23T16:23:37.065Z",
+    "task": "lens-security",
+    "kind": "verify_fail"
+  }
+]

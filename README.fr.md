@@ -1,65 +1,85 @@
 # agent-teams : équipes d'agents pour ZCode
 
-Un portage de l'approche [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) vers la mécanique de ZCode : plusieurs agents travaillent sur une même base de code à partir d'une liste de tâches partagée, et l'acceptation fait partie de la boucle.
-
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français**
 
+Un portage de l'approche [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) vers la mécanique de ZCode où le cycle d'acceptation est imposé par le moteur et non par la discipline des agents : plusieurs agents travaillent dans des worktrees git isolés sur une même base de code et chaque résultat passe une porte vérifiée par la machine avant intégration.
+
 ## Ce que contient le plugin
 
-- **Liste de tâches partagée** : `.agent-teams/<team>/tasks.json` contient les statuts, les dépendances et les ensembles de fichiers. Chaque mutation passe par un verrou d'état unique et s'écrit de façon atomique (depuis v0.2.0)
-- **Messages en boîte aux lettres (mailbox)** : les agents s'écrivent directement, sans passer par le lead. Fichiers : `.agent-teams/<team>/inbox/<agent>.json`
-- **Journal et verrous** : `events.jsonl` enregistre chaque changement de statut (c'est la source du rapport Langfuse). Le répertoire `locks/` contient le verrou d'état (O_EXCL ; les verrous périmés sont récupérés automatiquement)
-- **Limite de tours** : une tâche qui échoue encore et encore à la vérification passe en `blocked` et revient au lead via `release`. En v0.2.x le blocage arrive au troisième échec de vérification (voir [BACKLOG.md](BACKLOG.md))
-- **Porte d'acceptation (boucle exit-2)** : un exécutant ne clôt pas sa propre tâche. Un sous-agent vérificateur contrôle chaque critère sur les fichiers réels. Un FAIL dépose le feedback dans la boîte aux lettres de l'exécutant et le travail continue
-- **Analytique Langfuse** : `team.py langfuse` envoie l'exécution : une trace par équipe, un span par tâche, un score par verdict. Les tours avant réussite, le temps par lens et le coût sont visibles dans l'interface
+- **Machine à états et état SQLite** : chaque changement de statut est une transition protégée à chaîne de hash dans `state.db` ; aucune mise à jour perdue, piste d'audit complète, sauvegardes et migrations automatiques
+- **Espaces de travail isolés** : un worktree et une branche git par tâche, commit de base enregistré, le travail non commité survit aux crashes et aux releases
+- **Contrôle des écritures** : le diff réel est comparé au `files_write` de la tâche ; toute écriture hors ensemble fait tomber la porte
+- **Porte d'acceptation machine** : le moteur exécute lui-même les critères portant une commande de vérification ; un critère obligatoire échoué annule un verdict PASS. L'exécutant ne valide jamais son propre travail : les verdicts exigent le token du lead, les soumissions le token d'exécution
+- **Porte d'intégration** : les branches acceptées fusionnent dans une branche d'intégration, une commande de contrôle facultative tourne dans l'arbre fusionné ; conflits et régressions laissent le run actif et la branche du projet intacte
+- **Récupération** : leases, heartbeats, limites de redémarrage, remise en file automatique des exécutants perdus
+- **Observabilité** : tokens tirés des notifications des sous-agents, coût avec des indicateurs de qualité explicites, métriques de run dont la comparaison équipe contre agent unique, un rapport HTML autonome et un export Langfuse idempotent
 
-Rôles : le lead est la session ZCode principale (il planifie, lance les sous-agents et synthétise), les teammates sont des sous-agents et les vérificateurs sont des sous-agents en lecture seule.
+Rôles : le lead est la session ZCode principale ; teammates et vérificateurs sont des sous-agents (les profils de rôle sont dans `agents/`).
 
 ## Installation
 
-Dans ZCode : Plugin Marketplace → Add → Add Plugin Marketplace → indiquer le répertoire de ce dépôt (marketplace.json est à la racine). Puis Personal → zcode-agent-teams → agent-teams → Install.
+Dans ZCode : Plugin Marketplace → Add → Add Plugin Marketplace → indiquer le répertoire de ce dépôt (marketplace.json à la racine). Puis Personal → zcode-agent-teams → agent-teams → Install.
 
-La skill apparaît dans la liste sous le nom `agent-teams`. Le rapport Langfuse nécessite les variables d'environnement `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` et `LANGFUSE_HOST`. Les instances self-hosted fonctionnent : les traces partent vers le endpoint OTLP `/api/public/otel/v1/traces` et les scores vers `/api/public/scores`, donc le mode events_only suffit.
+La skill apparaît sous le nom `agent-teams`. Le moteur exige Python 3.10+ et rien d'autre (stdlib seule). L'export Langfuse requiert en plus `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` et éventuellement `LANGFUSE_HOST` (le self-hosted fonctionne ; les traces passent par le endpoint OTLP, le mode events_only suffit).
 
 ## Fonctionnement
 
 ```
-lead: tasks.json (non-overlapping files_write, acceptance criteria)
-  └─ team.py init
+lead: tasks.json (validated: DAG, paths, write overlaps)
+  └─ team.py init                     prints the LEAD TOKEN once
   └─ spawn teammates (Agent tool, background)      ← 2-5 agents
-       └─ teammate: claim → work → "VERIFICATION REQUEST"
-            └─ lead spawns a verifier (read-only)
-                 ├─ PASS → team.py verify --verdict pass
-                 └─ FAIL → verify --verdict fail --feedback "..."
-                      └─ feedback to mailbox → SendMessage to executor → fix
-  └─ team.py status → all completed
-  └─ team.py langfuse → trace + spans + scores
+       └─ teammate: claim (execution token, worktree) → work → submit
+            └─ lead spawns a verifier (read-only) on each VERIFICATION REQUEST
+                 ├─ engine runs command-backed criteria itself
+                 ├─ PASS → team.py verify --verdict pass --lead-token ...
+                 └─ FAIL → verify --verdict fail --feedback "..." → executor fixes
+                      (2nd FAIL by default → blocked → release or handle)
+  └─ team.py integrate --lead-token ... [--check CMD] [--apply]
+  └─ team.py status → all completed; report --out run.html; metrics; langfuse
+
 ```
 
 ## Recettes
 
-- **Revue en N lenses (lens)** : sécurité, performance et couverture sur un même objet, chaque lens écrit dans son propre fichier de sortie
-- **Hypothèses concurrentes** : N enquêteurs indépendants sur un même bug, les entrées ne se recoupent pas et le débat est une tâche à part. Protège contre l'ancrage sur la première hypothèse
-- **Implémentation parallèle par couches** : un découpage en fichiers disjoints, `deps` fixe l'ordre des vagues
+- **Revue en N lenses** : sécurité, performance et couverture sur un même objet, chaque lens écrit son propre fichier
+- **Hypothèses concurrentes** : N enquêteurs indépendants sur un même bug, le débat est une tâche à part. Protège contre l'ancrage sur la première hypothèse
+- **Implémentation parallèle par couches** : découpage en fichiers disjoints, `deps` fixe l'ordre des vagues, la porte d'intégration fusionne le résultat
 
 ## Quand une équipe n'est pas nécessaire
 
-Tâches séquentielles, modifications d'un seul fichier, beaucoup de dépendances : une session ou un seul sous-agent revient moins cher. Les tokens croissent linéairement avec chaque teammate.
+Tâches séquentielles, modifications d'un seul fichier, beaucoup de dépendances : une session ou un seul sous-agent revient moins cher. Les tokens croissent linéairement avec chaque teammate ; le gain réel se lit dans `metrics`.
 
 ## Structure
 
 ```
 plugins/agent-teams/
-  .zcode-plugin/plugin.json          plugin manifest
-  skills/agent-teams/SKILL.md         lead playbook
-  skills/agent-teams/references/      teammate and verifier prompts
-  skills/agent-teams/scripts/team.py  engine (stdlib-only, Python 3.10+)
+  .zcode-plugin/plugin.json          manifest (skills + agents)
+  agents/                            executor and verifier role profiles
+  skills/agent-teams/SKILL.md        the lead playbook
+  skills/agent-teams/references/     teammate and verifier prompts
+  skills/agent-teams/scripts/
+    team.py                          engine CLI (v1.0)
+    team_v02.py                      legacy v0.2 engine for old teams
+    agent_teams/                     the package (engine, storage, locks,
+                                     validation, workspaces, quality,
+                                     observability, report, langfuse)
+docs/                                architecture, state machine, security,
+                                     workspace isolation, verification,
+                                     observability, cost model, testing,
+                                     troubleshooting
+schemas/tasks.schema.json            JSON Schema for the task spec
+tests/                               unit, security, concurrency (real
+                                     processes), integration (scenarios A-F)
 marketplace.json                     installation catalog
-examples/tasks-review.json           task example (review in 3 lenses)
-examples/demo-run/                   artifacts of the first run
+examples/                            task examples and run artifacts
+
 ```
+
+## Compatibilité
+
+Les équipes créées par le moteur v0.2 (fichiers JSON sans `state.db`) continuent de fonctionner via `team_v02.py`. Les nouvelles équipes utilisent `team.py` et le moteur SQLite. Les miroirs v0.2 (`tasks.json`, `inbox/`, `events.jsonl`) sont toujours écrits à chaque mutation.
 
 ## Licence
 

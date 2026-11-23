@@ -1,0 +1,1 @@
+OK ok=True mode=worktree applied=True workspace=/private/tmp/zat-demo/project/.agent-teams/demo-v1/integration/workspace
