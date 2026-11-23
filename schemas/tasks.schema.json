@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vonavikon/zcode-agent-teams/schemas/tasks.schema.json",
+  "title": "agent-teams team specification",
+  "description": "Structural schema for the team spec (version 0.3). Covers types, required keys, name patterns, acceptance item shapes and enums. It cannot express DAG rules (unknown deps, cycles), filesystem path rules (absolute, traversal, symlink escapes), write overlaps or case-collisions: those are checked by agent_teams.validation.validate_team_spec at init time.",
+  "type": "object",
+  "required": ["tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": { "enum": ["auto", "worktree", "shared"] },
+        "allow_write_overlaps": { "type": "boolean" },
+        "allow_write_overlaps_reason": { "type": "string" },
+        "max_verification_failures": { "type": "integer", "minimum": 1 },
+        "max_execution_retries": { "type": "integer", "minimum": 0 },
+        "max_agent_restarts": { "type": "integer", "minimum": 0 },
+        "execution_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
+        "heartbeat_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
+        "lock_timeout_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/name" },
+          "role": { "enum": ["lead", "executor", "verifier", "integrator"] }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "assignee", "acceptance"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/name" },
+          "title": { "type": "string", "minLength": 1 },
+          "assignee": { "$ref": "#/$defs/name" },
+          "lens": { "type": "string" },
+          "files_read": { "$ref": "#/$defs/pathList" },
+          "files_write": { "$ref": "#/$defs/pathList" },
+          "deps": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/name" }
+          },
+          "acceptance": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                {
+                  "type": "object",
+                  "required": ["description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+                    "description": { "type": "string", "minLength": 1 },
+                    "type": {
+                      "enum": ["test", "code_review", "file_check", "security_check",
+                               "documentation", "manual"]
+                    },
+                    "required": { "type": "boolean" },
+                    "verification": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "pathList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}
