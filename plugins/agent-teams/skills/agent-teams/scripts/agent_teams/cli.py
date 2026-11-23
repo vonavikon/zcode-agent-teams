@@ -164,6 +164,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="merge the integration branch into the project branch")
     sp.set_defaults(fn=_cmd_integrate)
 
+    sp = sub.add_parser("metrics", help="run metrics and cost")
+    _add_common(sp)
+    sp.add_argument("--json", action="store_true", default=True)
+    sp.set_defaults(fn=_cmd_metrics)
+
+    sp = sub.add_parser("usage", help="record usage from a notification file")
+    _add_common(sp)
+    sp.add_argument("--task", required=True)
+    sp.add_argument("--agent", required=True)
+    sp.add_argument("--notification", required=True)
+    sp.set_defaults(fn=_cmd_usage)
+
     sp = sub.add_parser("langfuse", help="export the run to Langfuse")
     _add_common(sp)
     sp.add_argument("--name", default="")
@@ -246,6 +258,15 @@ def _cmd_inspect(args):
 def _cmd_integrate(args):
     return engine.op_integrate(Path(args.project_root), args.team,
                                args.lead_token, args.check, apply=args.apply)
+
+
+def _cmd_metrics(args):
+    return engine.op_metrics(Path(args.project_root), args.team)
+
+
+def _cmd_usage(args):
+    return engine.op_usage(Path(args.project_root), args.team, args.task,
+                           args.agent, Path(args.notification))
 
 
 def _cmd_langfuse(args):
