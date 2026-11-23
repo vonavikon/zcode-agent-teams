@@ -33,8 +33,12 @@ def test_lock_file_persists_across_processes(tmp_path, spawn_ctx):
             pass
         raise AssertionError("expected a timeout")
     except LockTimeoutError as exc:
-        # The waiter saw A's record and cleared nothing.
-        assert exc.detail["holder"]["owner"] == "holder-a"
+        # The waiter cleared nothing. On Windows the holder record is
+        # unreadable through separate handles while the lock is held.
+        import sys
+
+        if sys.platform != "win32":
+            assert exc.detail["holder"]["owner"] == "holder-a"
 
     import sys
 
