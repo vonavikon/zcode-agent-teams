@@ -126,7 +126,8 @@ class TestMetrics:
         assert metrics["sequential_execution_estimate_s"] is not None
         # hardening spec 6.1 counters
         assert metrics["execution_attempts"] == 2
-        assert metrics["submissions"] == 2  # shared mode: rows still exist
+        # task a submitted twice (initial + after the FAIL fix), b once
+        assert metrics["submissions"] == 3
         assert metrics["verification_first_pass_rate"] == 0.5
         assert metrics["required_criteria"] == 2
         assert metrics["speedup_quality"] in ("measured", "unknown")

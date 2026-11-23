@@ -191,7 +191,7 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
                      and t["status"] == "completed")
     required_criteria = sum(
         1 for t in tasks for c in t.get("acceptance", [])
-        if isinstance(c, dict) and c.get("required", True))
+        if not isinstance(c, dict) or c.get("required", True))
     acceptance_violations = sum(
         len(t.get("metadata", {}).get("workspace_violations", []))
         for t in tasks)
