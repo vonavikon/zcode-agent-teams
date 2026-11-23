@@ -162,7 +162,51 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
     def avg(values):
         return round(sum(values) / len(values), 3) if values else None
 
-    return {
+    # Hardening spec 6.1 additions: execution, verification, recovery and
+    # integration counters straight from the recorded history.
+    submissions_all = []
+    for t in tasks:
+        submissions_all.extend(store.list_submissions(team, t["id"]))
+    attempts_counts = [len(store.list_attempts(team, t["id"]))
+                       for t in tasks]
+    first_submit_lags, fix_times = [], []
+    for t in tasks:
+        task_subs = store.list_submissions(team, t["id"])
+        if task_subs:
+            started = _parse(t["claimed_at"]) or _parse(t["created_at"])
+            first = _parse(task_subs[0]["created_at"])
+            if started and first:
+                first_submit_lags.append(
+                    (first - started).total_seconds())
+        fails = [a for a in store.list_attempts(team, t["id"])
+                 if a["verdict"] == "fail"]
+        for i, fail in enumerate(fails):
+            later = [a for a in store.list_attempts(team, t["id"])
+                     if a["created_at"] > fail["created_at"]]
+            if later:
+                fix_times.append(
+                    (_parse(later[0]["created_at"])
+                     - _parse(fail["created_at"])).total_seconds())
+    first_pass = sum(1 for t in tasks if t["verification_failures"] == 0
+                     and t["status"] == "completed")
+    required_criteria = sum(
+        1 for t in tasks for c in t.get("acceptance", [])
+        if isinstance(c, dict) and c.get("required", True))
+    acceptance_violations = sum(
+        len(t.get("metadata", {}).get("workspace_violations", []))
+        for t in tasks)
+    overrides = sum(1 for sub in submissions_all
+                    if sub.get("verification_status") == "overridden")
+    agent_timeouts = eventlog_count(store, team, "agent_timeout")
+    recovered = sum(1 for t in tasks if t["restarts"] > 0)
+    blocked_by_limit = eventlog_count(store, team, "task_blocked")
+    quarantined = sum(1 for t in tasks
+                      if t.get("metadata", {}).get("quarantine_dir"))
+    conflicts = eventlog_count(store, team, "workspace_conflict")
+    integrated_events = eventlog_count(store, team, "workspace_integrated")
+    applied = 1 if run_status(store, team) == "finished" else 0
+
+    base = {
         "tasks_total": len(tasks),
         "task_success_rate": round(len(completed) / len(tasks), 3)
         if tasks else None,
@@ -174,7 +218,6 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
         "average_rework_rounds": avg(rework),
         "average_task_duration_s": avg(durations),
         "agent_restarts": sum(t["restarts"] for t in tasks),
-        "recovered_tasks": sum(1 for t in tasks if t["restarts"] > 0),
         "recovery_rate": round(
             sum(1 for t in tasks if t["restarts"] > 0
                 and t["status"] == "completed")
@@ -193,4 +236,42 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
         if durations else None,
         "speedup_estimate": round(sum(durations) / wall, 3)
         if wall and durations and wall > 0 else None,
+        # Source quality (hardening spec 6.2): durations come from recorded
+        # timestamps of real attempts, the comparison is arithmetic on
+        # them; simulated numbers are never presented as measurements.
+        "speedup_quality": "measured"
+        if wall is not None and durations else "unknown",
+        "execution_attempts": sum(t["attempt"] for t in tasks),
+        "submissions": len(submissions_all),
+        "avg_time_to_first_submit_s": avg(first_submit_lags),
+        "avg_fix_time_after_fail_s": avg(fix_times),
+        "verification_first_pass_rate": round(first_pass / len(tasks), 3)
+        if tasks else None,
+        "required_criteria": required_criteria,
+        "acceptance_violations": acceptance_violations,
+        "manual_overrides": overrides,
+        "override_share": round(overrides / len(submissions_all), 3)
+        if submissions_all else None,
+        "recovery_heartbeat_timeouts": agent_timeouts,
+        "blocked_by_limit": blocked_by_limit,
+        "quarantined_workspaces": quarantined,
+        "integration_conflicts": conflicts,
+        "integration_events": integrated_events,
+        "applied_runs": applied,
     }
+    base.pop("recovered_tasks") if False else None
+    return base
+
+
+def eventlog_count(store, team: str, event_type: str) -> int:
+    from . import events as eventlog
+
+    return len(eventlog.list_events(store.conn, team,
+                                    event_type=event_type))
+
+
+def run_status(store, team: str) -> str | None:
+    runs = store.all(
+        "SELECT status FROM runs WHERE team_id = ? ORDER BY number DESC"
+        " LIMIT 1", (team,))
+    return runs[0]["status"] if runs else None
