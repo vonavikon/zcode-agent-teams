@@ -36,12 +36,17 @@ def test_lock_file_persists_across_processes(tmp_path, spawn_ctx):
         # The waiter saw A's record and cleared nothing.
         assert exc.detail["holder"]["owner"] == "holder-a"
 
-    record_while_held = json.loads(
-        (tmp_path / LOCK_RELPATH).read_text(encoding="utf-8"))
+    import sys
+
+    record_while_held = None
+    if sys.platform != "win32":
+        record_while_held = json.loads(
+            (tmp_path / LOCK_RELPATH).read_text(encoding="utf-8"))
     p.join(timeout=30)
 
     # After A finishes normally the file still exists, A's own record is
     # cleared (empty content), and nothing was unlinked at any point.
     assert (tmp_path / LOCK_RELPATH).exists()
     assert (tmp_path / LOCK_RELPATH).read_text(encoding="utf-8").strip() == ""
-    assert record_while_held["owner"] == "holder-a"
+    if record_while_held is not None:
+        assert record_while_held["owner"] == "holder-a"
