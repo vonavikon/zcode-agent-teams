@@ -434,6 +434,20 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                 if verdict == "fail" and not feedback.strip():
                     raise UsageError("verdict fail requires --feedback")
 
+                # Machine gate (spec 7.2): required command-backed criteria
+                # and write-set violations block a PASS no matter who says
+                # otherwise; the verdict is overridden to FAIL.
+                from . import quality
+
+                forced, criteria_report = quality.forced_failures(
+                    task, Path(root).resolve())
+                if verdict == "pass" and forced:
+                    verdict = "fail"
+                    feedback = ("Quality Gate override: " + "; ".join(forced))
+                report = dict(report or {})
+                report.setdefault("criteria", criteria_report)
+                report.setdefault("forced_failures", forced)
+
                 if verdict == "pass":
                     store.add_attempt({
                         "id": uuid.uuid4().hex, "team_id": team, "run_id": run_id,
@@ -720,6 +734,84 @@ def op_read(root: Path, team: str, agent: str) -> list[dict]:
             return [{"id": m["id"], "from": m["from_agent"], "to": m["to_agent"],
                      "text": m["text"], "ts": m["created_at"],
                      "task": m["task_id"], "kind": m["kind"]} for m in unread]
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------- integrate
+
+
+def op_integrate(root: Path, team: str, lead_token: str,
+                 check_command: str = "", *, apply: bool = False) -> dict:
+    """Integration gate (spec 7.3): merge accepted branches, run checks.
+
+    Individual PASS of every task is not enough: the merged result must
+    also build cleanly. On a conflict or a failed check the run stays
+    active and nothing is applied to the project branch.
+    """
+    from . import quality
+
+    store, d, team_row = _open_team(root, team)
+    try:
+        with StateLock(d, "integrate:lead"):
+            _require_lead(team_row, lead_token)
+            tasks = store.list_tasks(team)
+            unfinished = [t["id"] for t in tasks if t["status"] != "completed"]
+            if unfinished:
+                raise StateRejected(
+                    "cannot integrate: tasks not completed: "
+                    + ", ".join(unfinished))
+            run = _current_run(store, team)
+            run_id = run["id"] if run else ""
+            branches = [t["branch"] for t in tasks if t.get("branch")]
+            if not branches:
+                # shared workspaces: nothing to merge, finish the run
+                with store.transaction():
+                    store.update_run(run_id, status="finished",
+                                     finished_at=now_iso())
+                    recorded = [eventlog.append_event(
+                        store.conn, event_type="team_completed", team_id=team,
+                        run_id=run_id, actor_id="lead",
+                        metadata={"mode": "shared"})]
+                    _recorded(store, team, recorded)
+                return {"ok": True, "mode": "shared", "applied": False}
+
+            project_root = Path(team_row["project_root"])
+            result = quality.merge_branches(project_root, d, team, branches,
+                                            check_command=check_command)
+            if not result["ok"]:
+                with store.transaction():
+                    recorded = [eventlog.append_event(
+                        store.conn, event_type="workspace_conflict",
+                        team_id=team, run_id=run_id, actor_id="lead",
+                        metadata={"conflicts": result["conflicts"],
+                                  "check": result["check"]})]
+                    _recorded(store, team, recorded)
+                quality.cleanup_integration(project_root, d, team,
+                                            keep_branch=False)
+                return {"ok": False, "mode": "worktree", **result,
+                        "applied": False}
+            with store.transaction():
+                recorded = [eventlog.append_event(
+                    store.conn, event_type="workspace_integrated",
+                    team_id=team, run_id=run_id, actor_id="lead",
+                    metadata={"branches": result["integrated"],
+                              "check": result["check"]})]
+                store.update_run(run_id, status="finished",
+                                 finished_at=now_iso())
+                recorded.append(eventlog.append_event(
+                    store.conn, event_type="team_completed", team_id=team,
+                    run_id=run_id, actor_id="lead",
+                    metadata={"branches": result["integrated"]}))
+                _recorded(store, team, recorded)
+                _refresh_mirrors(store, team)
+            applied = False
+            if apply:
+                applied = quality.apply_integration(project_root, team)["applied"]
+            return {"ok": True, "mode": "worktree", "applied": applied,
+                    "integrated": result["integrated"],
+                    "check": result["check"],
+                    "workspace": result["workspace"]}
     finally:
         store.close()
 
