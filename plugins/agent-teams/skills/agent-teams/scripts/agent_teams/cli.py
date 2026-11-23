@@ -154,6 +154,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true", default=True)
     sp.set_defaults(fn=_cmd_inspect)
 
+    sp = sub.add_parser("integrate", help="merge accepted task branches, "
+                                         "run the integration gate")
+    _add_common(sp)
+    sp.add_argument("--lead-token", required=True)
+    sp.add_argument("--check", default="",
+                    help="shell command to run in the merged tree")
+    sp.add_argument("--apply", action="store_true",
+                    help="merge the integration branch into the project branch")
+    sp.set_defaults(fn=_cmd_integrate)
+
     sp = sub.add_parser("langfuse", help="export the run to Langfuse")
     _add_common(sp)
     sp.add_argument("--name", default="")
@@ -231,6 +241,11 @@ def _cmd_status(args):
 
 def _cmd_inspect(args):
     return engine.op_inspect(Path(args.project_root), args.team, args.task)
+
+
+def _cmd_integrate(args):
+    return engine.op_integrate(Path(args.project_root), args.team,
+                               args.lead_token, args.check, apply=args.apply)
 
 
 def _cmd_langfuse(args):
