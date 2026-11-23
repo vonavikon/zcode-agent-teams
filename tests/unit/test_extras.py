@@ -101,3 +101,7 @@ class TestReport:
         assert "verification" in html_text
         assert "http" not in html_text  # self-contained, no external links
         assert html_text.startswith("<!DOCTYPE html>")
+        # hardening spec 6.3 sections
+        assert "Submissions (immutable snapshots)" in html_text
+        assert "Recovery history" in html_text
+        assert "Integration and apply" in html_text

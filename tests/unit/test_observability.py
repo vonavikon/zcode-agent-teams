@@ -124,3 +124,9 @@ class TestMetrics:
         assert metrics["cost_per_successful_task"] == \
             pytest.approx(metrics["cost_total_usd"] / 2)
         assert metrics["sequential_execution_estimate_s"] is not None
+        # hardening spec 6.1 counters
+        assert metrics["execution_attempts"] == 2
+        assert metrics["submissions"] == 2  # shared mode: rows still exist
+        assert metrics["verification_first_pass_rate"] == 0.5
+        assert metrics["required_criteria"] == 2
+        assert metrics["speedup_quality"] in ("measured", "unknown")
