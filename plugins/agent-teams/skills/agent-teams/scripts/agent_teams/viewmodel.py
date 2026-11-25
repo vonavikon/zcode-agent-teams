@@ -93,13 +93,16 @@ EVENT_TEXT = {
     "task_tokens": "Учтён объём использования AI",
     "message_sent": "Отправлено сообщение",
     "budget_changed": "Руководитель команды изменил бюджет",
+    "run_paused": "Работа поставлена на паузу: новые задачи не запускаются",
+    "run_resumed": "Пауза снята: новые задачи запускаются",
     "lead_token_rotated": "Ключ руководителя команды заменён",
     "team_completed": "Работа команды завершена",
 }
 
 # Actors that stand for a function, not for a specialist. None of these
 # names reaches the reader as the raw identifier the engine stores.
-_FUNCTION_ACTORS = {"lead": "Руководитель команды", "recovery": "Система"}
+_FUNCTION_ACTORS = {"lead": "Руководитель команды", "recovery": "Система",
+                    "owner": "Владелец проекта"}
 VERIFIER_ROLE = "AI-проверяющий"
 _VERIFIER_EVENTS = ("verification_started", "verification_passed",
                     "verification_failed", "verify_pass", "verify_fail")
@@ -124,6 +127,7 @@ _EVENT_MARKS = {
     "token_usage_recorded": ("normal", "circle"), "task_tokens": ("normal", "circle"),
     "message_sent": ("normal", "circle"),
     "budget_changed": ("manual", "refresh"),
+    "run_paused": ("attention", "minus"), "run_resumed": ("normal", "refresh"),
     "lead_token_rotated": ("manual", "refresh"),
     "team_completed": ("done", "check"),
 }
@@ -802,3 +806,62 @@ def cost_view(usage: list[dict], *, task_of: dict | None = None,
         out["unknown_by_task"] = unknown_task
         out["unknown_by_role"] = unknown_role
     return out
+
+
+# ------------------------------------------------------ what the owner can do (17)
+
+def actions_view(tasks: list[dict], *, run: dict | None = None, paused: bool = False,
+                 budget_state: str = "none") -> list[dict]:
+    """What the owner can do from the board right now (v2.1 spec 17).
+
+    Read from the state only: an action is offered when the engine would
+    accept it (the same edges the state machine allows). ``confirm`` is
+    the sentence the owner agrees to first; empty when there is nothing
+    to regret. ``ask`` names a number the owner has to give. The engine
+    decides again when the action is done: this list is an offer, not a
+    promise.
+    """
+    actions: list[dict] = []
+    status = (run or {}).get("status", "active")
+    if status == "active":
+        actions.append({"key": "resume" if paused else "pause", "task": None,
+                        "label": "Снять паузу" if paused else "Поставить на паузу",
+                        "confirm": "" if paused else
+                        "Новые задачи не будут начинаться, пока вы не снимете паузу. "
+                        "Те, что уже в работе, продолжат."})
+    for t in tasks:
+        title, state = t["title"], t["status"]
+        if state == "blocked":
+            actions.append({"key": "retry", "task": t["id"], "confirm": "",
+                            "label": "Разрешить ещё одну попытку: " + title})
+        if state in ("pending", "in_progress", "awaiting_verification") and status == "active":
+            actions.append({"key": "cancel", "task": t["id"],
+                            "label": "Отменить этап: " + title,
+                            "confirm": ("Этап в работе. Его закроют, специалист "
+                                        "освободится, а сделанное сохранится в архиве, "
+                                        "но не войдёт в итог."
+                                        if state != "pending" else
+                                        "Этап закроют, и он не войдёт в итог.")})
+        if state == "awaiting_verification":
+            actions.append({"key": "request_check", "task": t["id"], "confirm": "",
+                            "label": "Попросить проверить: " + title})
+    live = [t for t in tasks if t["status"] != "cancelled"]
+    accepted = [t for t in live if t["status"] == "completed"]
+    if status == "active" and live and len(accepted) == len(live):
+        actions.append({"key": "integrate", "task": None, "label": "Объединить результаты",
+                        "confirm": "Отдельные результаты соберутся в один, и он пройдёт "
+                                   "итоговую проверку. Если найдётся противоречие, исходные "
+                                   "версии останутся на месте."})
+    elif status == "integration_failed":
+        actions.append({"key": "integrate", "task": None, "label": "Запустить объединение заново",
+                        "confirm": "Объединение начнётся заново. Если противоречие не устранено, "
+                                   "оно снова остановится, и исходные версии останутся на месте."})
+    if status == "apply_pending":
+        actions.append({"key": "apply", "task": None, "label": "Применить изменения к проекту",
+                        "confirm": "Собранный результат будет внесён в проект. Отменить это "
+                                   "через доску нельзя."})
+    if budget_state == "limit":
+        actions.append({"key": "budget", "task": None, "label": "Увеличить бюджет",
+                        "ask": "Новый бюджет команды, в долларах", "confirm": ""})
+    return actions
+

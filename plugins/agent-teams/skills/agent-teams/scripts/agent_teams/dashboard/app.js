@@ -19,7 +19,8 @@
     try { localStorage.setItem(key, value); } catch (e) { /* a preference is not worth an error */ }
   }
   var store = { mode: readPref("at.mode", "simple"),
-                theme: readPref("at.theme", prefersDark ? "dark" : "light") };
+                theme: readPref("at.theme", prefersDark ? "dark" : "light"),
+                control: false };      // whether the owner can act (never persisted)
 
   var ICONS = {
     circle: '<circle cx="12" cy="12" r="8"/>',
@@ -142,7 +143,8 @@
     $("projectName").textContent = project.name || "AI-команда";
     $("projectGoal").textContent = project.goal || rs.hint || "";
     $("runStateText").textContent = rs.state || "нет данных";
-    var rsKind = !rs.state ? "idle" : /внимание/.test(rs.state) ? "problem" : /Завершено/.test(rs.state) ? "done" : "busy";
+    var rsKind = !rs.state ? "idle" : /внимание/.test(rs.state) ? "problem"
+      : /Пауза/.test(rs.state) ? "attention" : /Завершено|Готово/.test(rs.state) ? "done" : "busy";
     $("runState").className = "pill";
     $("runDot").className = "dot " + rsKind;
     $("elapsed").classList.remove("hidden");
@@ -1038,7 +1040,7 @@
      fixed placement leaves a hole under the shorter column, so the cards
      are split into the two most even groups, measured after every render,
      and each column keeps the reading priority. */
-  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard",
+  var CARD_ORDER = ["actCard", "attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard",
                     "qualityCard", "moneyCard", "problemCard", "buildCard", "benchCard"];
   function atBottom(feed) {
     return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
@@ -1076,6 +1078,7 @@
     renderPlan(snap.tasks);
     renderGraph(snap.tasks);
     renderTimeline(snap.timeline);
+    renderActions(snap);
     renderAttention(snap.attention);
     renderQuality(snap.quality);
     renderMoney(snap.budget, snap.cost);
@@ -1088,17 +1091,113 @@
     renderSheet();   // an open sheet follows the data, it is not closed by a refresh
   }
 
+  /* ---- what the owner can do (spec 17). The engine offers, the page
+     asks for a confirmation where there are consequences, and the server
+     does it through the engine: the lead token is in the memory of the
+     server and never in this page. ---- */
+  var SAID = {
+    pause: "Пауза поставлена: новые задачи не начинаются.",
+    resume: "Пауза снята: новые задачи запускаются.",
+    retry: "Этап возвращён в очередь.",
+    cancel: "Этап отменён.",
+    request_check: "Просьба передана руководителю команды: он проверит результат.",
+    apply: "Изменения внесены в проект."
+  };
+  var NOT_DONE = {
+    state: "Сейчас так нельзя: состояние команды изменилось. Доска обновится, и действие появится, когда оно снова будет возможно.",
+    budget: "Бюджет исчерпан: новые задачи не запускаются.",
+    forbidden: "Доска не имеет права на это действие: перезапустите её с правом управления.",
+    not_found: "Этапа больше нет в плане.",
+    origin: "Запрос пришёл не с этой страницы.",
+    usage: "Действие не выполнено: запрос составлен неправильно."
+  };
+  var acting = false;
+  function sayAction(text, bad) {
+    var box = $("actResult");
+    box.textContent = text;
+    box.className = "action-result" + (bad ? " bad" : "");
+  }
+  function renderActions(snap) {
+    var card = $("actCard");
+    // Only a board started with the lead's authority can act.
+    if (snap.control === false) store.control = false;
+    if (snap.control === true) store.control = true;
+    if (!store.control) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    var actions = list(snap.actions);
+    if (!actions.length) {
+      $("actList").innerHTML = '<p class="muted">Сейчас от вас ничего не нужно.</p>';
+      return;
+    }
+    $("actList").innerHTML = actions.map(function (a) {
+      return '<button type="button" class="action' + (a.confirm ? " danger" : "") + '" data-action="' +
+        esc(a.key) + '" data-task="' + esc(a.task || "") + '" data-confirm="' + esc(a.confirm || "") +
+        '" data-ask="' + esc(a.ask || "") + '">' + esc(a.label) + "</button>";
+    }).join("");
+  }
+  function doAction(button) {
+    if (acting) return;
+    var action = button.getAttribute("data-action");
+    var body = {action: action, confirm: true};
+    // An action with consequences is done only after the owner agrees to it.
+    var asked = button.getAttribute("data-confirm");
+    if (asked && !window.confirm(asked)) return;
+    var question = button.getAttribute("data-ask");
+    if (question) {
+      var given = window.prompt(question, "");
+      if (given == null || given.trim() === "") return;
+      var usd = Number(String(given).replace(/\s|\$/g, "").replace(",", "."));
+      if (!(usd > 0)) { sayAction("Нужно число больше нуля, в долларах.", true); return; }
+      body.usd = usd;
+    }
+    var task = button.getAttribute("data-task");
+    if (task) body.task = task;
+    acting = true;
+    button.disabled = true;
+    sayAction("Выполняю…", false);
+    fetch("/api/actions" + API, { method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) })
+      .then(answer, function () { throw {kind: "connection"}; })
+      .then(function (result) {
+        var said = SAID[action] || "Готово.";
+        if (action === "integrate") {
+          said = result.ok === false
+            ? "Объединить не удалось: найдено противоречие. Исходные версии на месте."
+            : result.applied === true ? "Результаты объединены и применены к проекту."
+            : "Результаты объединены и проверены. Осталось применить их к проекту.";
+        }
+        if (action === "budget") said = "Бюджет изменён: " + moneyText(result.budget_usd) + ".";
+        if (store.mode === "advanced" && result.error) said += " (" + result.error + ")";
+        sayAction(said, false);
+      }, function (err) {
+        var text = NOT_DONE[err && err.kind] ||
+          "Действие не выполнено: доска не связалась с сервером. Попробуйте ещё раз.";
+        if (store.mode === "advanced" && err && err.message) text += " (" + err.message + ")";
+        sayAction(text, true);
+      })
+      .then(function () {
+        acting = false;
+        button.disabled = false;
+        takeSnapshot(true);        // the state may have moved: show it as it is now
+      });
+  }
+  $("actList").addEventListener("click", function (event) {
+    var node = event.target;
+    var button = node && node.closest ? node.closest("[data-action]") : null;
+    if (button) doAction(button);
+  });
+
   /* ---- polling: refresh data, keep user context (spec 16.4) ----
      Every few seconds the page asks a light "has anything changed?". The
      whole snapshot, with the whole feed, is taken only when something did
      (or once in a while, so the clocks stay true). */
-  function show(snap) {
+  function show(snap, force) {
     var known = lastSnap ? lastSnap.last_seq : null;
     lastGood = Date.now(); snapshotAt = Date.now(); lastSnap = snap;
     setConn("", "");
     /* A quiet team has nothing new in the journal, but the two levels
        show different things: the level the reader picked redraws too. */
-    if (known !== null && snap.last_seq === known && snap.level === shownLevel) {
+    if (!force && known !== null && snap.last_seq === known && snap.level === shownLevel) {
       timers();
       $("updatedAt").textContent = "обновлено в " + fmtClock(snap.now);
       return;
@@ -1131,7 +1230,12 @@
 
   function answer(r) {
     return r.json().catch(function () { return {}; }).then(function (body) {
-      if (!r.ok) { var err = new Error(body.error || ("HTTP " + r.status)); err.status = r.status; throw err; }
+      if (!r.ok) {
+        var err = new Error(body.error || ("HTTP " + r.status));
+        err.status = r.status;
+        err.kind = body.kind;        // why the server refused, for the owner's words
+        throw err;
+      }
       return body;
     });
   }
@@ -1147,9 +1251,9 @@
             function (err) { setRefreshing(false); throw err; });
   }
 
-  function takeSnapshot() {
+  function takeSnapshot(force) {
     return request("/api/snapshot" + API + "&level=" + encodeURIComponent(store.mode))
-      .then(show, requestFailed);
+      .then(function (snap) { show(snap, force); }, requestFailed);
   }
 
   function load() {
@@ -1158,6 +1262,7 @@
       .then(function (status) {
         lastGood = Date.now();
         setConn("", "");
+        if (typeof status.control === "boolean") store.control = status.control;
         var changed = status.last_seq !== lastSnap.last_seq;
         if (changed || Date.now() - snapshotAt > RESYNC_MS) return takeSnapshot();
         $("updatedAt").textContent = "обновлено в " + fmtClock(status.now);

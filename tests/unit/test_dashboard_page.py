@@ -1054,3 +1054,89 @@ class TestTheComparisonCard:
         body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
         assert "<b>1</b><span>проверка</span>" in body and "<b>1</b><span>доработка</span>" in body
         assert "<b>0</b><span>прошли с первого раза" in body
+
+
+class TestTheActionsCard:
+    """What the owner can do from the board (v2.1 spec 17)."""
+    ACTIONS = [{"key": "pause", "task": None, "label": "Поставить на паузу",
+                "confirm": "Новые задачи не будут начинаться."},
+               {"key": "cancel", "task": "a", "label": "Отменить этап: Собрать отчёт",
+                "confirm": "Этап закроют."},
+               {"key": "request_check", "task": "b", "label": "Попросить проверить: Проверить отчёт",
+                "confirm": ""},
+               {"key": "integrate", "task": None, "label": "Объединить результаты", "confirm": "Соберутся."},
+               {"key": "budget", "task": None, "label": "Увеличить бюджет", "confirm": "",
+                "ask": "Новый бюджет команды, в долларах"}]
+
+    def run_control(self, steps, actions=None) -> dict:
+        """What the page showed at the start and after each press of a
+        button (the other steps only set the answers up)."""
+        snap = snapshot(actions=self.ACTIONS if actions is None else actions, control=True,
+                        run={"state": "Пауза", "hint": "новые задачи не запускаются"})
+        snap["_control"] = steps
+        out = run("control", [snap])["steps"]
+        return {"start": out[0], "presses": [step for step in out[1:] if step["name"].startswith("press")]}
+
+    def test_the_card_exists_only_where_the_owner_can_act(self):
+        plain = run("control", [snapshot(actions=self.ACTIONS)])["steps"][0]
+        assert plain["hidden"] is True and plain["buttons"] == ""
+        controlled = self.run_control([])["start"]
+        assert controlled["hidden"] is False and controlled["buttons"].count("<button") == 5
+        # Red where there is something to agree to first; plain otherwise.
+        assert 'class="action danger" data-action="pause"' in controlled["buttons"]
+        assert 'class="action" data-action="request_check" data-task="b"' in controlled["buttons"]
+        assert 'data-confirm="Этап закроют."' in controlled["buttons"]
+        assert 'data-ask="Новый бюджет команды, в долларах"' in controlled["buttons"]
+        quiet = run("control", [snapshot(actions=[], control=True)])["steps"][0]
+        assert quiet["hidden"] is False and "Сейчас от вас ничего не нужно." in quiet["buttons"]
+
+    def test_nothing_from_the_wire_becomes_markup(self):
+        written = self.run_control([], actions=[{"key": EVIL, "task": EVIL, "label": EVIL,
+                                                  "confirm": EVIL, "ask": EVIL}])["start"]["buttons"]
+        assert EVIL not in written and EVIL_ESCAPED in written and "<script" not in written
+
+    def test_an_action_with_consequences_needs_a_yes(self):
+        ran = self.run_control([["confirm", False], ["press", "pause"],
+                                ["confirm", True], ["press", "pause"]])
+        no, yes = ran["presses"]
+        assert no["posts"] == [] and no["result"] == ""          # the owner thought better of it
+        assert yes["posts"] == [{"action": "pause", "confirm": True}]
+        assert yes["result"] == "Пауза поставлена: новые задачи не начинаются."
+        assert yes["snapshots"] == ran["start"]["snapshots"] + 1   # the state is read again at once
+        assert yes["header"] == "Пауза" and "attention" in yes["dot"]
+
+    def test_a_number_is_asked_for_and_checked(self):
+        nothing, typed, wrong = self.run_control(
+            [["prompt", ""], ["press", "budget"],
+             ["answer", {"body": {"ok": True, "action": "budget", "budget_usd": 12}}], ["prompt", "12"],
+             ["press", "budget"], ["prompt", "abc"], ["press", "budget"]])["presses"]
+        assert nothing["posts"] == []
+        assert typed["posts"] == [{"action": "budget", "confirm": True, "usd": 12}]
+        assert typed["result"] == "Бюджет изменён: $12.00."
+        assert wrong["posts"] == typed["posts"] and wrong["resultCls"] == "action-result bad"
+        assert wrong["result"] == "Нужно число больше нуля, в долларах."
+
+    def test_what_the_server_answers_is_worded_for_the_owner(self):
+        moved, conflict, joined, lost = self.run_control([
+            ["answer", {"status": 409, "body": {"ok": False, "kind": "state", "error": "task b: x"}}],
+            ["press", "request_check"],
+            ["answer", {"body": {"ok": False, "action": "integrate", "applied": False,
+                                 "conflicts": ["c"]}}],
+            ["press", "integrate"],
+            ["answer", {"body": {"ok": True, "action": "cancel", "status": "cancelled"}}],
+            ["press", "cancel"],
+            ["answer", {"status": 503, "body": {"ok": False}}], ["press", "cancel"]])["presses"]
+        assert moved["result"].startswith("Сейчас так нельзя: состояние команды изменилось.")
+        assert "task b: x" not in moved["result"]            # the engine's text stays out of the simple level
+        assert moved["resultCls"] == "action-result bad"
+        assert conflict["result"] == "Объединить не удалось: найдено противоречие. Исходные версии на месте."
+        assert joined["result"] == "Этап отменён."
+        assert lost["result"].startswith("Действие не выполнено: доска не связалась с сервером.")
+
+    def test_the_engine_text_is_shown_to_the_technical_reader(self):
+        refused = self.run_control([
+            ["mode", "advanced"],
+            ["answer", {"status": 409, "body": {"ok": False, "kind": "state", "error": "task b: x"}}],
+            ["press", "request_check"]])["presses"][0]
+        assert refused["result"].startswith("Сейчас так нельзя: состояние команды изменилось.")
+        assert refused["result"].endswith("(task b: x)")

@@ -260,7 +260,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=dashboard_server.DEFAULT_PORT)
     sp.add_argument("--open", action="store_true",
                     help="open the dashboard in the default browser")
+    sp.add_argument("--lead-token", dest="lead_token", default="",
+                    help="lets the owner act from the board (v2.1 spec 17); the "
+                         "token stays in the memory of this process. Use "
+                         "--lead-token-file where other processes may read the "
+                         "command line")
+    sp.add_argument("--lead-token-file", dest="lead_token_file", default="",
+                    help="read the lead token from this file instead of the "
+                         "command line")
     sp.set_defaults(fn=_cmd_ui)
+
+    for name, fn, what in (
+            ("pause", _cmd_pause, "stop new tasks from starting; work in progress goes on"),
+            ("resume", _cmd_resume, "let new tasks start again after a pause")):
+        sp = sub.add_parser(name, parents=[json_flag], help=what)
+        _add_common(sp)
+        sp.add_argument("--lead-token", default="")
+        if name == "pause":
+            sp.add_argument("--reason", default="")
+        sp.set_defaults(fn=fn)
 
     return p
 
@@ -438,10 +456,37 @@ def _cmd_budget(args):
 
 
 def _cmd_ui(args):
+    token = args.lead_token
+    if args.lead_token_file:
+        if token:
+            raise UsageError("give the lead token once: --lead-token or --lead-token-file")
+        try:
+            token = Path(args.lead_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise UsageError(f"cannot read --lead-token-file: {exc}") from exc
     return dashboard_server.op_ui(Path(args.project_root), args.team,
                                   host=args.host, port=args.port,
                                   open_browser=args.open, json_mode=args.json,
-                                  out=sys.stdout)
+                                  out=sys.stdout, lead_token=token or None)
+
+
+def _cmd_pause(args):
+    result = engine.op_pause(Path(args.project_root), args.team, args.lead_token,
+                             args.reason)
+    if not args.json:
+        if result["already"]:
+            print(f"OK team {args.team} is paused already")
+            return
+    return result
+
+
+def _cmd_resume(args):
+    result = engine.op_resume(Path(args.project_root), args.team, args.lead_token)
+    if not args.json:
+        if result["already"]:
+            print(f"OK team {args.team} is not paused")
+            return
+    return result
 
 
 def _known_options(parser: argparse.ArgumentParser) -> set[str]:

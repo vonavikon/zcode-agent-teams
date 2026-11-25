@@ -232,8 +232,13 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         config = merge_config(team_row.get("config") or {})
         run = _decode(conn.execute(
             "SELECT id, number, started_at, finished_at, status,"
-            " integration_base_commit, integration_commit_sha FROM runs"
+            " integration_base_commit, integration_commit_sha, metadata_json FROM runs"
             " WHERE team_id = ? ORDER BY number DESC LIMIT 1", (team,)).fetchone())
+        # The pause is a fact of the run, kept in its record (engine.op_pause).
+        paused = bool(run and (run.get("metadata") or {}).get("paused_at"))
+        if run:
+            run["metadata"] = {"paused_at": (run.get("metadata") or {}).get("paused_at")} \
+                if paused else {}
         tasks = [_decode(r) for r in conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM tasks WHERE team_id = ? ORDER BY rowid",
             (team,))]
@@ -370,7 +375,11 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         state = viewmodel.RUN_STATE.get(run["status"], viewmodel.RUN_STATE["active"])
         run_view = {"state": state["label"], "hint": state["hint"],
                     "number": run["number"], "started_at": run["started_at"],
-                    "finished_at": run.get("finished_at")}
+                    "finished_at": run.get("finished_at"), "paused": paused}
+        if paused:
+            # A pause is told in the header, where the state is read first.
+            run_view["state"] = "Пауза"
+            run_view["hint"] = "новые задачи не запускаются, пока вы не снимете паузу"
         if level == "advanced":
             run_view["tech"] = {"run_id": run["id"], "status": run["status"],
                                 "integration_base_commit": run.get("integration_base_commit"),
@@ -446,6 +455,12 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         "budget": budget,
         "recovery": analytics.recovery_view(tasks, task_events, budget),
         "integration": integration,
+        # What the owner can do from the board (spec 17); the page shows
+        # it only when the server was started with the lead's authority.
+        "actions": viewmodel.actions_view(
+            tasks, run={"status": run["status"]} if run else None,
+            paused=paused, budget_state=budget["state"]),
+        "paused": paused,
         # The plan as a graph (spec 6) and the time of every task (spec 7),
         # both drawn only from what the engine recorded.
         "plan": planview.plan_layout(tasks),

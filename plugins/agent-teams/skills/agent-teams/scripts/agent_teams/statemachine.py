@@ -59,8 +59,8 @@ COMPLETED = TaskStatus.COMPLETED
 
 ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     P: frozenset({IP, CANCELLED}),
-    IP: frozenset({AV, BLOCKED}),
-    AV: frozenset({IP, DONE, BLOCKED}),
+    IP: frozenset({AV, BLOCKED, CANCELLED}),
+    AV: frozenset({IP, DONE, BLOCKED, CANCELLED}),
     BLOCKED: frozenset({P}),
     DONE: frozenset(),
     CANCELLED: frozenset(),
@@ -69,6 +69,10 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
 TRANSITION_INITIATORS: dict[tuple[TaskStatus, TaskStatus], frozenset[str]] = {
     (P, IP): frozenset({EXECUTOR, LEAD}),
     (P, CANCELLED): frozenset({LEAD}),
+    # The owner asks to cancel a stage that is already in work (v2.1
+    # spec 17): only the lead may, and the engine fences the attempt.
+    (IP, CANCELLED): frozenset({LEAD}),
+    (AV, CANCELLED): frozenset({LEAD}),
     (IP, AV): frozenset({EXECUTOR}),
     (IP, BLOCKED): frozenset({RECOVERY, LEAD}),
     (AV, IP): frozenset({GATE}),

@@ -253,7 +253,9 @@ class TestTheAnswers:
 
     def test_status_and_events_are_the_light_answers(self, board):
         status = get_json(board["port"], "/api/status?team=t")
-        assert set(status) == {"ok", "now", "run", "progress", "last_seq", "attention", "cost"}
+        assert set(status) == {"ok", "now", "run", "progress", "last_seq", "attention", "cost",
+                               "control"}       # whether the owner can act from this board
+        assert status["control"] is False
         events = get_json(board["port"], "/api/events?team=t")
         assert set(events) == {"ok", "events", "last_seq", "now"}
         newest = events["last_seq"]
@@ -537,7 +539,40 @@ class TestStarting:
                             lambda self, **_options: (_ for _ in ()).throw(KeyboardInterrupt))
         out = io.StringIO()
         result = op_ui(tmp_path, "t", port=0, json_mode=True, out=out)
-        assert json.loads(out.getvalue()) == {"url": result["url"], "read_only": True}
+        assert json.loads(out.getvalue()) == {"url": result["url"], "read_only": True,
+                                              "control": False}
+
+    def test_the_lead_authority_is_announced_and_never_printed(self, tmp_path, monkeypatch):
+        lead = engine.op_init(tmp_path, "t", spec_file(tmp_path))["lead_token"]
+        monkeypatch.setattr(dashboard_server.DashboardServer, "serve_forever",
+                            lambda self, **_options: (_ for _ in ()).throw(KeyboardInterrupt))
+        out = io.StringIO()
+        op_ui(tmp_path, "t", port=0, json_mode=True, out=out, lead_token=lead)
+        announced = json.loads(out.getvalue())
+        assert announced["read_only"] is False and announced["control"] is True
+        assert lead not in out.getvalue()
+        out = io.StringIO()
+        op_ui(tmp_path, "t", port=0, out=out, lead_token=lead)
+        assert out.getvalue().split("\n")[1] == "the owner can act from it; stops with Ctrl-C"
+        assert lead not in out.getvalue()
+        # A file instead of the command line, where other processes may
+        # read the arguments of a command.
+        from argparse import Namespace
+
+        from agent_teams import cli
+        token_file = tmp_path / "token.txt"
+        token_file.write_text(lead + "\n", encoding="utf-8")
+        seen: dict = {}
+        monkeypatch.setattr(cli.dashboard_server, "op_ui",
+                            lambda root, team, **options: seen.update(options) or {})
+        args = Namespace(project_root=str(tmp_path), team="t", host=DEFAULT_HOST, port=0,
+                         open=False, json=True, lead_token="", lead_token_file=str(token_file))
+        cli._cmd_ui(args)
+        assert seen["lead_token"] == lead                  # read from the file, stripped
+        with pytest.raises(UsageError, match="cannot read --lead-token-file"):
+            cli._cmd_ui(Namespace(**{**vars(args), "lead_token_file": str(tmp_path / "no.txt")}))
+        with pytest.raises(UsageError, match="give the lead token once"):
+            cli._cmd_ui(Namespace(**{**vars(args), "lead_token": lead}))
 
     def test_ui_on_the_network_warns_first(self, tmp_path, monkeypatch):
         engine.op_init(tmp_path, "t", spec_file(tmp_path))

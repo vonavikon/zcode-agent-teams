@@ -27,7 +27,8 @@ const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), (m) => m[1]);
 
 const state = {
   html: {}, text: {}, attrs: {}, classes: {}, writes: {}, listeners: {}, generation: 0,
-  fetches: [], intervals: [], tech: [], errors: [], prefs: {}, now: 1_000_000,
+  fetches: [], posts: [], intervals: [], tech: [], errors: [], prefs: {}, now: 1_000_000,
+  confirmAnswer: true, promptAnswer: null,
   snapshots: JSON.parse(fs.readFileSync(0, "utf8")), cursor: 0, failWith: null,
   responses: [], timerTexts: [],
 };
@@ -166,7 +167,20 @@ global.document = {
 global.setInterval = (fn) => { state.intervals.push(fn); return state.intervals.length; };
 global.Date.now = () => state.now;
 global.console.error = (...args) => state.errors.push(args.join(" "));
-global.fetch = (url) => {
+global.confirm = () => state.confirmAnswer;
+global.prompt = () => state.promptAnswer;
+global.fetch = (url, options) => {
+  if (options && options.method === "POST") {     // a control action (spec 17)
+    const body = JSON.parse(options.body);
+    state.posts.push({ url, body });
+    const hit = state.responses.find((r) => r.match === "POST");
+    if (hit) {
+      state.responses.splice(state.responses.indexOf(hit), 1);
+      const status = hit.status || 200;
+      return Promise.resolve({ ok: status < 400, status, json: async () => hit.body });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, ...body }) });
+  }
   state.fetches.push(url);
   if (state.failWith) return Promise.reject(state.failWith);
   const hit = state.responses.find((r) => url.includes(r.match));
@@ -220,6 +234,15 @@ const dom = () => Object.fromEntries(ids.map((id) => [id, {
 }]));
 const feed = () => state.html.feed || "";
 const card = (attribute, value) => ({ target: { closest: (selector) => (selector === "[" + attribute + "]" ? { getAttribute: () => value } : null) } });
+/* A button of the actions card as the page just wrote it. */
+function actionTarget(key) {
+  const tag = (state.html.actList.match(/<button[^>]*>/g) || [])
+    .find((t) => t.includes('data-action="' + key + '"'));
+  if (!tag) throw new Error("no action button " + key);
+  const attrs = Object.fromEntries(Array.from(tag.matchAll(/data-([a-z]+)="([^"]*)"/g), (m) => ["data-" + m[1], m[2]]));
+  const button = { getAttribute: (name) => (name in attrs ? attrs[name] : null), disabled: false };
+  return { target: { closest: (selector) => (selector === "[data-action]" ? button : null) } };
+}
 
 async function main() {
   await settle();
@@ -247,6 +270,28 @@ async function main() {
     await click("themeBtn");
     out.themeAfterSecondClick = { ...state.attrs.html };
     out.prefs = state.prefs;
+  } else if (scenario === "control") {
+    /* The owner's actions (spec 17): steps script the answers of the
+       confirmation and of the question for a number, and the server's. */
+    const shown = () => ({ hidden: (state.classes.actCard || []).includes("hidden"),
+                           buttons: state.html.actList, result: state.text.actResult,
+                           resultCls: (state.classes.actResult || []).join(" "),
+                           posts: state.posts.map((p) => p.body),
+                           snapshots: state.fetches.filter((u) => u.includes("/api/snapshot")).length,
+                           header: state.text.runStateText, dot: state.classes.runDot });
+    out.steps = [{ name: "start", ...shown() }];
+    for (const step of state.snapshots[0]._control || []) {
+      const [kind, a] = step;
+      if (kind === "confirm") state.confirmAnswer = a;
+      else if (kind === "prompt") state.promptAnswer = a;
+      else if (kind === "mode") await click(a === "advanced" ? "modeAdvanced" : "modeSimple");
+      else if (kind === "answer") state.responses.push({ match: "POST", ...a });
+      else if (kind === "press") {
+        state.listeners.actList.click(actionTarget(a));
+        await settle(); await settle(); await settle(); await settle();
+      } else if (kind === "poll") await poll();
+      out.steps.push(Object.assign({ name: step.join(" ") }, shown()));
+    }
   } else if (scenario === "polls") {
     out.first = feed();
     out.writesAfterFirst = state.writes.feed;

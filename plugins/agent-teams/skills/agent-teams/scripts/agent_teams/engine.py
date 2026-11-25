@@ -416,6 +416,11 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
             statemachine.assert_transition(
                 task["status"], statemachine.TaskStatus.IN_PROGRESS,
                 task_id=task_id)
+            if _run_is_paused(store, team):
+                raise StateRejected(
+                    "PAUSED: the lead paused the team; new tasks do not start "
+                    "until it is resumed (team.py resume --lead-token <tok>). "
+                    "Executors already running are not stopped")
             _budget_gate(store, team, config, task_id)
             # The trusted base the attempt is measured against, and the
             # commit its worktree grows from (spec 3.2, 3.3).
@@ -1054,6 +1059,16 @@ def op_release(root: Path, team: str, task_id: str, lead_token: str,
 
 def op_cancel(root: Path, team: str, task_id: str, lead_token: str,
               reason: str = "") -> dict:
+    """Cancel a task (v2.1 spec 17: the owner asks to drop a stage).
+
+    A pending task is closed as it is. A task that is in work is closed
+    too, since 2.1.0a5: its attempt is fenced the way recovery fences a
+    lost executor. The execution token dies with the transition, the
+    workspace moves to quarantine (nothing of it is lost, nothing of it
+    is trusted) and the specialist is free for other work.
+    """
+    from . import workspaces
+
     store, d, team_row = _open_team(root, team)
     try:
         with StateLock(d, "cancel:lead"):
@@ -1062,17 +1077,168 @@ def op_cancel(root: Path, team: str, task_id: str, lead_token: str,
                 task = store.get_task(team, task_id)
                 if task is None:
                     raise NotFoundError(f"task not found: {task_id}")
+                in_work = task["status"] in ("in_progress", "awaiting_verification")
                 statemachine.apply_transition(
                     store.conn, task, statemachine.TaskStatus.CANCELLED,
                     event_type="task_cancelled",
                     run_id=_current_run(store, team)["id"], actor_id="lead",
                     initiator=statemachine.LEAD, timestamp=now_iso(),
                     reason=reason or "cancelled by the lead")
-                _recorded(store, team, [_last_event(store, team)])
+                recorded = [_last_event(store, team)]
+                if in_work:
+                    # The attempt is dead: its token can submit nothing any more.
+                    store.update_task(team, task_id, execution_token_hash=None)
+                    agent = store.get_agent(team, task.get("owner") or "")
+                    if agent and agent.get("current_task") == task_id:
+                        store.update_agent(team, agent["id"], status="idle",
+                                           current_task=None)
+                _recorded(store, team, recorded)
                 _refresh_mirrors(store, team)
-            return {"task": task_id, "status": "cancelled"}
+            fenced = None
+            if in_work and task.get("workspace_path"):
+                # Outside the transaction: a filesystem move must not sit
+                # inside the SQLite critical section.
+                fenced = workspaces.quarantine_attempt(d, task_id, task["attempt"])
+                if fenced is not None:
+                    with store.transaction():
+                        store.update_task(
+                            team, task_id, workspace_path=None, branch=None,
+                            metadata={**task.get("metadata", {}),
+                                      "quarantined_at": now_iso(),
+                                      "quarantine_dir": str(fenced)})
+            return {"task": task_id, "status": "cancelled", "fenced": in_work,
+                    "quarantine": str(fenced) if fenced else None}
     finally:
         store.close()
+
+
+# ------------------------------------------------------- pause and the board's actions
+
+def _run_is_paused(store: Store, team: str) -> str | None:
+    """When the lead paused the team, the moment it happened; else None.
+
+    The pause lives in the run's own record: it is a fact of the run,
+    not a setting, and it needs no column of its own.
+    """
+    run = _current_run(store, team) or {}
+    paused = (run.get("metadata") or {}).get("paused_at")
+    return paused if isinstance(paused, str) and paused else None
+
+
+def op_pause(root: Path, team: str, lead_token: str, reason: str = "") -> dict:
+    """Stop new tasks from starting (v2.1 spec 17).
+
+    An attempt that is already running is never stopped, exactly as with
+    the budget: only new work waits. Idempotent: pausing a paused team
+    changes nothing and writes nothing.
+    """
+    store, d, team_row = _open_team(root, team)
+    try:
+        with StateLock(d, "pause:lead"):
+            _require_lead(team_row, lead_token)
+            with store.transaction():
+                run = _current_run(store, team)
+                if run is None or run["status"] != "active":
+                    raise StateRejected(
+                        f"team {team} is not in work (run status "
+                        f"{(run or {}).get('status')}); there is nothing to pause")
+                if _run_is_paused(store, team):
+                    return {"team": team, "paused": True, "already": True}
+                paused_at = now_iso()
+                store.update_run(run["id"],
+                                 metadata={**(run.get("metadata") or {}),
+                                           "paused_at": paused_at})
+                eventlog.append_event(
+                    store.conn, event_type="run_paused", team_id=team,
+                    run_id=run["id"], actor_id="lead",
+                    metadata={"reason": reason or "paused by the lead"})
+                _recorded(store, team, [_last_event(store, team)])
+                _refresh_mirrors(store, team)
+            return {"team": team, "paused": True, "already": False,
+                    "paused_at": paused_at}
+    finally:
+        store.close()
+
+
+def op_resume(root: Path, team: str, lead_token: str) -> dict:
+    """Let new tasks start again after a pause (v2.1 spec 17)."""
+    store, d, team_row = _open_team(root, team)
+    try:
+        with StateLock(d, "resume:lead"):
+            _require_lead(team_row, lead_token)
+            with store.transaction():
+                run = _current_run(store, team)
+                if run is None or not _run_is_paused(store, team):
+                    return {"team": team, "paused": False, "already": True,
+                            "paused_at": None}
+                metadata = dict(run.get("metadata") or {})
+                paused_at = metadata.pop("paused_at", None)
+                store.update_run(run["id"], metadata=metadata)
+                eventlog.append_event(
+                    store.conn, event_type="run_resumed", team_id=team,
+                    run_id=run["id"], actor_id="lead",
+                    metadata={"paused_at": paused_at})
+                _recorded(store, team, [_last_event(store, team)])
+                _refresh_mirrors(store, team)
+            return {"team": team, "paused": False, "already": False,
+                    "paused_at": paused_at}
+    finally:
+        store.close()
+
+
+# What the owner can ask from the board (v2.1 spec 17), and which of
+# these ask for a confirmation first: their consequences are not undone
+# from the board.
+ACTIONS = ("pause", "resume", "retry", "cancel", "request_check",
+           "integrate", "apply", "budget")
+DANGEROUS_ACTIONS = frozenset({"pause", "cancel", "integrate", "apply", "budget"})
+
+
+def op_action(root: Path, team: str, action: str, lead_token: str, *,
+              task_id: str | None = None, usd: float | None = None,
+              reason: str = "", confirm: bool = False) -> dict:
+    """One door for every control action of the board (v2.1 spec 17).
+
+    The board never edits state itself and never holds the lead token on
+    the page: the server keeps it in memory and calls this. The action
+    is checked here and done by the operation that owns it, under the
+    state lock, with the lead's authority. ``confirm`` must be True for
+    an action with consequences the owner has to agree to first.
+    """
+    if action not in ACTIONS:
+        raise UsageError(
+            f"unknown action {action!r} (known: {', '.join(ACTIONS)})")
+    if action in DANGEROUS_ACTIONS and not confirm:
+        raise UsageError(f"action {action!r} needs a confirmation")
+    if action == "pause":
+        result = op_pause(root, team, lead_token, reason)
+    elif action == "resume":
+        result = op_resume(root, team, lead_token)
+    elif action == "retry":
+        if not task_id:
+            raise UsageError("action 'retry' needs a task")
+        result = op_release(root, team, task_id, lead_token, reason)
+    elif action == "cancel":
+        if not task_id:
+            raise UsageError("action 'cancel' needs a task")
+        result = op_cancel(root, team, task_id, lead_token, reason)
+    elif action == "request_check":
+        if not task_id:
+            raise UsageError("action 'request_check' needs a task")
+        # The board runs no agent: it asks the lead through the mailbox,
+        # the way everything else reaches the lead.
+        result = op_message(root, team, "lead", "owner",
+                            f"OWNER REQUEST: please verify task {task_id} "
+                            "(asked for from the board)")
+    elif action == "integrate":
+        result = op_integrate(root, team, lead_token)
+    elif action == "apply":
+        result = op_apply(root, team, lead_token)
+    else:
+        if usd is None:
+            raise UsageError("action 'budget' needs usd")
+        result = op_budget(root, team, lead_token, usd=usd)
+    return {"action": action, **result}
 
 
 def op_recover(root: Path, team: str, lead_token: str,
@@ -1322,7 +1488,10 @@ def op_integrate(root: Path, team: str, lead_token: str,
         with StateLock(d, "integrate:lead"):
             _require_lead(team_row, lead_token)
             tasks = store.list_tasks(team)
-            unfinished = [t["id"] for t in tasks if t["status"] != "completed"]
+            # A stage the owner cancelled is not in the way of the rest
+            # (v2.1 spec 17): what was accepted is integrated.
+            unfinished = [t["id"] for t in tasks
+                          if t["status"] not in ("completed", "cancelled")]
             if unfinished:
                 raise StateRejected(
                     "cannot integrate: tasks not completed: "
