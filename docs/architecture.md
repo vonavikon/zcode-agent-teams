@@ -11,7 +11,7 @@ Seven logical components (spec section 2), one package
 | Quality gate | `quality.py` | machine-checked criteria, forced FAIL, integration gate |
 | Observability | `observability.py`, `langfuse.py`, `report.py` | usage, cost, metrics, export, HTML report |
 | Recovery | `engine.py` (recover/heartbeat) | expired leases, restart limits, worktree reuse |
-| Board | `viewmodel.py`, `dashboard_data.py`, `dashboard_server.py`, `planview.py`, `dashboard/` | the engine's state in the reader's words, one read-only snapshot per request, the layout of the plan graph and the timeline, a local page (spec 16) |
+| Board | `viewmodel.py`, `dashboard_data.py`, `dashboard_server.py`, `planview.py`, `analytics.py`, `dashboard/` | the engine's state in the reader's words, one read-only snapshot per request, the layout of the plan graph and the timeline, a local page (spec 16), and what the numbers mean (quality, budget, problems, integration, the comparison of teams) |
 
 Team directory: `<project_root>/.agent-teams/<team>/`
 
@@ -35,7 +35,9 @@ The board is the only reader that does not go through `engine.op_*`:
 those open the database read-write (they may migrate and checkpoint),
 so `dashboard_data` opens it strictly read-only and returns one
 consistent snapshot; `viewmodel` is the single place that turns tasks,
-events and runs into words.
+events and runs into words, and `analytics` the single place that
+decides what the numbers mean (quality, budget, problems, integration,
+the comparison of teams): pure functions over what the snapshot read.
 
 ## Design rules
 
@@ -46,3 +48,9 @@ events and runs into words.
 - Authority comes from tokens printed once and stored hashed; free-text
   `--by` values are actor records, never authority.
 - Numbers the runtime does not provide stay absent, never invented.
+- A figure the board shows is computed engine-side, in a pure function
+  with a test; the page only puts the words and the endings to it. A
+  machine check, a judgement of content and a decision of the lead are
+  never summed into one number.
+- A limit is enforced at one place, before anything is created, so a
+  refused operation leaves nothing behind (the budget in `claim`).

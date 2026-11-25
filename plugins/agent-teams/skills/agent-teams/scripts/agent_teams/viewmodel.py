@@ -504,15 +504,18 @@ def verifier_view(tasks: list[dict], attempts: list[dict],
     waiting = [t for t in tasks if t["status"] == "awaiting_verification"]
     key = "verifying" if waiting else "free"
     state = AGENT_STATE[key]
+    # Only the checks the checker really made: an attempt the engine
+    # records behind a decision of the lead is not one, whatever its
+    # verdict says.
+    real = [a for a in attempts if a.get("task_id") not in (manual_tasks or set())]
     return {
         "name": VERIFIER_ROLE,
         "does": role_does(VERIFIER_ROLE),
         "state": state["label"], "state_hint": state["hint"], "icon": state["icon"],
         "doing": f"проверяет: {waiting[0]['title']}" if waiting else "ждёт результатов для проверки",
         "silent_s": None, "worked_s": None,
-        "completed": len([a for a in attempts if a.get("verdict") == "pass"
-                         and a.get("task_id") not in (manual_tasks or set())]),
-        "total": len(attempts), "checks": len(attempts), "tasks": [],
+        "completed": len([a for a in real if a.get("verdict") == "pass"]),
+        "total": len(real), "checks": len(real), "tasks": [],
     }
 
 

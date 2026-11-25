@@ -1,5 +1,69 @@
 # Backlog
 
+## Done in v2.1.0a4: what the numbers mean (2026-11-25)
+
+Budget control (v2.1 spec 11.2) in the engine: `budget_usd`,
+`budget_per_task_usd` and `budget_warn_ratio` in the config, the
+`team.py budget` command for the lead, a gate in `claim` that refuses
+new work once the budget is spent and stops nothing running. Four cards
+on the board (v2.1 spec 10 to 13): the quality of the results, the
+spend against the budget, the problems and how each ended, the
+integration; and the comparison of teams for a declared benchmark
+(v2.1 spec 19), with a sentence about speed or money only from two
+finished teams of one set.
+
+The first cut was checked against the text of the specification before
+it was called done, and five gaps were found and closed:
+
+- The quality card had figures but neither the distribution of the
+  results nor the checks in their order, and a found defect was named
+  by the identifier of its task instead of its title.
+- Every sum per stage and per specialist was shown as the whole truth
+  while some of its records had no price; a stage with no priced record
+  was not shown at all. Now each sum says what it leaves out, and such
+  a stage is "not defined".
+- The technical level had no tokens and no price per model (v2.1 spec
+  11.3).
+- A spent budget was on the attention card and on the money card, but
+  not among the problems of the recovery centre: the engine refuses the
+  start and writes no event.
+- The comparison measured time, money and first-pass results only;
+  attempts, problems and clashes between results were not counted.
+
+Found on the way:
+
+- On a phone the sticky header grew to four rows (an oval that hid a
+  quarter of the screen) as soon as the goal needed two lines. The
+  start and the elapsed time are on the "now" card anyway; the header
+  is two short rows now. The screenshots of the earlier milestone had
+  been taken and not looked at closely enough.
+- Two tables of eight and nine columns hid their last columns behind
+  the edge of the card. Both are a block per row now (a model, a team):
+  every measure is visible at any width.
+- A pinned hand-over that changed no file was shown with the files the
+  task declared, as if the result had them. It is an empty result: the
+  task's sheet says so, and the quality card names it (the item from
+  v2.1.0a3 below).
+- Figures took no notice of their number ("1 проверок", "Цена 1 запись
+  неизвестна"). The words take their endings from the figure now.
+- A money limit compared at the precision of floating point: a budget
+  that was exactly spent was not enforced. Both sides are compared at
+  the precision of the price table.
+- In shared mode (no git) a PASS given with an override reason was not
+  recorded as a decision of the lead: the engine marked it only when
+  there was a snapshot to bind a report to, and the board counted it as
+  a passed check. A reason given is the lead's decision in any mode now.
+- The checker's card counted an attempt recorded behind a decision of
+  the lead among its checks ("1 of 1" for a team whose only acceptance
+  was a decision). Its checks are the ones it really made.
+- `team.py ui` did not stop on Ctrl-C when a script had started it in
+  the background: a non-interactive shell leaves SIGINT ignored in such
+  a child, Python keeps what it inherits, and the process sat in its
+  select forever. The command takes the signal back now. Found because
+  two test suites started as background jobs failed four tests each
+  that pass in the foreground; the first guess (load) was wrong, a
+  stack dump of the stuck process showed the select loop.
+
 ## Done in v2.1.0a2: the board for a non-technical owner (2026-11-25)
 
 `team.py ui` (spec 16): a read-only local page with the plan, what is
@@ -84,11 +148,29 @@ Found on the way:
 
 ## Open, found while building the board (2026-11-25)
 
-- The snapshot's `metrics` were always empty: `collect_metrics` needs
-  a store with a live connection, and the adapter's failure was
-  swallowed into `{}`. The board does not show metrics yet (M4); build
-  them on the snapshot's own data, with a test, instead of reviving
-  the adapter.
+- The snapshot's `metrics` are still empty: `collect_metrics` needs a
+  store with a live connection, and the adapter's failure was swallowed
+  into `{}`. The board does not need it any more (its numbers are built
+  on the snapshot's own data, `analytics.py`); the field should either
+  go or be filled from the same functions, so that two readers never
+  disagree.
+- Money is shown in USD with the currency named beside the figures. A
+  currency of the reader's choice (v2.1 spec 11.1) needs an exchange
+  rate the engine cannot know offline: a rate in the config, set by the
+  owner, would do; not built.
+- Two problem types of v2.1 spec 12.1 have no event of their own in
+  this engine: missing data (shown where the engine records it, as a
+  stage waiting for another one) and a clash between results (shown as
+  a problem of the integration). If the engine learns to record them,
+  the recovery centre should tell them apart.
+- The behaviour at the budget limit is the one the specification
+  describes and is not a setting (v2.1 spec 11.2 lists it among the
+  settings). A second behaviour would need a reason to exist.
+- The comparison of 1, 2, 3 and 5 executors (v2.1 spec 19) has its
+  machinery and no campaign yet: it needs real runs of one declared
+  set. Until then the card says there is nothing to compare.
+- The technical block under each card is a plain dump of the fields.
+  Readable enough for a technical reader; a table would be kinder.
 - The texts of the board are Russian, in a repository whose rule is
   technical English with READMEs in five languages. For the alpha that
   is the language of its first users; before a stable 2.1.0 the strings

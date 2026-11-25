@@ -17,6 +17,10 @@
   workspace; a failure overrides a PASS verdict.
 - Audit: hash-chained event log, `verify_chain` detects any later row
   edit; verification attempts store the full criterion report.
+- Budget: only the lead token moves a limit (`team.py budget`), and the
+  decision is in the audit log (`budget_changed`). The gate runs in
+  `claim` before anything is created, so a refused start leaves nothing
+  behind; an executor's token cannot move a limit.
 
 ## The board (`team.py ui`)
 
@@ -48,6 +52,15 @@
   own content and cannot act as a page of the board. Pictures are
   served as pictures, everything else as an attachment; each kind has a
   size limit.
+- `/api/metrics`, `/api/recovery`, `/api/integration` and
+  `/api/benchmark` answer from the same snapshot, with the same
+  whitelists, as every other endpoint.
+- `/api/benchmark` reads the state of the other teams of the same
+  project, and only those that declare the same benchmark name: their
+  statuses, times, spend and checks, through the same read-only
+  connection. A team that cannot be read is left out of the comparison.
+  The project root stays the one fixed by the command that started the
+  server.
 - Not a boundary: the board has no authentication. Whoever can reach
   the address reads what the lead reads (titles, files, results,
   remarks).

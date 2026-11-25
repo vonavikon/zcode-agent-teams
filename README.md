@@ -16,7 +16,8 @@ A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-te
 - **Integration gate and apply**: accepted commit SHAs merge in DAG order into an integration branch with an optional check; apply is a separate fast-forward step that refuses a dirty project or a moved base
 - **Recovery and fencing**: lease, heartbeat and execution timeouts; lost attempts are fenced (dead token, quarantined workspace kept for salvage) and requeued within restart limits
 - **Observability**: token usage from subagent notifications, cost with explicit quality flags, run metrics including the multi-agent vs single-agent comparison, a self-contained HTML report and an idempotent Langfuse export
-- **Live board for a non-technical owner**: `team.py ui` opens a read-only page in the browser with the plan as a graph, how the time went, what each specialist is doing now, what waits for the owner's decision and why, and the files of every result as they were accepted, in plain words; nothing on it can change the run
+- **Live board for a non-technical owner**: `team.py ui` opens a read-only page in the browser with the plan as a graph, how the time went, what each specialist is doing now, what waits for the owner's decision and why, how far the results can be trusted, the spend against the budget, the problems and how each ended, and the files of every result as they were accepted, in plain words; nothing on it can change the run
+- **A budget that holds**: agree a budget for the team and a limit per task; once it is spent, no new work starts (exit code 2, `BUDGET_LIMIT`), running executors are not stopped, and the board says why
 
 Roles: the lead is the main ZCode session; teammates and verifiers are subagents (role profiles ship in `agents/`).
 

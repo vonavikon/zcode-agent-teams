@@ -36,7 +36,8 @@ def _money(value: float | None) -> str:
 # ---------------------------------------------------------------- quality (10)
 
 def quality_view(tasks: list[dict], attempts: list[dict],
-                 accepted_by_lead: set[str], titles: dict | None = None) -> dict:
+                 accepted_by_lead: set[str], titles: dict | None = None,
+                 empty: list[str] | None = None) -> dict:
     """How far the results of a team can be trusted (v2.1 spec 10).
 
     Three things are counted apart, because they are different:
@@ -50,7 +51,8 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     a check: it is left out of the counts of checks.
 
     ``titles`` names a task by its title in what is shown; without it
-    the identifier stands in.
+    the identifier stands in. ``empty`` names the accepted results that
+    have no file in them.
     """
     checks_by_task: dict[str, list[dict]] = {}
     for a in attempts:
@@ -128,13 +130,19 @@ def quality_view(tasks: list[dict], attempts: list[dict],
                   + _one_of(len(by_decision), "результат принят", "результата приняты",
                             "результатов приняты")
                   + " решением руководителя команды, без проверки.")
+    empty = list(empty or [])
+    if empty:
+        story += (f" {len(empty)} "
+                  + _one_of(len(empty), "результат принят без единого файла",
+                            "результата приняты без единого файла",
+                            "результатов приняты без единого файла") + ".")
     return {
         "handed_over": len(handed), "checks": len(checks),
         "passed": passed, "failed": failed,
         "accepted_by_check": len([t for t in judged if t["status"] == "completed"]),
         "accepted_by_decision": len(by_decision),
         "first_time": len(first_time), "reworked": len(reworked), "judged": total,
-        "split": split, "timeline": timeline,
+        "split": split, "timeline": timeline, "empty": empty,
         "machine": machine,
         "awaited": [t["title"] for t in awaited],
         "problems": problems,

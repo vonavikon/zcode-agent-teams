@@ -27,6 +27,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import signal
 import socketserver
 import sys
 import threading
@@ -384,6 +385,12 @@ def op_ui(root: Path, team: str, *, host: str = DEFAULT_HOST,
             if open_browser:
                 import webbrowser
                 webbrowser.open(url)
+            # A script that starts the board in the background leaves the
+            # interrupt ignored in this process, and Python keeps what it
+            # inherits: Ctrl-C would do nothing, and the command promises
+            # to stop on it. The signal is taken back; nothing else is.
+            if signal.getsignal(signal.SIGINT) == signal.SIG_IGN:
+                signal.signal(signal.SIGINT, signal.default_int_handler)
             server.serve_forever(poll_interval=0.5)
         except KeyboardInterrupt:
             pass

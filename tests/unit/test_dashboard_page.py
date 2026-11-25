@@ -858,6 +858,11 @@ class TestTheQualityCard:
         assert "1 результат возвращался на доработку больше одного раза." in body
         assert "Найденные недостатки <span class='count'>2</span>" in body
         assert EVIL_ESCAPED in body and EVIL not in body
+        assert "без единого файла" not in body
+        quality["empty"] = [EVIL]
+        body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
+        assert "<p class='bad-text'>Принято без единого файла: " + EVIL_ESCAPED + \
+            ". Исполнитель ничего не подготовил.</p>" in body
 
 
 class TestTheMoneyCard:
@@ -1022,12 +1027,14 @@ class TestTheComparisonCard:
         assert "<table" not in body
         # Attempts, problems and clashes (spec 19); an engine that sends
         # none of them is not read as zero.
+        assert "<dt>Цена принятого результата</dt><dd>не определена</dd>" in body
         assert "<dt>Проверок</dt><dd>нет данных</dd><dt>Проблем</dt><dd>нет данных</dd>" \
             "<dt>Конфликтов объединения</dt><dd>нет данных</dd>" in body
         view = self.benchmark()
-        view["rows"][0].update(attempts=5, problems=2, conflicts=1)
+        view["rows"][0].update(attempts=5, problems=2, conflicts=1, usd_per_result=2.5)
         view["rows"][1]["executors"] = None
         body = run("render", [snapshot(benchmark=view)])["dom"]["benchBody"]["html"]
+        assert "<dt>Цена принятого результата</dt><dd>$2.50</dd>" in body
         assert "<dt>Проверок</dt><dd>5</dd><dt>Проблем</dt><dd>2</dd><dt>Конфликтов объединения</dt><dd>1</dd>" in body
         assert "· специалистов: ?</span>" in body
         assert "не завершена" in body and "не определены" in body and "нет проверок" in body

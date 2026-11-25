@@ -5,5 +5,5 @@ the plugin and engine versions describe behavior, SPEC_VERSION the task
 specification format, storage.SCHEMA_VERSION the SQLite schema (with
 migrations), verification.REPORT_SCHEMA_VERSION the report format.
 """
-ENGINE_VERSION = "2.1.0a3"
+ENGINE_VERSION = "2.1.0a4"
 SPEC_VERSION = "1.1"

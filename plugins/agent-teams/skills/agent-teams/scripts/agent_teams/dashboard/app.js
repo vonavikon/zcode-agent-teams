@@ -710,6 +710,8 @@
       distribution(q.split) +
       duo("Что проверила машина", machineBody, "Что оценил проверяющий", judgedBody) +
       strip(q.timeline) +
+      (list(q.empty).length ? "<p class='bad-text'>Принято без единого файла: " + esc(list(q.empty).join(", ")) +
+       ". Исполнитель ничего не подготовил.</p>" : "") +
       (problems.length ? "<h3>Найденные недостатки <span class='count'>" + problems.length +
        "</span></h3><ul class='plain'>" + problems.map(function (p) {
         return "<li><b>" + esc(p.task) + ".</b> " + esc(p.remark || "замечаний не записано") + "</li>";
@@ -849,6 +851,8 @@
         "<dl><dt>Время</dt><dd>" + esc(r.finished ? fmtDur(Number(r.duration_s) || 0) : "не завершена") + "</dd>" +
         "<dt>Затраты</dt><dd>" + esc(r.cost_complete ? moneyText(r.spent_usd) : "не определены") + "</dd>" +
         "<dt>С первого раза</dt><dd>" + esc(r.judged ? r.first_time + " из " + r.judged : "нет проверок") + "</dd>" +
+        "<dt>Цена принятого результата</dt><dd>" +
+        esc(r.usd_per_result == null ? "не определена" : moneyText(r.usd_per_result)) + "</dd>" +
         "<dt>Проверок</dt><dd>" + esc(measured(r.attempts)) + "</dd>" +
         "<dt>Проблем</dt><dd>" + esc(measured(r.problems)) + "</dd>" +
         "<dt>Конфликтов объединения</dt><dd>" + esc(measured(r.conflicts)) + "</dd></dl></div>";

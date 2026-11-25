@@ -466,9 +466,9 @@ class TestSpecialists:
 
     def test_what_the_checker_did_is_counted_and_its_ids_stay_in_the_technical_level(self, team):
         simple = snapshot(team["root"], "t")["agents"][-1]
-        # Three checks; the one result that was accepted was accepted by the
-        # lead's decision, so it is not counted as the checker's.
-        assert simple["name"] == "AI-проверяющий" and (simple["checks"], simple["completed"]) == (3, 0)
+        # Two checks, both of task c. The engine records the lead's decision
+        # on a as a passed attempt; it is not the checker's, in any count.
+        assert simple["name"] == "AI-проверяющий" and (simple["checks"], simple["completed"]) == (2, 0)
         advanced = snapshot(team["root"], "t", level="advanced")["agents"][-1]
         assert advanced["tech"] == {"verifiers": ["verifier"]}
 
@@ -615,6 +615,42 @@ class TestComparingTeams:
             engine.op_verify(root, name, "a", "pass", "", lead)
         return "solo", "trio"
 
+    def test_an_accepted_result_with_nothing_in_it_is_named(self, tmp_path):
+        init_git(tmp_path)
+        lead = engine.op_init(tmp_path, "t", spec_file(tmp_path))["lead_token"]
+        claim = engine.op_claim(tmp_path, "t", "c", "w1")
+        workspace = Path(claim["workspace"])
+        git(workspace, "commit", "-q", "--allow-empty", "-m", "nothing")
+        engine.op_submit(tmp_path, "t", "c", "w1", claim["execution_token"])
+        engine.op_verify(tmp_path, "t", "c", "pass", "", lead, override_reason="demo")
+        snap = snapshot(tmp_path, "t")
+        # A pinned hand-over that changed no file is an empty result: the
+        # declared files do not stand in for it, and the quality says so.
+        assert by_id(snap, "c")["result"]["files"] == [] and by_id(snap, "c")["result"]["ready"]
+        assert snap["quality"]["empty"] == [TITLES["c"]]
+        assert "1 результат принят без единого файла." in snap["quality"]["story"]
+
+    def test_in_shared_mode_the_result_is_what_the_task_declared(self, tmp_path):
+        (tmp_path / "out").mkdir()
+        spec = tmp_path / "s.json"
+        spec.write_text(json.dumps({
+            "config": {"workspace": "shared"},
+            "tasks": [{"id": "a", "title": "Отчёт", "assignee": "w1", "files_write": ["out/a.md"],
+                       "acceptance": ["готово"], "deps": []}]}), encoding="utf-8")
+        lead = engine.op_init(tmp_path, "t", spec)["lead_token"]
+        claim = engine.op_claim(tmp_path, "t", "a", "w1")
+        engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
+        engine.op_verify(tmp_path, "t", "a", "pass", "", lead, override_reason="demo")
+        snap = snapshot(tmp_path, "t")
+        # No git: the engine keeps no diff, the declared files are the result.
+        assert by_id(snap, "a")["result"]["files"] == ["out/a.md"]
+        assert snap["quality"]["empty"] == []
+        # A reason given in shared mode is still a decision of the lead:
+        # not a check, never shown as a passed one.
+        assert snap["quality"]["accepted_by_decision"] == 1 and snap["quality"]["checks"] == 0
+        checker = next(card for card in snap["agents"] if card["name"] == "AI-проверяющий")
+        assert (checker["checks"], checker["completed"]) == (0, 0)
+
     def test_a_team_without_a_declared_benchmark_is_compared_with_nobody(self, team):
         assert "benchmark" not in snapshot(team["root"], "t")
 
@@ -639,6 +675,8 @@ class TestComparingTeams:
         assert [r["executors"] for r in view["rows"]] == [1, 3]
         assert all(r["duration_s"] >= 0 for r in view["rows"])    # from the claim to the acceptance
         assert all((r["attempts"], r["problems"], r["conflicts"]) == (1, 0, 0) for r in view["rows"])
+        # No usage recorded: the price of a result is not known, not zero.
+        assert all(r["usd_per_result"] is None for r in view["rows"])
 
     def test_a_decision_of_the_lead_is_neither_a_check_nor_an_attempt(self, tmp_path):
         init_git(tmp_path)

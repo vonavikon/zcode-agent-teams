@@ -87,6 +87,12 @@ class TestQuality:
         checks = [check("x", 1, "pass"), check("x", 2, "fail"), check("x", 3, "pass")]
         assert quality_view(again, checks, set())["split"] == \
             {"first": 0, "reworked": 1, "decision": 0, "awaiting": 0}
+        # An accepted result with nothing in it is said out loud.
+        view = quality_view([task("x", "completed", submitted_at="x")], [check("x", 1, "pass")], set(),
+                            empty=["Обзор"])
+        assert view["empty"] == ["Обзор"]
+        assert view["story"].endswith("1 результат принят без единого файла.")
+        assert quality_view([task("x")], [], set())["empty"] == []
 
     def test_the_story_says_it_in_words(self):
         tasks, attempts = self.team()

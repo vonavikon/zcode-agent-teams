@@ -857,7 +857,11 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                     override = False
                     if verdict == "pass":
                         if submission is None or not submission.get("commit_sha"):
-                            pass  # shared mode: no snapshot to bind a report to
+                            # Shared mode: no snapshot to bind a report to, so
+                            # a PASS needs none. A reason given is still the
+                            # lead's own decision, and is recorded as one:
+                            # the board must never show it as a passed check.
+                            override = bool(override_reason.strip())
                         elif report is None:
                             if override_reason.strip():
                                 override = True

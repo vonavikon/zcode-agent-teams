@@ -474,6 +474,14 @@ class TestSpecialistCards:
         idle = viewmodel.verifier_view([], attempts)
         assert (idle["state"], idle["doing"]) == ("Свободен", "ждёт результатов для проверки")
 
+    def test_a_decision_of_the_lead_is_not_a_check_of_the_checker(self):
+        attempts = [{"verdict": "pass", "task_id": "a"}, {"verdict": "fail", "task_id": "b"},
+                    {"verdict": "pass", "task_id": "b"}]
+        view = viewmodel.verifier_view([], attempts, manual_tasks={"a"})
+        assert (view["checks"], view["completed"], view["total"]) == (2, 1, 2)
+        only = viewmodel.verifier_view([], [{"verdict": "pass", "task_id": "a"}], {"a"})
+        assert (only["checks"], only["completed"], only["total"]) == (0, 0, 0)
+
     def test_specialists_of_one_role_are_told_apart_by_a_number(self):
         same = viewmodel.number_duplicates({"w1": "AI-аналитик", "w2": "AI-редактор",
                                             "w3": "AI-аналитик"})

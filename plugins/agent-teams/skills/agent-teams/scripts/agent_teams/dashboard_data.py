@@ -193,9 +193,11 @@ def _result(task: dict, submission: dict | None, level: str) -> dict:
     """
     files = list((submission or {}).get("changed_files")
                  or (task.get("metadata") or {}).get("changed_files") or [])
-    if not files and task.get("submitted_at"):
+    if not files and task.get("submitted_at") and not (submission or {}).get("commit_sha"):
         # Shared mode keeps no diff of what changed: the files the task
-        # declared are what the engine knows the result consists of.
+        # declared are what the engine knows the result consists of. A
+        # pinned hand-over with no changed file is an empty result, and
+        # is shown as one.
         files = list(task.get("files_write") or [])
     view = {"files": files, "ready": task["status"] == "completed",
             "handed_over": bool(task.get("submitted_at")),
@@ -397,7 +399,12 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
 
     cost = viewmodel.cost_view(usage, task_of=titles, role_of=role_by_agent)
     cost["series"] = analytics.spend_series(usage)
-    quality = analytics.quality_view(tasks, attempts, accepted_by_lead, titles)
+    # An accepted result with nothing in it is a fact about the quality
+    # (a demo team had one, accepted by decision).
+    quality = analytics.quality_view(
+        tasks, attempts, accepted_by_lead, titles,
+        empty=[view["title"] for view in task_views
+               if view["result"]["ready"] and not view["result"]["files"]])
     budget = analytics.budget_view(cost, config, tasks)
     budget["series"] = cost["series"]
     if level == "advanced":
@@ -577,11 +584,15 @@ def benchmark_view(project_root: Path, team: str, config: dict) -> dict | None:
         duration = round((max(ends) - min(starts)).total_seconds(), 3) if starts and ends else 0
         cost = viewmodel.cost_view(usage)
         quality = analytics.quality_view(tasks, attempts, manual)
+        accepted = len([t for t in live if t["status"] == "completed"])
         rows.append({
             "team": row["id"], "executors": ((row.get("config") or {}).get("benchmark") or {}).get("executors"),
             "finished": finished, "duration_s": duration if finished else None,
             "spent_usd": cost["usd"], "cost_complete": cost["complete"],
-            "accepted": len([t for t in live if t["status"] == "completed"]), "total": len(live),
+            # The price of one accepted result: all attempts, rework included.
+            "usd_per_result": (round(cost["usd"] / accepted, 6)
+                               if accepted and cost["usd"] and cost["complete"] else None),
+            "accepted": accepted, "total": len(live),
             "first_time": quality["first_time"], "judged": quality["judged"],
             # Attempts and problems (spec 19): checks by the checker (a
             # manual acceptance is not an attempt), the problems the

@@ -142,3 +142,24 @@ def test_a_taken_port_is_said_plainly(project):
         assert "Traceback" not in second.stderr
     finally:
         stop(first)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the interrupt is a POSIX signal here")
+def test_it_stops_on_the_interrupt_even_when_started_with_it_ignored(project):
+    # A script that runs the board in the background leaves SIGINT ignored
+    # in the child, and Python keeps what it inherits. The command
+    # promises to stop on Ctrl-C, so it takes the signal back.
+    proc = subprocess.Popen(
+        [sys.executable, str(TEAM), "ui", "--team", "t", "--project-root", str(project),
+         "--json", "--port", "0"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    try:
+        url = json.loads(read_line(proc))["url"]
+        assert get(origin(url) + "/api/health")["ok"]
+        code = stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()          # never leave a board behind
+    assert code == 0, proc.stderr.read()
+    assert "Traceback" not in proc.stderr.read()
