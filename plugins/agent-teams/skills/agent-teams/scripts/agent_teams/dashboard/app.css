@@ -106,7 +106,9 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 @media (max-width: 900px) { .columns { grid-template-columns: 1fr; } }
 
 /* Double bezel card: shell + concentric core */
-.card { border-radius: var(--r-lg); padding: 6px; border: 1px solid var(--shell); background: var(--surface-2); box-shadow: var(--shadow); }
+/* min-width 0: a card may hold something wider than itself (the timeline
+   scrolls inside) without stretching the page sideways. */
+.card { min-width: 0; border-radius: var(--r-lg); padding: 6px; border: 1px solid var(--shell); background: var(--surface-2); box-shadow: var(--shadow); }
 .card > .core { border-radius: calc(var(--r-lg) - 6px); background: var(--surface); padding: 20px 22px; }
 .card.attention { border-color: color-mix(in srgb, var(--yellow) 35%, transparent); }
 .cardhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -277,6 +279,76 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .history li time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; padding-top: 2px; }
 .history li .tt { font-weight: 500; }
 .history li .dd { font-size: 12.5px; color: var(--text-2); margin-top: 1px; }
+/* Tools above a block: search, chips, zoom. Kept across refreshes. */
+.graph-tools, .feed-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.graph-tools input, .feed-tools input, .feed-tools select { font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 12px; min-width: 0; }
+.graph-tools input { width: 160px; }
+.graph-tools input:focus-visible, .feed-tools input:focus-visible, .feed-tools select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.graph-tools .spacer { flex: 1; }
+.chips { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); flex-wrap: wrap; }
+.chip { border: 0; background: transparent; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; white-space: nowrap; transition: background-color var(--t) var(--ease), color var(--t) var(--ease); }
+.chip:hover { color: var(--text); }
+.chip.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.chip:active { transform: scale(0.97); }
+.iconbtn.small { width: 30px; height: 30px; font-size: 16px; line-height: 1; }
+
+/* The plan graph: stages left to right, what depends on what */
+.graph-wrap { position: relative; overflow: hidden; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); cursor: grab; touch-action: none; }
+.graph-wrap:active { cursor: grabbing; }
+.graph { display: block; width: 100%; min-height: 120px; }
+.graph .link { fill: none; stroke: var(--gray); stroke-width: 2; }
+.graph .link.done { stroke: var(--green); } .graph .link.busy { stroke: var(--blue); }
+.graph .link.problem { stroke: var(--red); } .graph .link.attention { stroke: var(--yellow); }
+.graph .node { cursor: pointer; outline: none; }
+.graph .node .box { fill: var(--surface); stroke: var(--hairline); transition: stroke var(--t) var(--ease); }
+.graph .node:hover .box, .graph .node:focus-visible .box { stroke: var(--accent); stroke-width: 2; }
+.graph .node .mark { fill: var(--gray); stroke: none; }
+.graph .node.done .mark { fill: var(--green); } .graph .node.busy .mark { fill: var(--blue); }
+.graph .node.problem .mark { fill: var(--red); } .graph .node.attention .mark { fill: var(--yellow); }
+.graph .node-title { font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; color: var(--text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.graph .node-state { font: 600 11.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text-2); }
+.graph .node-tech { font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; fill: var(--text-3); }
+.graph .dim { opacity: 0.16; }
+
+/* The timeline: a row per task, time left to right */
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 22px; height: 10px; border-radius: 999px; display: inline-block; }
+.swatch.work { background: var(--blue); } .swatch.check, .swatch.fix { background: var(--yellow); }
+.swatch.wait { background: var(--gray); } .swatch.recovery { background: var(--blue-soft); border: 1px dashed var(--blue); }
+.swatch.done { background: var(--green); } .swatch.stopped { background: var(--red); }
+.swatch.mark { width: 8px; height: 8px; background: var(--text-2); }
+.timeline-wrap { overflow-x: auto; max-width: 100%; border-radius: var(--r-md); }
+.timeline-wrap svg { display: block; }
+.timeline { display: block; max-width: none; }
+.timeline .grid { stroke: var(--hairline); stroke-width: 1; }
+.timeline .tick { font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text-3); }
+.timeline .row-title { font: 500 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text); }
+.timeline .row-state { font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text-3); }
+.timeline .trow { cursor: pointer; outline: none; }
+.timeline .trow:hover .row-title { fill: var(--accent); }
+.timeline .span { opacity: 0.85; }
+.timeline .span.work { fill: var(--blue); } .timeline .span.check, .timeline .span.fix { fill: var(--yellow); }
+.timeline .span.wait { fill: var(--gray); } .timeline .span.recovery { fill: var(--blue-soft); stroke: var(--blue); stroke-dasharray: 3 2; }
+.timeline .span.done { fill: var(--green); } .timeline .span.stopped { fill: var(--red); }
+.timeline .tmark { fill: var(--text); stroke: var(--surface); stroke-width: 1.5; }
+.timeline .tmark.problem { fill: var(--red); } .timeline .tmark.done { fill: var(--green); }
+.timeline .tmark.manual { fill: var(--yellow); } .timeline .tmark.busy { fill: var(--blue); }
+
+/* The activity feed's own tools */
+.feed-tools input { width: 150px; }
+.older { display: block; width: 100%; margin: 0 0 8px; padding: 7px; border-radius: var(--r-sm); border: 1px dashed var(--hairline); background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.older:hover { color: var(--text); background: var(--surface-2); }
+.older:disabled { opacity: 0.5; cursor: default; }
+
+/* The result of a task inside its sheet */
+.sheet-body ul.files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sheet-body .file-btn { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); text-align: left; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 8px 10px; cursor: pointer; overflow-wrap: anywhere; }
+.sheet-body .file-btn:hover { border-color: var(--accent); }
+.sheet-body .file-btn.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--blue-soft); }
+.result { margin-top: 8px; }
+.result-text { margin: 0; padding: 12px 14px; max-height: 360px; overflow: auto; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.result-img { display: block; max-width: 100%; max-height: 420px; border-radius: var(--r-sm); border: 1px solid var(--hairline); }
 @media (max-width: 640px) {
   body { padding: 0 12px 80px; }
   .topbar { padding: 8px 10px 8px 16px; gap: 8px; }
@@ -293,6 +365,8 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
   .sheet { width: calc(100% - 16px); max-height: 92vh; }
   .sheet-body { max-height: calc(92vh - 72px); }
   .team-list { grid-template-columns: 1fr; }
+  .graph-tools input, .feed-tools input { width: 100%; }
+  .feed-tools select { flex: 1 1 100%; }
   .attention-item dl { grid-template-columns: 1fr; gap: 2px; }
   .attention-item dd { margin-bottom: 8px; }
   .remarks { margin-left: 0; }

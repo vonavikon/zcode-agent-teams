@@ -57,7 +57,7 @@
     if (!iso) return "";
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("ru-RU", {day: "numeric", month: "long"}) + ", " + fmtClock(iso);
+    return d.toLocaleDateString("ru-RU", {day: "numeric", month: "short"}) + ", " + fmtClock(iso);
   }
   /* The avatar letter stands for the role ("AI-аналитик" -> "А"), never for
      an internal identifier. */
@@ -70,6 +70,10 @@
       (bad ? icon("alert") + "вне разрешённой зоны: " : "") + esc(name) + '</span>';
   }
   function join(parts) { return parts.filter(Boolean).join(" · "); }
+  function shorten(text, limit) {
+    text = String(text || "");
+    return text.length > limit ? text.slice(0, limit - 1).replace(/\s+$/, "") + "…" : text;
+  }
   function lines(parts) { return parts.filter(Boolean).map(function (p) { return "<p>" + esc(p) + "</p>"; }).join(""); }
   /* Technical fields as one "key: value" line each; empty fields are left
      out, nested ones stay JSON. Readable first, complete second. */
@@ -144,7 +148,7 @@
     $("elapsed").classList.remove("hidden");
     var started = $("startedAt");
     started.classList.remove("hidden");
-    started.textContent = "началось " + fmtStart(project.started_at);
+    started.textContent = "старт " + fmtStart(project.started_at);
     timers();
   }
 
@@ -277,9 +281,9 @@
         (deps.length ? "<div>после: " + esc(deps.join(", ")) + "</div>" : "") +
         (t.next_step ? "<div>дальше: " + esc(t.next_step) + "</div>" : "") + "</div>" +
         track(checkpoints(t), false) +
-        (expected.length ? '<div class="files"><span class="label">результат:</span>' +
-          expected.map(function (f) { return fileChip(f, false); }).join("") + "</div>" : "") +
-        (files ? '<div class="files">' + files + "</div>" : "") +
+        (files ? '<div class="files">' + files + "</div>" :
+          expected.length ? '<div class="files"><span class="label">результат:</span>' +
+            expected.map(function (f) { return fileChip(f, false); }).join("") + "</div>" : "") +
         techBlock(t.tech) +
         "</div>" +
         '<div class="who">' + esc(t.role) + (failed ? "<br>" + failed + " " + plural(failed, "раз", "раза", "раз") + " возвращена на доработку" : "") + "</div>" +
@@ -288,18 +292,284 @@
   }
 
   function renderFeed(events, knownSeq) {
+    var all = feedItems(events);
+    var shown = all.filter(feedMatches);
+    var listEvents = shown;
+    if (feedView.paused) {          // the list is held where the reader paused it
+      listEvents = shown.filter(function (e) { return e.seq <= feedView.frozen; });
+      feedView.unseen = shown.length - listEvents.length;
+    }
+    var names = {};
+    // The lead and the system are no card: their lines are found by name.
+    all.forEach(function (e) { if (e.specialist && e.by == null) names[e.specialist] = true; });
+    var who = $("feedWho"), current = feedView.who;
+    who.innerHTML = '<option value="">Все специалисты</option>' +
+      list(lastSnap && lastSnap.agents).map(function (a, index) {
+        return '<option value="' + index + '">' + esc(a.name) + "</option>";
+      }).join("") + Object.keys(names).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + "</option>"; }).join("");
+    who.value = current;
+    var stage = $("feedTask");
+    stage.innerHTML = '<option value="">Все этапы</option>' +
+      list(lastSnap && lastSnap.tasks).map(function (t) {
+        return '<option value="' + esc(t.title) + '">' + esc(t.title) + "</option>";
+      }).join("");
+    stage.value = feedView.task;
+    var idsByTitle = {};
+    list(lastSnap && lastSnap.tasks).forEach(function (t) { idsByTitle[t.title] = t.id; });
+    var pause = $("feedPause");
+    pause.textContent = feedView.paused ? "Продолжить" + (feedView.unseen ? " (" + feedView.unseen + " новых)" : "") : "Пауза";
+    pause.setAttribute("aria-pressed", String(feedView.paused));
+    pause.classList.toggle("on", feedView.paused);
+    var oldest = all.reduce(function (low, e) { return Math.min(low, e.seq); }, Infinity);
+    $("feedOlder").classList.toggle("hidden", !(lastSnap && isFinite(oldest) && oldest > 1));
+    events = listEvents;
     $("feed").innerHTML = events.map(function (e) {
       var isNew = knownSeq !== null && e.seq > knownSeq;
       var cls = "feed-item " + esc(e.kind || "normal") + (isNew ? " is-new" : "");
       var sub = join([e.specialist, e.task]);
-      return '<div class="' + cls + '"><time>' + fmtClock(e.ts) + '</time><div class="mark" aria-hidden="true">' + icon(e.icon) + '</div><div>' +
+      var stage = idsByTitle[e.task];       // a line about a stage opens that stage
+      return '<div class="' + cls + '"' + (stage ? ' data-task="' + esc(stage) + '" role="button" tabindex="0"' : "") +
+        '><time>' + fmtClock(e.ts) + '</time><div class="mark" aria-hidden="true">' + icon(e.icon) + '</div><div>' +
         '<div class="tt">' + esc(e.title) + '</div>' +
         (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') +
         (e.detail ? '<div class="dd">' + esc(e.detail) + '</div>' : '') +
         techBlock(e.tech) +
         "</div></div>";
-    }).join("") || '<div class="empty">Событий пока нет.</div>';
+    }).join("") || '<div class="empty">' + (all.length ? "По этим условиям событий нет." : "Событий пока нет.") + "</div>";
   }
+
+  /* ---- the plan as a graph (spec 6): left to right, the position is the
+     reader's and survives refreshes ---- */
+  var NODE_W = 196, NODE_H = 64, COL_GAP = 36, ROW_GAP = 22;
+  var graph = { k: 1, x: 0, y: 0, filter: "all", q: "", width: 0, height: 0 };
+
+  function graphShown(t) {
+    var q = graph.q.trim().toLowerCase();
+    if (graph.filter === "problem" && t.kind !== "problem") return false;
+    if (graph.filter === "open" && t.kind === "done") return false;
+    if (q && String(t.title || "").toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }
+  function graphMove() {
+    var viewport = $("graphViewport");
+    if (viewport) viewport.setAttribute("transform", "translate(" + graph.x + " " + graph.y + ") scale(" + graph.k + ")");
+  }
+  function graphFit() {
+    var plan = lastSnap && lastSnap.plan;
+    if (!plan) return;
+    graph.width = plan.columns * NODE_W + (plan.columns + 1) * COL_GAP;
+    graph.height = plan.rows * NODE_H + (plan.rows + 1) * ROW_GAP;
+    var room = ($("graphWrap").clientWidth || 600) - 4;
+    // The whole plan across the width, never larger than life, and never
+    // so small that its words cannot be read: on a phone the reader pans
+    // instead of squinting.
+    graph.k = Math.max(0.75, Math.min(1, room / graph.width));
+    graph.x = 0; graph.y = 0;
+  }
+  function renderGraph(tasks) {
+    var plan = (lastSnap && lastSnap.plan) || { nodes: [], edges: [], columns: 0, rows: 0 };
+    var byId = {};
+    tasks.forEach(function (t) { byId[t.id] = t; });
+    var shown = {};
+    tasks.forEach(function (t) { shown[t.id] = graphShown(t); });
+    var width = plan.columns * NODE_W + (plan.columns + 1) * COL_GAP;
+    var height = plan.rows * NODE_H + (plan.rows + 1) * ROW_GAP;
+    if (width !== graph.width) graphFit();       // the plan itself changed
+    var pos = {};
+    plan.nodes.forEach(function (n) {
+      pos[n.id] = { x: COL_GAP + n.col * (NODE_W + COL_GAP), y: ROW_GAP + n.row * (NODE_H + ROW_GAP) };
+    });
+    var links = plan.edges.map(function (e) {
+      var a = pos[e.from], b = pos[e.to];
+      if (!a || !b) return "";
+      var x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2, mx = (x1 + x2) / 2;
+      return '<path class="link ' + esc((byId[e.from] || {}).kind || "idle") + (shown[e.from] && shown[e.to] ? "" : " dim") +
+        '" d="M' + x1 + " " + y1 + "C" + mx + " " + y1 + " " + mx + " " + y2 + " " + x2 + " " + y2 + '"><title>Результат этапа «' +
+        esc((byId[e.from] || {}).title || e.from) + "» нужен для этапа «" + esc((byId[e.to] || {}).title || e.to) + "»</title></path>";
+    }).join("");
+    var nodes = plan.nodes.map(function (n) {
+      var t = byId[n.id] || {}, p = pos[n.id];
+      var tech = store.mode === "advanced" && t.tech ? '<text class="node-tech" x="12" y="' + (NODE_H - 6) + '">' +
+        esc(n.id + (t.tech.branch ? " · " + String(t.tech.branch).split("/").pop() : "")) + "</text>" : "";
+      return '<g class="node ' + esc(t.kind || "idle") + (shown[n.id] ? "" : " dim") + '" data-task="' + esc(n.id) +
+        '" role="button" tabindex="0" aria-label="' + esc((t.title || n.id) + ", " + (t.state || "")) + '" transform="translate(' + p.x + " " + p.y + ')">' +
+        '<rect class="box" width="' + NODE_W + '" height="' + NODE_H + '" rx="16"/><circle class="mark" cx="18" cy="18" r="6"/>' +
+        '<text class="node-state" x="32" y="22">' + esc(t.state || "") + "</text>" +
+        '<foreignObject x="12" y="27" width="' + (NODE_W - 24) + '" height="' + (tech ? 22 : 32) + '">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml" class="node-title">' + esc(t.title || n.id) + "</div></foreignObject>" + tech + "</g>";
+    }).join("");
+    $("graph").setAttribute("viewBox", "0 0 " + (width || 600) + " " + (height || 120));
+    $("graph").setAttribute("height", height || 120);
+    $("graph").innerHTML = '<g id="graphViewport">' + links + nodes + "</g>";
+    graphMove();
+  }
+  function redrawGraph() { if (lastSnap) renderGraph(lastSnap.tasks); }
+  (function graphControls() {
+    var svg = $("graph"), wrap = $("graphWrap"), drag = null, moved = false;
+    function zoom(factor, cx, cy) {
+      var k = Math.min(2.5, Math.max(0.25, graph.k * factor));
+      graph.x = cx - (cx - graph.x) * (k / graph.k);
+      graph.y = cy - (cy - graph.y) * (k / graph.k);
+      graph.k = k; graphMove();
+    }
+    wrap.addEventListener("wheel", function (event) {   // the wheel zooms around the pointer
+      if (!lastSnap || !lastSnap.plan || !lastSnap.plan.nodes.length) return;
+      event.preventDefault();
+      var rect = wrap.getBoundingClientRect();
+      zoom(event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX - rect.left, event.clientY - rect.top);
+    }, { passive: false });
+    wrap.addEventListener("pointerdown", function (event) {
+      if (event.target.closest && event.target.closest("[data-task]")) return;   // a node is pressed, not the canvas
+      drag = { x: event.clientX, y: event.clientY, ox: graph.x, oy: graph.y };
+      wrap.setPointerCapture && wrap.setPointerCapture(event.pointerId);
+    });
+    wrap.addEventListener("pointermove", function (event) {
+      if (!drag) return;
+      graph.x = drag.ox + event.clientX - drag.x;
+      graph.y = drag.oy + event.clientY - drag.y;
+      moved = true; graphMove();
+    });
+    function stop() { drag = null; }
+    wrap.addEventListener("pointerup", stop);
+    wrap.addEventListener("pointercancel", stop);
+    wrap.addEventListener("click", function (event) {   // a drag must not open a sheet
+      if (moved) { moved = false; event.stopPropagation(); event.preventDefault(); }
+    }, true);
+    $("graphZoomIn").addEventListener("click", function () { zoom(1.25, (wrap.clientWidth || 600) / 2, 150); });
+    $("graphZoomOut").addEventListener("click", function () { zoom(0.8, (wrap.clientWidth || 600) / 2, 150); });
+    $("graphReset").addEventListener("click", function () { graphFit(); graphMove(); });
+    $("graphSearch").addEventListener("input", function () { graph.q = $("graphSearch").value; redrawGraph(); });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-plan-filter]"), function (chip) {
+      chip.addEventListener("click", function () {
+        graph.filter = chip.getAttribute("data-plan-filter");
+        Array.prototype.forEach.call(document.querySelectorAll("[data-plan-filter]"), function (other) {
+          var on = other === chip;
+          other.classList.toggle("on", on);
+          other.setAttribute("aria-pressed", String(on));
+        });
+        redrawGraph();
+      });
+    });
+    window.addEventListener("resize", function () { graphFit(); graphMove(); });
+  })();
+  opener($("graph"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
+
+  /* ---- the timeline (spec 7): what the journal says happened, and when ---- */
+  var SPAN_ORDER = ["work", "check", "fix", "wait", "recovery", "done", "stopped"];
+  function renderTimeline(tl) {
+    var rows = list(tl && tl.rows);
+    if (!tl || !rows.length) { $("timeline").innerHTML = ""; $("timeLegend").innerHTML = ""; return; }
+    var start = Date.parse(tl.start), end = Date.parse(tl.end) || Date.now();
+    if (!(end > start)) end = start + 3600000;
+    var left = 172, top = 34, rowH = 46;
+    // Drawn at real size: shrinking a diagram makes its words unreadable.
+    // A narrow window scrolls it sideways instead.
+    var plotW = Math.max(360, ($("timeline").clientWidth || 680) - left - 16);
+    var width = left + plotW + 16, height = top + rows.length * rowH + 12;
+    var at = function (iso) {
+      var t = Date.parse(iso);
+      return left + plotW * Math.min(1, Math.max(0, (t - start) / (end - start)));
+    };
+    var axis = "";
+    for (var i = 0; i <= 4; i++) {
+      var ts = start + (end - start) * i / 4, x = left + plotW * i / 4;
+      axis += '<line class="grid" x1="' + x + '" y1="' + top + '" x2="' + x + '" y2="' + (height - 12) + '"/>' +
+        '<text class="tick" x="' + x + '" y="' + (top - 10) + '" text-anchor="' + (i === 0 ? "start" : i === 4 ? "end" : "middle") + '">' +
+        fmtClock(new Date(ts).toISOString()) + "</text>";
+    }
+    var body = rows.map(function (row, index) {
+      var y = top + index * rowH;
+      var spans = list(row.spans).map(function (sp) {
+        var x1 = at(sp.from), x2 = Math.max(at(sp.to), x1 + 3);
+        return '<rect class="span ' + esc(sp.kind) + '" x="' + x1 + '" y="' + (y + 12) + '" width="' + (x2 - x1) + '" height="18" rx="9">' +
+          "<title>" + esc(sp.text + ": с " + fmtClock(sp.from) + " по " + fmtClock(sp.to)) + "</title></rect>";
+      }).join("");
+      var marks = list(row.marks).map(function (m) {
+        return '<circle class="tmark ' + esc(m.kind || "normal") + '" cx="' + at(m.ts) + '" cy="' + (y + 21) + '" r="4">' +
+          "<title>" + esc(fmtClock(m.ts) + " · " + m.title + (m.detail ? ": " + m.detail : "")) + "</title></circle>";
+      }).join("");
+      return '<g class="trow" data-task="' + esc(row.id) + '" role="button" tabindex="0" aria-label="' + esc(row.title + ", " + row.state) + '">' +
+        '<text class="row-title" x="12" y="' + (y + 18) + '"><title>' + esc(row.title) + "</title>" +
+        esc(shorten(row.title, 26)) + "</text>" +
+        '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks + "</g>";
+    }).join("");
+    $("timeline").setAttribute("viewBox", "0 0 " + width + " " + height);
+    $("timeline").setAttribute("width", width);
+    $("timeline").setAttribute("height", height);
+    $("timeline").innerHTML = axis + body;
+    var present = {};
+    rows.forEach(function (row) { row.spans.forEach(function (sp) { present[sp.kind] = true; }); });
+    $("timeLegend").innerHTML = SPAN_ORDER.filter(function (kind) { return present[kind]; }).map(function (kind) {
+      return '<span class="legend-item"><i class="swatch ' + esc(kind) + '"></i>' + esc(tl.span_text[kind] || kind) + "</span>";
+    }).join("") + '<span class="legend-item"><i class="swatch mark"></i>событие</span>';
+  }
+  opener($("timeline"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
+
+  /* ---- the activity feed: filters, search, pause, further back (spec 9) ---- */
+  var feedView = { q: "", kind: "all", who: "", task: "", hour: false, paused: false, frozen: null,
+                   unseen: 0, older: [] };
+  function feedMatches(e) {
+    if (feedView.kind !== "all" && (e.kind || "normal") !== feedView.kind) return false;
+    if (feedView.who !== "" && String(e.by) !== feedView.who && e.specialist !== feedView.who) return false;
+    if (feedView.task !== "" && e.task !== feedView.task) return false;
+    if (feedView.hour && !(Date.parse(e.ts) >= Date.now() - 3600000)) return false;
+    var q = feedView.q.trim().toLowerCase();
+    if (q && [e.title, e.detail, e.task, e.specialist].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }
+  function feedItems(events) {
+    var merged = feedView.older.slice();
+    events.forEach(function (e) { merged.push(e); });
+    var seen = {}, out = [];
+    merged.forEach(function (e) { if (!seen[e.seq]) { seen[e.seq] = true; out.push(e); } });
+    return out;
+  }
+  (function feedControls() {
+    $("feedSearch").addEventListener("input", function () { feedView.q = $("feedSearch").value; redrawFeed(); });
+    $("feedWho").addEventListener("change", function () { feedView.who = $("feedWho").value; redrawFeed(); });
+    $("feedTask").addEventListener("change", function () { feedView.task = $("feedTask").value; redrawFeed(); });
+    $("feedHour").addEventListener("click", function () {
+      feedView.hour = !feedView.hour;
+      $("feedHour").setAttribute("aria-pressed", String(feedView.hour));
+      $("feedHour").classList.toggle("on", feedView.hour);
+      redrawFeed();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-feed-kind]"), function (chip) {
+      chip.addEventListener("click", function () {
+        feedView.kind = chip.getAttribute("data-feed-kind");
+        Array.prototype.forEach.call(document.querySelectorAll("[data-feed-kind]"), function (other) {
+          var on = other === chip;
+          other.classList.toggle("on", on);
+          other.setAttribute("aria-pressed", String(on));
+        });
+        redrawFeed();
+      });
+    });
+    $("feedPause").addEventListener("click", function () {
+      feedView.paused = !feedView.paused;
+      if (feedView.paused) {
+        var shownNow = feedItems(lastSnap ? lastSnap.events : []).filter(feedMatches);
+        var newest = shownNow.length ? shownNow[shownNow.length - 1].seq : 0;
+        feedView.frozen = newest;          // the reader holds the list at this event
+        feedView.unseen = 0;
+      }
+      redrawFeed();
+    });
+    $("feedOlder").addEventListener("click", function () {
+      if (!lastSnap) return;
+      var oldest = feedItems(lastSnap.events).reduce(function (low, e) { return Math.min(low, e.seq); }, Infinity);
+      if (!isFinite(oldest) || oldest <= 1) return;
+      $("feedOlder").disabled = true;
+      request("/api/events" + API + "&level=" + encodeURIComponent(store.mode) + "&before=" + oldest + "&limit=100")
+        .then(function (page) {
+          $("feedOlder").disabled = false;
+          feedView.older = list(page.events).concat(feedView.older);
+          redrawFeed();
+        }, function () { $("feedOlder").disabled = false; });
+    });
+  })();
+  function redrawFeed() { if (lastSnap) renderFeed(lastSnap.events, null); }
+  opener($("feed"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
 
   /* ---- the detail sheet: a specialist or a task (spec 5.1, 8) ---- */
   var CHECK_NAMES = ["Начата", "Передана на проверку", "Принята"];
@@ -318,7 +588,7 @@
       title = a.name;
       var mine = list(a.tasks);
       var history = list(lastSnap.events).filter(function (e) {
-        return e.by === sheetTarget.key || (e.by === undefined && e.specialist === a.name);
+        return e.by === sheetTarget.key || (e.by == null && e.specialist === a.name);
       }).reverse();
       html = '<p class="does">' + esc(a.does) + "</p>" +
         '<div class="row"><span class="state ' + esc(a.kind || "idle") + '">' + icon(a.icon) + esc(a.state) + "</span>" +
@@ -328,7 +598,8 @@
           (Number(a.completed) > 0 ? ", принято по проверке: " + (Number(a.completed) || 0) : "") +
           "</p><p class='muted'>Результат, принятый руководителем своим решением, в счёт проверок не входит.</p>" : "") +
         (mine.length ? "<h3>Задачи специалиста</h3><ul class='tasks'>" + mine.map(function (t) {
-          return "<li><span>" + esc(t.title) + '</span><span class="state ' + esc(t.kind) + '">' + esc(t.state) + "</span></li>";
+          return "<li><span>" + esc(t.title) + (t.role && t.role !== a.name ? ' <span class="muted small">как ' + esc(t.role) + "</span>" : "") +
+            '</span><span class="state ' + esc(t.kind) + '">' + esc(t.state) + "</span></li>";
         }).join("") + "</ul>" : "") +
         "<h3>История работы</h3>" + eventList(history) + techBlock(a.tech);
     } else {
@@ -366,13 +637,68 @@
           return "<li>" + icon(c.passed ? "check" : "alert") + "<div><div class='tt'>" + verdict + "</div>" +
             (c.feedback ? '<div class="dd">' + esc(c.feedback) + "</div>" : "") + "</div></li>";
         }).join("") + "</ol>" : '<p class="muted">Результат ещё не передавался на проверку.</p>') +
+        "<h3>Готовый результат</h3>" + resultBlock(t) +
         "<h3>История этапа</h3><div id=\"taskHistory\">" +
         eventList(list(sheetTarget.history || [])) + "</div>" + techBlock(t.tech);
     }
     $("sheetTitle").textContent = title;
     body.innerHTML = html;
     applyPrefs();
+    if (sheetTarget.openFile && sheetTarget.kind === "task") showResult(sheetTarget.key, sheetTarget.openFile);
   }
+  /* The files a task produced, and one of them opened (spec 8.5). The
+     text comes from the board's own address and is shown as text. */
+  var resultCache = {};
+  function resultBlock(t) {
+    var files = list(t.result && t.result.files);
+    if (!files.length) return "<p class='muted'>" + esc(
+      t.result && t.result.handed_over
+        ? "Результат передан, но файлов в нём нет: исполнитель ничего не подготовил."
+        : "Результат ещё не передавался.") + "</p>";
+    var times = Number(t.result.handed_over_count) || 0;
+    return "<p>" + (t.result.ready ? "Принятая версия результата." : "Промежуточный результат, ещё не принят.") +
+      (times > 1 ? " Результат передавался " + times + " " + plural(times, "раз", "раза", "раз") +
+       ", показана последняя версия." : "") + " Файлы:</p>" +
+      '<ul class="files">' + files.map(function (f) {
+        var open = sheetTarget && sheetTarget.openFile === f;
+        return '<li><button type="button" class="file-btn' + (open ? " on" : "") + '" data-result-file="' + esc(f) +
+          '" aria-pressed="' + String(!!open) + '">' + esc(f) + "</button></li>";
+      }).join("") + "</ul>" + '<div class="result" id="resultView"></div>';
+  }
+  function resultUrl(id, file) {
+    return "/api/results/" + encodeURIComponent(id) + "/" + file.split("/").map(encodeURIComponent).join("/") + API;
+  }
+  function showResult(id, file) {
+    var box = $("resultView");
+    if (!box) return;
+    var key = id + "/" + file;
+    if (resultCache[key]) { box.innerHTML = resultCache[key]; return; }
+    box.innerHTML = '<p class="muted">Открываю…</p>';
+    fetch(resultUrl(id, file), { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (text) {
+        var picture = /\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(file);
+        resultCache[key] = picture
+          ? '<img class="result-img" src="' + esc(resultUrl(id, file)) + '" alt="' + esc(file) + '">'
+          : '<pre class="result-text">' + esc(text) + "</pre>";
+        if (sheetTarget && sheetTarget.kind === "task" && sheetTarget.key === id && sheetTarget.openFile === file) {
+          box.innerHTML = resultCache[key];
+        }
+      })
+      .catch(function () { box.innerHTML = "<p class='muted'>Не удалось открыть файл. Он мог быть перемещён или слишком велик для показа.</p>"; });
+  }
+  $("sheetBody").addEventListener("click", function (event) {
+    var button = event.target.closest ? event.target.closest("[data-result-file]") : null;
+    if (!button || !sheetTarget) return;
+    var file = button.getAttribute("data-result-file");
+    sheetTarget.openFile = sheetTarget.openFile === file ? null : file;
+    renderSheet();
+    if (sheetTarget.openFile) showResult(sheetTarget.key, sheetTarget.openFile);
+  });
+
   function openSheet(kind, key) {
     sheetTarget = { kind: kind, key: key };
     renderSheet();
@@ -422,7 +748,7 @@
      fixed placement leaves a hole under the shorter column, so the cards
      are split into the two most even groups, measured after every render,
      and each column keeps the reading priority. */
-  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "feedCard"];
+  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard"];
   function atBottom(feed) {
     return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
   }
@@ -455,6 +781,8 @@
     renderNow(snap.tasks, snap.cost);
     renderTeam(snap.agents, snap.tasks);
     renderPlan(snap.tasks);
+    renderGraph(snap.tasks);
+    renderTimeline(snap.timeline);
     renderAttention(snap.attention);
     var stick = renderFeed(snap.events, knownSeq);
     applyPrefs();

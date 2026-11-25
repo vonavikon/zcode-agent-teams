@@ -8,8 +8,8 @@ the mechanism details; when they disagree with this file, this file wins.
 
 | Artifact | Where | Current |
 |---|---|---|
-| Plugin | plugin.json, marketplace.json | 2.1.0a2 |
-| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a2 |
+| Plugin | plugin.json, marketplace.json | 2.1.0a3 |
+| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a3 |
 | Task specification format | agent_teams/version.py SPEC_VERSION | 1.1 |
 | SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 4 |
 | Verification report | verification.REPORT_SCHEMA_VERSION | 1.0 |
@@ -288,11 +288,45 @@ The words are the engine's facts, never a guess:
 - A cost that is not known is said to be not known.
 
 The API answers `/api/status` (has anything changed), `/api/snapshot`
-(the whole board), `/api/events` (with a cursor), `/api/tasks`,
+(the whole board), `/api/events` (with a cursor: `after` for what is
+new, `before` for reading further back), `/api/tasks`,
 `/api/tasks/<id>` (one task with its history), `/api/agents`,
-`/api/cost` and `/api/health`. The page polls `/api/status` every 3
+`/api/cost`, `/api/results/<task>/<file>` (one file of a task's
+result) and `/api/health`. The page polls `/api/status` every 3
 seconds and takes a whole snapshot only when something changed (or once
 in a while, so its clocks stay true): a refresh stays light.
+
+The plan as a graph (v2.1 spec 6). Tasks run left to right in the order
+of their dependencies; the column is the length of the longest chain
+before a task, tasks that can run in parallel share a column. The
+layout is computed by the engine side (`planview.plan_layout`), is
+stable for the same plan and needs nothing from the reader. The reader
+zooms (wheel or buttons), drags, searches by title and filters (all,
+not completed, problems only); what a filter hides stays in place, only
+faded, so the shape does not jump. The position, the zoom and the
+filters survive refreshes. In the technical level a node also names its
+id and branch. A node opens the sheet of its task.
+
+The timeline (v2.1 spec 7) is drawn from the journal only: every span
+of a task runs from one recorded event to the next, and is named by what
+the task was doing in between (work, check, rework, waiting, recovery,
+done, stopped). A task with no events has no span. Nothing is placed on
+the timeline that the engine did not record.
+
+The result of a task (v2.1 spec 8.5) can be opened from its sheet. Only
+a file the task's latest hand-over consists of can be read, and only as
+that hand-over pinned it: from its commit in a git project, so the
+board shows the version that was accepted even after the folder moved
+on. Text is served as text (never as a page of the board's own origin),
+a picture as a picture, anything else as a download, each within a size
+limit, under a policy that lets the file do nothing. In shared mode
+(no git) the engine keeps no diff of a result: the files the task
+declared are what the board shows.
+
+The activity feed (v2.1 spec 9) is filtered by type, by specialist, by
+stage and by time, searched by text, held by a pause that counts what
+came in since, and read further back through the `before` cursor. A
+line about a stage opens that stage.
 
 The texts of the board are Russian today; localization is an open
 decision (BACKLOG).

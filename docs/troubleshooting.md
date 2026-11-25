@@ -7,6 +7,11 @@
 - `lock not acquired within Ns; holder: ...` - another process holds the
   state lock. The message names the owner, pid and age. The OS releases
   the lock when that process exits; do not delete the lock file.
+- `error: argument --lead-token: expected one argument` - the token of
+  this team starts with a dash (possible for teams created before
+  2.1.0a3, once in 64). Write it glued to the option:
+  `--lead-token=<token>`. Since 2.1.0a3 the command accepts both forms,
+  and new tokens never start with a dash.
 - `invalid or stale execution token` - submit/heartbeat needs the token
   printed by the CURRENT claim; after a release and a new claim the old
   token is void by design.

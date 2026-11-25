@@ -30,7 +30,9 @@
   <nav class="anchors" aria-label="Разделы">
     <a href="#progressH">Обзор</a>
     <a href="#teamH">Специалисты</a>
+    <a href="#graphH">Схема</a>
     <a href="#planH">План</a>
+    <a href="#timeH">Время</a>
     <a href="#attH">Что нужно от вас</a>
     <a href="#feedH">Активность</a>
   </nav>
@@ -48,6 +50,25 @@
           <div class="counters" id="counters"></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="card" id="graphCard" aria-labelledby="graphH">
+    <div class="core">
+      <div class="cardhead"><h2 id="graphH">Схема плана</h2><span class="small muted">линия ведёт от результата к этапу, которому он нужен; колесо масштабирует, перетаскивание двигает</span></div>
+        <div class="graph-tools">
+          <input type="search" id="graphSearch" placeholder="Найти этап" aria-label="Поиск этапа" autocomplete="off">
+          <div class="chips" role="group" aria-label="Показать на схеме">
+            <button type="button" class="chip on" data-plan-filter="all" aria-pressed="true">Все</button>
+            <button type="button" class="chip" data-plan-filter="open" aria-pressed="false">Кроме завершённых</button>
+            <button type="button" class="chip" data-plan-filter="problem" aria-pressed="false">Только проблемы</button>
+          </div>
+          <span class="spacer"></span>
+          <button type="button" class="iconbtn small" id="graphZoomOut" aria-label="Уменьшить схему">−</button>
+          <button type="button" class="iconbtn small" id="graphZoomIn" aria-label="Увеличить схему">+</button>
+          <button type="button" class="iconbtn small" id="graphReset" aria-label="Показать схему целиком">⤢</button>
+        </div>
+        <div class="graph-wrap" id="graphWrap"><svg class="graph" id="graph" role="img" aria-label="Схема плана: этапы слева направо"></svg></div>
     </div>
   </section>
 
@@ -71,6 +92,13 @@
         <div class="plan" id="planList"></div>
       </div>
     </section>
+<section class="card" id="timeCard" aria-labelledby="timeH">
+      <div class="core">
+        <div class="cardhead"><h2 id="timeH">Как шло время</h2><span class="small muted">по настоящим событиям журнала</span></div>
+        <div class="legend" id="timeLegend"></div>
+        <div class="timeline-wrap"><svg class="timeline" id="timeline" role="img" aria-label="Лента времени работы команды"></svg></div>
+      </div>
+    </section>
     </div>
     <div class="col" id="colB">
 <section class="card" id="attCard" aria-labelledby="attH">
@@ -81,7 +109,24 @@
     </section>
 <section class="card" id="feedCard" aria-labelledby="feedH">
       <div class="core">
-        <div class="cardhead"><h2 id="feedH">Активность команды</h2><span class="small muted">обновляется автоматически</span></div>
+        <div class="cardhead">
+          <h2 id="feedH">Активность команды</h2>
+          <div class="feed-tools">
+            <input type="search" id="feedSearch" placeholder="Поиск по событиям" aria-label="Поиск по событиям" autocomplete="off">
+            <select id="feedWho" aria-label="Специалист"><option value="">Все специалисты</option></select>
+            <select id="feedTask" aria-label="Этап"><option value="">Все этапы</option></select>
+            <div class="chips" role="group" aria-label="Тип событий">
+              <button type="button" class="chip on" data-feed-kind="all" aria-pressed="true">Все</button>
+              <button type="button" class="chip" data-feed-kind="busy" aria-pressed="false">Работа</button>
+              <button type="button" class="chip" data-feed-kind="problem" aria-pressed="false">Проблемы</button>
+              <button type="button" class="chip" data-feed-kind="done" aria-pressed="false">Готово</button>
+              <button type="button" class="chip" data-feed-kind="manual" aria-pressed="false">Решения</button>
+            </div>
+            <button type="button" class="chip" id="feedHour" aria-pressed="false">За последний час</button>
+            <button type="button" class="chip" id="feedPause" aria-pressed="false">Пауза</button>
+          </div>
+        </div>
+        <button type="button" class="older hidden" id="feedOlder">Показать раньше</button>
         <div class="feed" id="feed"></div>
       </div>
     </section>

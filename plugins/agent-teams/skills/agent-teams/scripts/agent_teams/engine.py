@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import secrets
+import string
 import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -186,7 +187,7 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
     if d.exists():
         raise UsageError(f"team directory already exists: {d}")
     config = merge_config(spec.get("config"))
-    lead_token = secrets.token_urlsafe(24)
+    lead_token = _new_token()
 
     from . import workspaces
 
@@ -253,6 +254,17 @@ def op_init(root: Path, team: str, tasks_path: Path, *,
     return {"team": team, "tasks": len(spec["tasks"]), "dir": str(d),
             "lead_token": lead_token, "run_base": run_base,
             "warnings": [i.message for i in result.warnings] + result_warnings}
+
+
+def _new_token() -> str:
+    """A lead token that a command line can carry.
+
+    ``secrets.token_urlsafe`` may start with a dash, and a value like
+    ``-abc`` after ``--lead-token`` reads as the next option: the
+    command then refuses its own token. That happened to one team in 64
+    and surfaced as a test failing at random.
+    """
+    return secrets.choice(string.ascii_letters + string.digits) + secrets.token_urlsafe(23)
 
 
 def _last_event(store: Store, team_id: str) -> dict:
