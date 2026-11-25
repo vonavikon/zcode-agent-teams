@@ -571,6 +571,186 @@
   function redrawFeed() { if (lastSnap) renderFeed(lastSnap.events, null); }
   opener($("feed"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
 
+  /* ---- what the numbers mean (spec 10 to 13). A figure always comes
+     with the words that say what it counts; a bar gets its width through
+     the style object, never through a style attribute (the page's policy
+     allows no inline style). ---- */
+  function noun(n, one, few, many) { return plural(n, one, few, many); }
+  function stats(items, cls) {
+    return '<div class="stats' + (cls ? " " + cls : "") + '">' + items.map(function (it) {
+      return '<div class="stat"><b>' + esc(it.n) + "</b><span>" + esc(it.label) + "</span>" +
+        (it.note ? '<small>' + esc(it.note) + "</small>" : "") + "</div>";
+    }).join("") + "</div>";
+  }
+  function bars(rows) {
+    if (!rows.length) return '<p class="muted small">Данных пока нет.</p>';
+    var top = Math.max.apply(null, rows.map(function (r) { return Number(r.value) || 0; })) || 1;
+    return '<ul class="bars">' + rows.map(function (r) {
+      var share = Math.round(100 * (Number(r.value) || 0) / top);
+      return '<li><span class="name">' + esc(r.name) + '</span><span class="value">' + esc(r.text) +
+        '</span><span class="bar"><i data-w="' + (share < 2 && Number(r.value) > 0 ? 2 : share) +
+        '"></i></span></li>';
+    }).join("") + "</ul>";
+  }
+  function fitBars(scope) {
+    // Widths go through the style object: a style attribute in markup
+    // is refused by the page's policy, this is not.
+    Array.prototype.forEach.call((scope || document).querySelectorAll("[data-w]"), function (el) {
+      el.style.width = el.getAttribute("data-w") + "%";
+    });
+  }
+  function spark(series, limit) {
+    var points = list(series);
+    if (points.length < 2) return "";
+    var top = limit || Math.max.apply(null, points.map(function (p) { return Number(p.usd) || 0; })) || 1;
+    var coords = points.map(function (p, i) {
+      return (200 * i / (points.length - 1)).toFixed(1) + "," + (38 - 36 * (Number(p.usd) || 0) / top).toFixed(1);
+    }).join(" ");
+    return '<svg class="spark" viewBox="0 0 200 40" preserveAspectRatio="none" role="img" aria-label="Как росли расходы">' +
+      '<polyline points="' + coords + '"/></svg>';
+  }
+  function duo(leftTitle, leftBody, rightTitle, rightBody) {
+    return '<div class="duo"><div><h3>' + esc(leftTitle) + "</h3>" + leftBody + "</div>" +
+      "<div><h3>" + esc(rightTitle) + "</h3>" + rightBody + "</div></div>";
+  }
+  var linesOf = function (items) {
+    return items.length ? '<ul class="plain">' + items.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>" : "";
+  };
+
+  function renderQuality(q) {
+    if (!q) return;
+    var machine = q.machine || {};
+    var machineBody = machine.run
+      ? stats([{n: machine.run, label: noun(machine.run, "проверка", "проверки", "проверок"),
+                note: "команды и файлы, которые проверяет машина"},
+               {n: machine.passed, label: "пройдено"}, {n: machine.failed, label: "провалено"}])
+      : '<p class="muted small">Машинных проверок не было: критерии этих задач проверяет человек или проверяющий.</p>';
+    var judgedBody = q.checks
+      ? stats([{n: q.checks, label: noun(q.checks, "проверка", "проверки", "проверок"),
+                note: "оценка содержания проверяющим"},
+               {n: q.passed, label: "пройдено"}, {n: q.failed, label: "не пройдено"}])
+      : '<p class="muted small">Проверок ещё не было.</p>';
+    var problems = list(q.problems);
+    $("qualityBody").innerHTML =
+      '<p class="story-text">' + esc(q.story) + "</p>" +
+      stats([{n: q.handed_over, label: "передано на проверку", note: "результатов, которые исполнители сдали"},
+             {n: q.first_time, label: q.first_time === 1 ? "прошёл с первого раза" : "прошли с первого раза",
+              note: "без доработки"},
+             {n: q.reworked, label: noun(q.reworked, "доработка", "доработки", "доработок"),
+              note: "результатов пришлось переделывать"},
+             {n: q.accepted_by_decision, label: "принято решением", note: "руководитель команды принял без проверки"}]) +
+      duo("Что проверила машина", machineBody, "Что оценил проверяющий", judgedBody) +
+      (problems.length ? "<h3>Найденные недостатки</h3><ul class='plain'>" + problems.map(function (p) {
+        return "<li><b>" + esc(p.task) + ".</b> " + esc(p.remark || "замечаний не записано") + "</li>";
+      }).join("") + "</ul>" : "") +
+      (list(q.awaited).length ? "<h3>Ещё ждут проверки</h3>" + linesOf(list(q.awaited)) : "") +
+      techBlock(q);
+    fitBars($("qualityBody"));
+  }
+
+  function renderMoney(b, cost) {
+    if (!b) return;
+    var unknown = Number(b.unknown_records) || 0;
+    var reliability = unknown === 0 ? "Все расходы известны." : "Цена " + unknown + " " + (unknown === 1 ? "записи" : "записей") +
+      " неизвестна: " + (unknown === 1 ? "она не учтена" : "они не учтены") + ".";
+    var html = '<p class="story-text">' + esc(b.story) + "</p>" +
+      stats([{n: b.spent_text, label: "потрачено", note: reliability},
+             {n: b.budget_usd == null ? "не согласован" : "$" + Number(b.budget_usd).toFixed(2), label: "бюджет"},
+             {n: b.remaining_usd == null ? "нет предела" : "$" + Number(b.remaining_usd).toFixed(2), label: "осталось"},
+             {n: b.per_task_text, label: "в среднем на задачу", note: "по задачам, которые уже начались"},
+             {n: b.per_result_text, label: "цена принятого результата", note: "расходы на все попытки, включая доработки"},
+             {n: b.per_task_usd == null ? "не задан" : "$" + Number(b.per_task_usd).toFixed(2), label: "лимит одной задачи",
+              note: "после этой суммы новая попытка задачи не начнётся"}], "wide");
+    if (b.budget_usd != null) {
+      html += '<div class="gauge' + (b.state === "limit" ? " limit" : b.state === "warning" ? " warning" : "") +
+        '" role="img" aria-label="Израсходовано ' + Math.round(100 * (b.share || 0)) + '% бюджета">' +
+        '<i data-w="' + Math.min(100, Math.round(100 * (b.share || 0))) + '"></i>' +
+        '<em data-x="' + Math.round(100 * (b.warn_ratio || 0.8)) + '" title="Отсюда доска предупреждает"></em></div>' +
+        '<div class="small muted">' + (b.state === "limit" ? "Предел достигнут: новые задачи не запускаются." :
+          b.state === "warning" ? "Приближается предел бюджета." : "До предупреждения ещё " +
+          Math.max(0, Math.round(100 * ((b.warn_ratio || 0.8) - (b.share || 0)))) + "% бюджета.") + "</div>";
+    }
+    if (b.over_limit && b.over_limit.length) {
+      html += "<p class='bad-text'>Лимит одной задачи (" + esc("$" + Number(b.per_task_usd).toFixed(2)) + ") исчерпан: " +
+        esc(b.over_limit.join(", ")) + "</p>";
+    }
+    html += duo("По этапам", bars(Object.keys(b.by_task || {}).map(function (name) {
+      return {name: name, value: b.by_task[name], text: "$" + Number(b.by_task[name]).toFixed(2)};
+    })), "По специалистам", bars(Object.keys(b.by_role || {}).map(function (name) {
+      return {name: name, value: b.by_role[name], text: "$" + Number(b.by_role[name]).toFixed(2)};
+    })));
+    if (list(b.series).length >= 2) {
+      html += "<h3>Как росли расходы</h3>" + spark(b.series);
+    }
+    html += techBlock(b);
+    $("moneyBody").innerHTML = html;
+    fitBars($("moneyBody"));
+    Array.prototype.forEach.call($("moneyBody").querySelectorAll("[data-x]"), function (el) {
+      el.style.left = el.getAttribute("data-x") + "%";
+    });
+  }
+
+  function renderProblems(r) {
+    if (!r) return;
+    var incidents = list(r.incidents);
+    var html = '<p class="story-text">' + esc(r.story) + "</p>";
+    if (incidents.length) {
+      html += '<div class="chips">' + list(r.kinds).map(function (k) {
+        return '<span class="chip on">' + esc(k.title) + " · " + k.count + "</span>";
+      }).join("") + "</div>";
+      html += '<ul class="incidents">' + incidents.slice(0, 8).map(function (i) {
+        return '<li class="' + (i.human_needed ? "open" : "closed") + '">' + icon(i.human_needed ? "alert" : "check") +
+          "<div><div class='tt'>" + esc(i.title) + " <span class='muted'>· " + esc(i.task) + "</span></div>" +
+          (i.detail ? '<div class="dd">' + esc(i.detail) + "</div>" : "") +
+          '<div class="dd">Система ' + esc(i.did.join(", ")) + ".</div>" +
+          '<div class="dd outcome">Итог: ' + esc(i.outcome) + (i.risk_of_loss ? ". Есть риск потери результата." : ".") + "</div>" +
+          (i.human_needed ? '<div class="dd"><b>' + esc(i.action) + "</b></div>" : "") +
+          "</div></li>";
+      }).join("") + "</ul>";
+      var repeated = Object.keys(r.repeated || {});
+      if (repeated.length) {
+        html += "<p class='small muted'>Повторялись: " + esc(repeated.map(function (t) {
+          return t + " (" + r.repeated[t] + " " + plural(r.repeated[t], "раз", "раза", "раз") + ")";
+        }).join(", ")) + ".</p>";
+      }
+    }
+    html += techBlock(r);
+    $("problemBody").innerHTML = html;
+  }
+
+  function renderBuild(g) {
+    if (!g) return;
+    var steps = list(g.steps);
+    $("buildBody").innerHTML = '<p class="story-text">' + esc(g.story) + "</p>" +
+      '<ol class="steps big">' + steps.map(function (s) {
+        return '<li class="' + (s.done ? "on" : "") + '">' + icon(s.done ? "check" : "circle") + "<span><b>" + esc(s.title) +
+          "</b><small>" + esc(s.text) + "</small></span></li>";
+      }).join("") + "</ol>" +
+      (g.conflict ? '<div class="remarks"><b>Что помешало</b>' + esc(g.conflict.title) + ". " + esc(g.conflict.detail) + "</div>" : "") +
+      techBlock(g);
+  }
+
+  /* ---- comparing teams that ran one set of tasks (spec 19). The card
+     exists only for a team that declared its benchmark; a sentence about
+     speed or money comes from the engine, never made up here. ---- */
+  function renderBenchmark(b) {
+    var card = $("benchCard");
+    if (!b) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    var rows = list(b.rows);
+    var table = rows.length ? '<div class="table-wrap"><table class="table"><thead><tr>' +
+      "<th>Команда</th><th>Специалистов</th><th>Время</th><th>Затраты</th><th>С первого раза</th></tr></thead><tbody>" +
+      rows.map(function (r) {
+        return "<tr class='" + (r.finished ? "finished" : "unfinished") + "'><td>" + esc(r.team) + "</td><td>" +
+          esc(r.executors == null ? "?" : r.executors) + "</td><td>" +
+          esc(r.finished ? fmtDur(Number(r.duration_s) || 0) : "не завершена") + "</td><td>" +
+          esc(r.cost_complete ? "$" + (Number(r.spent_usd) || 0).toFixed(2) : "не определены") + "</td><td>" +
+          esc(r.judged ? r.first_time + " из " + r.judged : "нет проверок") + "</td></tr>";
+      }).join("") + "</tbody></table></div>" : "";
+    $("benchBody").innerHTML = (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
+      '<p class="story-text">' + esc(b.note || "") + "</p>") + table + techBlock(b);
+  }
+
   /* ---- the detail sheet: a specialist or a task (spec 5.1, 8) ---- */
   var CHECK_NAMES = ["Начата", "Передана на проверку", "Принята"];
   function eventList(events) {
@@ -748,25 +928,28 @@
      fixed placement leaves a hole under the shorter column, so the cards
      are split into the two most even groups, measured after every render,
      and each column keeps the reading priority. */
-  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard"];
+  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard",
+                    "qualityCard", "moneyCard", "problemCard", "buildCard", "benchCard"];
   function atBottom(feed) {
     return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
   }
   function layoutColumns(stick) {
     var a = $("colA"), b = $("colB"), feed = $("feed");
     if (stick === undefined) stick = atBottom(feed);  // a resize: keep where the reader is
+    // A card the data does not fill (no benchmark declared) stays out.
+    var cards = CARD_ORDER.filter(function (id) { return !$(id).classList.contains("hidden"); });
     if (window.matchMedia("(max-width: 900px)").matches) {
-      CARD_ORDER.forEach(function (id) { a.appendChild($(id)); });
+      cards.forEach(function (id) { a.appendChild($(id)); });
     } else {
       var height = {};
-      CARD_ORDER.forEach(function (id) { height[id] = $(id).offsetHeight; });
+      cards.forEach(function (id) { height[id] = $(id).offsetHeight; });
       var bestMask = 0, bestDiff = Infinity;
-      for (var mask = 0; mask < (1 << CARD_ORDER.length); mask++) {  // a set bit = column B
+      for (var mask = 0; mask < (1 << cards.length); mask++) {  // a set bit = column B
         var ha = 0, hb = 0;
-        CARD_ORDER.forEach(function (id, j) { if ((mask >> j) & 1) hb += height[id]; else ha += height[id]; });
+        cards.forEach(function (id, j) { if ((mask >> j) & 1) hb += height[id]; else ha += height[id]; });
         if (Math.abs(ha - hb) < bestDiff) { bestDiff = Math.abs(ha - hb); bestMask = mask; }
       }
-      CARD_ORDER.forEach(function (id, j) { ((bestMask >> j) & 1 ? b : a).appendChild($(id)); });
+      cards.forEach(function (id, j) { ((bestMask >> j) & 1 ? b : a).appendChild($(id)); });
     }
     // A card moved to another column starts scrolled to its top. The
     // feed goes back to its newest line, unless the reader has scrolled
@@ -784,6 +967,11 @@
     renderGraph(snap.tasks);
     renderTimeline(snap.timeline);
     renderAttention(snap.attention);
+    renderQuality(snap.quality);
+    renderMoney(snap.budget, snap.cost);
+    renderProblems(snap.recovery);
+    renderBuild(snap.integration);
+    renderBenchmark(snap.benchmark);
     var stick = renderFeed(snap.events, knownSeq);
     applyPrefs();
     layoutColumns(stick);
