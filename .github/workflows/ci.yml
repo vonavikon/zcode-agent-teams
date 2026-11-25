@@ -63,7 +63,10 @@ jobs:
           plugin = json.loads(pathlib.Path(
               "plugins/agent-teams/.zcode-plugin/plugin.json").read_text())
           market = json.loads(pathlib.Path("marketplace.json").read_text())
-          assert plugin["version"] == market["plugins"][0]["version"] == "2.0.0"
+          import re
+          engine = pathlib.Path("plugins/agent-teams/skills/agent-teams/scripts/agent_teams/version.py").read_text()
+          engine_version = re.search(r'ENGINE_VERSION = "([^"]+)"', engine).group(1)
+          assert plugin["version"] == market["plugins"][0]["version"] == engine_version
           print("manifests ok, version", plugin["version"])
           required = [
               "plugins/agent-teams/skills/agent-teams/SKILL.md",

@@ -10,8 +10,13 @@ Verification reports (v2.0): a PASS requires a structured report
 submission id and commit SHA, with full criterion coverage and
 file:line evidence on content criteria; a lead override with an
 audited reason is the only exception and still cannot bypass the
-machine gate. The engine validates the report; it cannot prove the
-author was independent.
+machine gate. Evidence is also checked for EXISTENCE in the pinned snapshot: the cited
+file must be there, the cited line must exist, `line_end` must not be
+before `line_start` or past the end, and the path must stay inside the
+snapshot (no absolute paths, no `..`). Structural validation and
+existence are separate steps; whether the cited line actually proves
+the claim stays with the verifier. The engine validates the report; it
+cannot prove the author was independent.
 
 The engine runs every command-backed criterion itself (`test`,
 `file_check`, `security_check` types) in the task workspace with a 120 s
