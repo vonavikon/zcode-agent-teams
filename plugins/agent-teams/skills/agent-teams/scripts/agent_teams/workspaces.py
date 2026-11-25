@@ -12,6 +12,7 @@ isolation is claimed.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,14 +29,30 @@ class WorkspaceInfo:
 
 @dataclass(frozen=True)
 class WorkspaceDiff:
+    """What differs between the base commit and the worktree.
+
+    Paths are POSIX-relative to the workspace root. ``changed`` holds
+    every path the write-set control has to judge, so a rename or a copy
+    puts both of its paths there; ``renames`` and ``copies`` keep them as
+    ``(source, destination)`` pairs.
+    """
+
     changed: tuple[str, ...]
     added: tuple[str, ...]
     modified: tuple[str, ...]
     deleted: tuple[str, ...]
-    renamed: tuple[str, ...]
+    renames: tuple[tuple[str, str], ...]
+    copies: tuple[tuple[str, str], ...]
     has_uncommitted: bool
     head_commit: str | None
     raw_status: str
+
+    @property
+    def renamed(self) -> tuple[str, ...]:
+        """Destination paths of the renames: the flat view that the field
+        of this name used to hold before the pairs were recorded."""
+        destinations = {destination for _source, destination in self.renames}
+        return tuple(sorted(destinations))
 
 
 def _git(args: list[str], cwd: Path, *,
@@ -135,79 +152,188 @@ def _branch_exists(project_root: Path, branch: str) -> bool:
     return proc.returncode == 0
 
 
+def _git_z(args: list[str], cwd: Path) -> str:
+    """stdout of a git command as NUL-terminated text.
+
+    The bytes are decoded as UTF-8 whatever the locale is and without
+    newline translation: -z makes git print names verbatim, and no path
+    may be cut, joined or re-escaped on its way in. A name that is not
+    valid UTF-8 keeps a readable escaped form instead of failing.
+    """
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                          timeout=120)
+    if proc.returncode != 0:
+        raise ExternalError(
+            f"git {' '.join(args[:2])} failed in {cwd}: "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()[:300]}")
+    return proc.stdout.decode("utf-8", "backslashreplace")
+
+
+def _git_status(workspace: Path) -> str:
+    """``git status --porcelain -z`` of a worktree, untracked files
+    listed one by one."""
+    return _git_z(["status", "--porcelain", "-z", "--untracked-files=all"],
+                  workspace)
+
+
+def _nul_fields(raw: str) -> list[str]:
+    """The NUL-terminated fields of a ``git -z`` output, verbatim.
+
+    A stream that does not end with its terminator was cut short; its
+    last field would be lost or read whole, so the stream is rejected.
+    """
+    if not raw:
+        return []
+    if not raw.endswith("\0"):
+        raise ExternalError(
+            "truncated git -z output: the last record is not terminated")
+    return raw.split("\0")[:-1]
+
+
+_NAME_STATUS = re.compile(r"[ACDMRTUXB][0-9]{0,3}")
+
+
+def parse_name_status_z(raw: str) -> list[tuple[str, str, str | None]]:
+    """Records of ``git diff --name-status -z`` as ``(status, path,
+    other)``: ``other`` is the second path of a rename or a copy and None
+    for any other record.
+
+    A record is STATUS, path. A rename or a copy has three fields: STATUS,
+    source, destination, the source first and the destination second,
+    exactly as in the quoted format without -z.
+    """
+    fields = _nul_fields(raw)
+    records, index = [], 0
+    while index < len(fields):
+        status = fields[index]
+        paired = status[:1] in ("R", "C")
+        size = 3 if paired else 2
+        if not _NAME_STATUS.fullmatch(status) or index + size > len(fields):
+            raise ExternalError(
+                f"malformed git diff --name-status record: {status[:80]!r}")
+        records.append((status, fields[index + 1],
+                        fields[index + 2] if paired else None))
+        index += size
+    return records
+
+
+def parse_status_z(raw: str) -> list[tuple[str, str, str | None]]:
+    """Records of ``git status --porcelain -z`` as ``(XY, path, origin)``:
+    ``origin`` is the path a renamed or copied file came from and None
+    for any other record.
+
+    A record is ``XY PATH``, the index and the worktree status letters in
+    front. A rename or a copy (X is R or C) is followed by one more field,
+    the source path: the destination comes first and the source AFTER it,
+    the reverse of ``git diff``.
+    """
+    fields = _nul_fields(raw)
+    records, index = [], 0
+    while index < len(fields):
+        record = fields[index]  # "XY " in front of a non-empty path
+        index += 1
+        if len(record) < 4 or record[2] != " ":
+            raise ExternalError(
+                f"malformed git status --porcelain record: {record[:80]!r}")
+        paired = record[0] in ("R", "C")
+        if paired and index >= len(fields):
+            raise ExternalError(
+                "truncated git status --porcelain record: the source path of "
+                f"{record[3:83]!r} is missing")
+        records.append((record[:2], record[3:],
+                        fields[index] if paired else None))
+        if paired:
+            index += 1
+    return records
+
+
 def capture_diff(workspace: Path, base_commit: str) -> WorkspaceDiff:
     """Changed files of a worktree versus its base commit.
 
     Covers committed changes (base..HEAD), staged and unstaged work, and
     untracked files; paths are POSIX-relative to the workspace root.
+
+    A rename or a copy is recorded with both of its paths and both end up
+    in ``changed``: a file moved out of a forbidden location changes that
+    location as surely as a write would.
     """
-    added, modified, deleted, renamed = [], [], [], []
+    added: set[str] = set()
+    modified: set[str] = set()
+    deleted: set[str] = set()
+    renames: set[tuple[str, str]] = set()
+    copies: set[tuple[str, str]] = set()
+
+    def posix(path: str) -> str:
+        return path.replace("\\", "/")
+
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace),
                           capture_output=True, text=True, timeout=30)
     head_commit = head.stdout.strip() if head.returncode == 0 else None
 
-    name_status = subprocess.run(
-        ["git", "diff", "--name-status", "-z", base_commit],
-        cwd=str(workspace), capture_output=True, text=True, timeout=120)
-    entries = [chunk for chunk in name_status.stdout.split("\0") if chunk]
-    i = 0
-    while i < len(entries):
-        code = entries[i]
-        if code.startswith("R"):
-            renamed.append(entries[i + 2].replace("\\", "/"))
-            i += 3
-        else:
-            path = entries[i + 1].replace("\\", "/")
-            if code == "A":
-                added.append(path)
-            elif code == "D":
-                deleted.append(path)
+    # Committed, staged and unstaged changes against the base. Copies are
+    # looked for among unmodified files too: otherwise copying a file
+    # leaves no trace but its destination.
+    diff = _git_z(["diff", "--name-status", "-z", "-M", "-C",
+                   "--find-copies-harder", base_commit], workspace)
+    for status, path, other in parse_name_status_z(diff):
+        if other is None:
+            if status == "A":
+                added.add(posix(path))
+            elif status == "D":
+                deleted.add(posix(path))
             else:
-                modified.append(path)
-            i += 2
+                modified.add(posix(path))
+        elif status[0] == "R":
+            renames.add((posix(path), posix(other)))
+        else:
+            copies.add((posix(path), posix(other)))
 
-    status = _git(["status", "--porcelain", "-z", "--untracked-files=all"],
-                  workspace)
-    records = [chunk for chunk in status.stdout.split("\0") if chunk]
-    has_uncommitted = bool(records)
-    index = 0
-    while index < len(records):
-        record = records[index]
-        code, _, path = record[:2], record[2], record[3:]
-        path = path.replace("\\", "/")
-        index += 1
-        if code.startswith("R") or code.startswith("C"):
-            index += 1  # the copy/rename source follows as its own field
-        if code == "??":
-            added.append(path)
-        elif code == "AD":
-            deleted.append(path)  # added in the index, gone from disk
-        elif "D" in code:
-            deleted.append(path)
-        elif "A" in code:
-            added.append(path)
-        elif path not in modified and path not in added and path not in deleted:
-            modified.append(path)
+    # Untracked files and worktree-only states are visible here alone; a
+    # staged rename or copy repeats its two paths.
+    status_z = _git_status(workspace)
+    status_records = parse_status_z(status_z)
+    for xy, path, origin in status_records:
+        path = posix(path)
+        if origin is not None:
+            pair = (posix(origin), path)
+            (renames if xy[0] == "R" else copies).add(pair)
+        if xy == "??":
+            added.add(path)
+        elif xy == "AD":
+            deleted.add(path)  # added in the index, gone from disk
+        elif "D" in xy:
+            deleted.add(path)
+        elif "A" in xy:
+            added.add(path)
+        elif path not in added and path not in deleted:
+            modified.add(path)
 
-    changed = sorted(set(added) | set(modified) | set(deleted) | set(renamed))
+    endpoints = {path for pair in renames | copies for path in pair}
     return WorkspaceDiff(
-        changed=tuple(changed), added=tuple(sorted(set(added))),
-        modified=tuple(sorted(set(modified))),
-        deleted=tuple(sorted(set(deleted))),
-        renamed=tuple(sorted(set(renamed))),
-        has_uncommitted=has_uncommitted, head_commit=head_commit,
-        raw_status=status.stdout)
+        changed=tuple(sorted(added | modified | deleted | endpoints)),
+        added=tuple(sorted(added)), modified=tuple(sorted(modified)),
+        deleted=tuple(sorted(deleted)), renames=tuple(sorted(renames)),
+        copies=tuple(sorted(copies)),
+        has_uncommitted=bool(status_records), head_commit=head_commit,
+        raw_status=status_z)
 
 
 def write_set_violations(diff: WorkspaceDiff, files_write: list[str]) -> list[str]:
     """Changed paths outside the declared write set (directory prefixes
-    count as declared, matching the validation overlap rules)."""
+    count as declared, matching the validation overlap rules).
+
+    Every path is judged on its own, so a rename or a copy violates the
+    set when either end lies outside it: a file moved into the allowed
+    zone from a forbidden one, or copied from it, is caught by its source.
+    """
     allowed = [p.replace("\\", "/").rstrip("/") for p in files_write]
+    touched = set(diff.changed)
+    pairs = diff.renames + diff.copies
+    touched.update(path for pair in pairs for path in pair)
     violations = []
-    for path in diff.changed:
+    for path in sorted(touched):
         norm = path.rstrip("/")
-        permitted = any(
-            norm == a or norm.startswith(a.rstrip("/") + "/") for a in allowed)
+        permitted = any(norm == a or norm.startswith(a + "/") for a in allowed)
         if not permitted:
             violations.append(path)
     return violations
@@ -256,18 +382,15 @@ def head_sha(workspace: Path) -> str:
 
 
 def dirty_entries(workspace: Path) -> list[str]:
-    """Staged, unstaged and untracked files (gitignored files excluded)."""
-    status = _git(["status", "--porcelain", "-z", "--untracked-files=all"],
-                  workspace)
-    entries, index = [], 0
-    records = [chunk for chunk in status.stdout.split("\0") if chunk]
-    while index < len(records):
-        record = records[index]
-        path = record[3:].replace("\\", "/")
-        index += 1
-        if record[:2].startswith("R") or record[:2].startswith("C"):
-            index += 1  # rename/copy source follows
-        entries.append(path)
+    """Staged, unstaged and untracked files (gitignored files excluded).
+
+    Both paths of a staged rename or copy are listed: both differ from HEAD.
+    """
+    entries = []
+    for _xy, path, origin in parse_status_z(_git_status(workspace)):
+        entries.append(path.replace("\\", "/"))
+        if origin is not None:
+            entries.append(origin.replace("\\", "/"))
     return entries
 
 
