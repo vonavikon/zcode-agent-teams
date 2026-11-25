@@ -75,6 +75,24 @@ def snapshot(**fields) -> dict:
                  "quality": "unknown"},
         "tasks": [task()], "agents": [agent()], "attention": [], "events": [event()],
         "last_seq": 1, "level": "simple",
+        "quality": {"handed_over": 0, "checks": 0, "passed": 0, "failed": 0,
+                    "accepted_by_check": 0, "accepted_by_decision": 0, "first_time": 0,
+                    "reworked": 0, "judged": 0, "machine": {"run": 0, "passed": 0, "failed": 0, "forced": 0},
+                    "awaited": [], "problems": [],
+                    "story": "Результаты ещё не передавались на проверку."},
+        "budget": {"budget_usd": None, "per_task_usd": None, "warn_ratio": 0.8, "spent_usd": 0.0,
+                   "remaining_usd": None, "spent_text": "не определена", "unknown_records": 0,
+                   "complete": True, "state": "none", "share": None, "over_limit": [],
+                   "by_task": {}, "by_role": {}, "usd_per_task": None, "usd_per_result": None,
+                   "per_task_text": "не определена", "per_result_text": "не определена",
+                   "series": [], "story": "Расходов пока нет. Бюджет не согласован: предел не установлен."},
+        "recovery": {"total": 0, "by_kind": {}, "kinds": [], "repeated": {}, "open": 0,
+                     "resolved": 0, "incidents": [], "story": "Проблем не было."},
+        "integration": {"state": "collecting", "story": "Принято 0 из 1 результатов.",
+                        "accepted": 0, "total": 1, "conflict": None,
+                        "steps": [{"key": "accepted", "title": "Результаты приняты", "done": False, "text": "0 из 1"},
+                                  {"key": "integrated", "title": "Результаты объединены", "done": False, "text": "ещё нет"},
+                                  {"key": "applied", "title": "Изменения применены к проекту", "done": False, "text": "ещё нет"}]},
         "plan": {"nodes": [{"id": "a", "col": 0, "row": 0}], "edges": [],
                  "columns": 1, "rows": 1},
         "timeline": {"start": "2026-11-25T09:00:00.000Z", "end": "2026-11-25T10:00:00.000Z",
@@ -460,6 +478,28 @@ class TestSwitches:
         assert "task_id: a" in out["advancedPlan"] and "branch: x/y" in out["advancedPlan"]
         assert out["simpleAgainFetch"].endswith("level=simple")
         assert "hash" not in out["simpleFeed"]
+
+    def test_the_models_table_is_for_the_technical_reader(self):
+        models = [{"provider": "bothub", "model": EVIL + "-flash", "records": 2, "input_tokens": 2000,
+                   "output_tokens": 1000, "cache_read_tokens": 400, "cache_write_tokens": 100,
+                   "usd": 0.0006, "unknown": 1, "quality": ["estimated"],
+                   "price_per_1m": {"input": 0.1, "output": 0.4, "cache_read": 0.02}},
+                  {"provider": None, "model": "mystery-9", "records": 1, "input_tokens": 0, "output_tokens": 0,
+                   "cache_read_tokens": 0, "cache_write_tokens": 0, "usd": 0.0, "unknown": 1,
+                   "quality": [], "price_per_1m": None}]
+        snapped = snapshot(cost={"tokens": 3000, "usd": 0.0006, "unknown_records": 1, "complete": False,
+                                 "models": models})
+        out = run("modes", [snapped, snapped, snapped, snapped])
+        assert "По моделям" not in out["simpleMoney"]
+        table = out["advancedMoney"]
+        assert "<h3>По моделям</h3>" in table and EVIL_ESCAPED in table and EVIL not in table
+        assert "<dt>Токены: вход / выход</dt><dd>2 000 / 1 000</dd>" in table
+        assert "<dt>Кеш: чтение / запись</dt><dd>400 / 100</dd>" in table
+        assert "<dt>Цена за 1 млн: вход / выход / кеш</dt><dd>$0.10 / $0.40 / $0.02</dd>" in table
+        assert "<dt>Расход</dt><dd>$0.000600 <span class=\"muted\">(1 запись без цены)</span>" in table
+        assert "оценка по таблице цен" in table and "модели нет в таблице цен" in table
+        assert "<dt>Расход</dt><dd>не определена <span class=\"muted\">(1 запись без цены)</span>" in table
+        assert "неизвестно" in table and "<table" not in table      # fits any width, no scroll of its own
         assert out["prefs"]["at.mode"] == "simple"
 
     def test_the_theme_is_remembered(self):
@@ -470,7 +510,7 @@ class TestSwitches:
     def test_the_cards_follow_the_width_of_the_window(self):
         out = run("resize", [snapshot()])
         assert out["columnsNarrow"] == [["attCard", "nowCard", "teamCard", "planCard", "timeCard",
-                                   "feedCard"], []]
+                                   "feedCard", "qualityCard", "moneyCard", "problemCard", "buildCard"], []]
         assert out["columnsWide"][0] and out["columnsWide"][1]
         assert out["allCardsPlaced"]
 
@@ -757,3 +797,260 @@ class TestTheResultOfATask:
         never = snapshot(tasks=[task(result={"files": [], "ready": False, "handed_over": False})])
         assert "ещё не передавался" in acted([["sheet", "a"]], [never, never])[1]["sheet"]
 
+
+
+def with_money(**budget) -> dict:
+    full = {"budget_usd": 10.0, "per_task_usd": 2.5, "warn_ratio": 0.8, "spent_usd": 7.5,
+            "remaining_usd": 2.5, "spent_text": "$7.50", "unknown_records": 0, "complete": True,
+            "state": "ok", "share": 0.75, "over_limit": [],
+            "by_task": {"Собрать отчёт": 5.0, "Проверить": 2.5}, "by_role": {"AI-аналитик": 7.5},
+            "usd_per_task": 3.75, "usd_per_result": 7.5, "per_task_text": "$3.75",
+            "per_result_text": "$7.50",
+            "series": [{"ts": "2026-11-25T09:05:00Z", "usd": 2.0}, {"ts": "2026-11-25T09:20:00Z", "usd": 7.5}],
+            "story": "На проект выделено $10.00. Потрачено $7.50. Осталось $2.50."}
+    full.update(budget)
+    return snapshot(budget=full)
+
+
+class TestTheQualityCard:
+    def test_it_tells_a_machine_check_a_judgement_and_a_decision_apart(self):
+        quality = {"handed_over": 4, "checks": 3, "passed": 2, "failed": 1, "accepted_by_check": 2,
+                   "accepted_by_decision": 1, "first_time": 1, "reworked": 1, "judged": 2,
+                   "machine": {"run": 3, "passed": 2, "failed": 1, "forced": 1},
+                   "awaited": ["Задача D"], "problems": [{"task": "Задача B", "remark": EVIL,
+                                                          "when": "x", "attempt": 1}],
+                   "story": "1 из 2 результатов прошли проверку с первого раза. Ещё 1 потребовалась доработка."}
+        dom = run("render", [snapshot(quality=quality)])["dom"]
+        body = dom["qualityBody"]["html"]
+        assert "Что проверила машина" in body and "Что оценил проверяющий" in body
+        assert "<b>3</b><span>проверки</span><small>команды и файлы" in body    # the machine
+        assert "<b>3</b><span>проверки</span><small>оценка содержания" in body  # the checker
+        assert "<b>1</b><span>принято решением" in body and "<b>1</b><span>прошёл с первого раза" in body
+        assert "<b>1</b><span>доработка</span>" in body
+        assert "Найденные недостатки" in body and EVIL_ESCAPED in body and EVIL not in body
+        assert "Ещё ждут проверки" in body and "Задача D" in body
+
+    def test_it_says_when_there_was_nothing_to_check(self):
+        body = run("render", [snapshot()])["dom"]["qualityBody"]["html"]
+        assert "Машинных проверок не было" in body and "Проверок ещё не было" in body
+        assert "Результаты ещё не передавались на проверку." in body
+        assert 'class="dist"' not in body and 'class="strip"' not in body
+
+    def test_the_distribution_of_results_and_the_order_of_the_checks(self):
+        quality = {"handed_over": 4, "checks": 3, "passed": 1, "failed": 2, "accepted_by_check": 1,
+                   "accepted_by_decision": 1, "first_time": 1, "reworked": 1, "judged": 2,
+                   "machine": {"run": 0, "passed": 0, "failed": 0, "forced": 0},
+                   "split": {"first": 1, "reworked": 1, "decision": 1, "awaiting": 1},
+                   "timeline": [{"ts": "2026-11-25T09:01:00.000Z", "verdict": "pass", "task": "Обзор", "attempt": 1},
+                                {"ts": "2026-11-25T09:02:00.000Z", "verdict": "fail", "task": EVIL, "attempt": 1},
+                                {"ts": "2026-11-25T09:03:00.000Z", "verdict": "fail", "task": EVIL, "attempt": 2}],
+                   "awaited": [], "problems": [{"task": EVIL, "remark": "нет оценок", "when": "x", "attempt": 1},
+                                               {"task": EVIL, "remark": "всё ещё нет", "when": "x", "attempt": 2}],
+                   "story": "s"}
+        body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
+        # One share per result, each named in the legend.
+        assert '<i class="first" data-w="25.00"' in body and '<i class="reworked" data-w="25.00"' in body
+        assert '<i class="decision" data-w="25.00"' in body and '<i class="awaiting" data-w="25.00"' in body
+        assert "С первого раза" in body and "После доработки" in body
+        assert "Решением руководителя" in body and "Ещё на проверке" in body
+        # The checks in their order: a result sent back twice is seen, and said.
+        assert body.count('<i class="ok"') == 1 and body.count('<i class="bad"') == 2
+        assert "1 результат возвращался на доработку больше одного раза." in body
+        assert "Найденные недостатки <span class='count'>2</span>" in body
+        assert EVIL_ESCAPED in body and EVIL not in body
+        assert "без единого файла" not in body
+        quality["empty"] = [EVIL]
+        body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
+        assert "<p class='bad-text'>Принято без единого файла: " + EVIL_ESCAPED + \
+            ". Исполнитель ничего не подготовил.</p>" in body
+
+
+class TestTheMoneyCard:
+    def test_the_budget_story_with_figures_and_bars(self):
+        body = run("render", [with_money()])["dom"]["moneyBody"]["html"]
+        assert "На проект выделено $10.00. Потрачено $7.50. Осталось $2.50." in body
+        assert "<b>$7.50</b><span>потрачено</span><small>Все расходы известны." in body
+        assert "<b>$3.75</b><span>в среднем на задачу" in body and "<b>$7.50</b><span>цена принятого результата" in body
+        assert body.count('<div class="stat">') == 6 and "<b>$2.50</b><span>лимит одной задачи" in body
+        assert 'class="gauge" role="img" aria-label="Израсходовано 75% бюджета"><i data-w="75"></i><em data-x="80"' in body
+        assert "По этапам" in body and "По специалистам" in body
+        assert '<span class="name">Собрать отчёт</span><span class="value">$5.00</span><span class="bar"><i data-w="100"></i></span>' in body
+        assert '<polyline points="0.0,28.4 200.0,2.0"/>' in body       # how the spend grew
+
+    def test_the_limit_the_warning_and_the_unknown(self):
+        limit = run("render", [with_money(state="limit", spent_usd=10.0, remaining_usd=0.0, share=1.0)])["dom"]["moneyBody"]["html"]
+        assert 'class="gauge limit"' in limit and "Предел достигнут: новые задачи не запускаются." in limit
+        warning = run("render", [with_money(state="warning")])["dom"]["moneyBody"]["html"]
+        assert 'class="gauge warning"' in warning and "Приближается предел бюджета." in warning
+        assert "До предупреждения ещё" not in warning
+        ok = run("render", [with_money(share=0.5)])["dom"]["moneyBody"]["html"]
+        assert "До предупреждения ещё 30% бюджета." in ok      # 50% spent, the warning comes at 80%
+        unknown = run("render", [with_money(unknown_records=2, complete=False)])["dom"]["moneyBody"]["html"]
+        assert "Цена 2 записей неизвестна: они не учтены." in unknown
+        one = run("render", [with_money(unknown_records=1)])["dom"]["moneyBody"]["html"]
+        assert "Цена 1 записи неизвестна: она не учтена." in one
+        over = run("render", [with_money(over_limit=[EVIL])])["dom"]["moneyBody"]["html"]
+        assert "Лимит одной задачи ($2.50) исчерпан:" in over and EVIL_ESCAPED in over
+
+    def test_no_budget_no_bar(self):
+        body = run("render", [snapshot()])["dom"]["moneyBody"]["html"]
+        assert "gauge" not in body and "не согласован" in body and "<b>не определена</b>" in body
+
+    def test_every_sum_says_what_it_leaves_out(self):
+        body = run("render", [with_money(
+            unknown_by_task={"Проверить": 2, "Ничего не оценено": 1},
+            unknown_by_role={"AI-аналитик": 1})])["dom"]["moneyBody"]["html"]
+        assert '<span class="name">Собрать отчёт</span><span class="value">$5.00</span><span class="bar"><i data-w="100"></i></span></li>' in body
+        assert '<span class="note">и ещё цена 2 записей неизвестна</span>' in body
+        # A stage with no priced record at all is "not defined", never a zero.
+        assert '<span class="name">Ничего не оценено</span><span class="value">не определена</span><span class="bar"><i data-w="0"></i></span>' in body
+        assert '<span class="name">AI-аналитик</span><span class="value">$7.50</span><span class="bar"><i data-w="100"></i></span>' + \
+            '<span class="note">и ещё цена 1 записи неизвестна</span>' in body
+        assert "По моделям" not in body          # the simple level carries no tariffs
+
+
+class TestTheProblemsCard:
+    def incidents(self) -> dict:
+        return {"total": 3, "by_kind": {"check": 2, "blocked": 1},
+                "kinds": [{"kind": "check", "title": "Результат не прошёл проверку", "count": 2},
+                          {"kind": "blocked", "title": "Задача остановлена", "count": 1}],
+                "repeated": {"Оценить риски": 3}, "open": 1, "resolved": 2,
+                "incidents": [
+                    {"task": "Оценить риски", "kind": "blocked", "title": "Задача остановлена",
+                     "when": "2026-11-25T09:18:00.000Z", "detail": EVIL, "affected": "x",
+                     "did": ["остановила задачу и сохранила всю сделанную работу"],
+                     "risk_of_loss": True, "human_needed": True, "action": "Разрешите ещё одну попытку",
+                     "outcome": "нужна помощь: задача остановлена"},
+                    {"task": "Оценить риски", "kind": "check", "title": "Результат не прошёл проверку",
+                     "when": "2026-11-25T09:10:00.000Z", "detail": "", "affected": "x",
+                     "did": ["передала замечания проверяющего исполнителю"],
+                     "risk_of_loss": False, "human_needed": False, "action": "",
+                     "outcome": "исполнитель доработал результат и передал его снова"}],
+                "story": "Было проблем: 3. Сейчас нужна ваша помощь по 1 задаче."}
+
+    def test_each_incident_says_what_happened_what_the_system_did_and_how_it_ended(self):
+        body = run("render", [snapshot(recovery=self.incidents())])["dom"]["problemBody"]["html"]
+        assert "Было проблем: 3. Сейчас нужна ваша помощь по 1 задаче." in body
+        assert '<span class="chip on">Результат не прошёл проверку · 2</span>' in body
+        assert '<li class="open">' in body and '<li class="closed">' in body
+        assert "Система остановила задачу и сохранила всю сделанную работу." in body
+        assert "Итог: нужна помощь: задача остановлена. Есть риск потери результата." in body
+        assert "Итог: исполнитель доработал результат и передал его снова." in body
+        assert "<b>Разрешите ещё одну попытку</b>" in body
+        assert EVIL_ESCAPED in body and EVIL not in body
+        assert "Повторялись: Оценить риски (3 раза)." in body
+
+    def test_no_problems(self):
+        body = run("render", [snapshot()])["dom"]["problemBody"]["html"]
+        assert "Проблем не было." in body and "incidents" not in body
+
+    def test_when_it_happened_and_what_cannot_be_lost(self):
+        data = self.incidents()
+        data["incidents"][0]["saved"] = "вся сделанная работа сохранена"
+        data["incidents"].append({"task": None, "kind": "budget", "title": "Бюджет исчерпан", "when": None,
+                                  "detail": "Новые задачи не запускаются.", "affected": "запуск новых задач",
+                                  "did": ["остановила запуск новых задач"],
+                                  "saved": "все сделанные результаты сохранены",
+                                  "risk_of_loss": False, "human_needed": True,
+                                  "action": "Увеличьте бюджет", "outcome": "нужна помощь"})
+        body = run("render", [snapshot(recovery=data)])["dom"]["problemBody"]["html"]
+        assert "<time class='muted small'>" in body                 # when it happened
+        assert "Сохранено: вся сделанная работа сохранена." in body
+        # The spent budget names no stage and carries no time.
+        assert "Бюджет исчерпан</div>" in body and "<b>Увеличьте бюджет</b>" in body
+        assert "Сохранено: все сделанные результаты сохранены." in body
+
+
+class TestTheBuildCard:
+    def test_three_states_and_what_blocks(self):
+        view = {"state": "conflict", "story": "Не удалось объединить результаты.",
+                "accepted": 2, "total": 3, "conflict": {"title": EVIL, "detail": "Исходные версии сохранены.",
+                                                        "when": "x"},
+                "steps": [{"key": "accepted", "title": "Результаты приняты", "done": False, "text": "2 из 3"},
+                          {"key": "integrated", "title": "Результаты объединены", "done": False, "text": "ещё нет"},
+                          {"key": "applied", "title": "Изменения применены к проекту", "done": True, "text": "да"}]}
+        body = run("render", [snapshot(integration=view)])["dom"]["buildBody"]["html"]
+        assert "Не удалось объединить результаты." in body
+        assert '<li class="on">' in body and "<b>Изменения применены к проекту</b><small>да</small>" in body
+        assert "Что помешало" in body and EVIL_ESCAPED in body
+        assert [s["title"] for s in view["steps"]] == ["Результаты приняты", "Результаты объединены",
+                                                       "Изменения применены к проекту"]
+
+
+class TestTheMarkupOfThePage:
+    def test_no_generated_markup_carries_a_style_attribute_or_an_event_handler(self):
+        # The page's policy allows no inline style and no inline script: a
+        # style attribute in generated markup would be silently refused.
+        snap = with_money(over_limit=["x"])
+        snap["recovery"] = TestTheProblemsCard().incidents()
+        snap["quality"] = {"handed_over": 4, "checks": 3, "passed": 2, "failed": 1, "accepted_by_check": 2,
+                           "accepted_by_decision": 1, "first_time": 1, "reworked": 1, "judged": 2,
+                           "machine": {"run": 3, "passed": 2, "failed": 1, "forced": 1},
+                           "awaited": ["D"], "problems": [], "story": "s"}
+        snap["cost"] = {"tokens": 9_000, "usd": 7.5, "unknown_records": 0, "complete": True}
+        out = run("render", [snap])
+        written = markup(out)
+        assert "style=" not in written
+        assert not re.search(r"<\w+[^>]*\son[a-z]+\s*=", written)
+        assert "<script" not in written
+
+
+class TestTheComparisonCard:
+    def benchmark(self, **over) -> dict:
+        view = {"name": "billing", "statement": None,
+                "note": "Сопоставимых измерений пока нет: нужно, чтобы завершились не меньше двух команд.",
+                "rows": [{"team": "solo", "executors": 1, "finished": True, "duration_s": 4000,
+                          "spent_usd": 10.0, "cost_complete": True, "accepted": 4, "total": 4,
+                          "first_time": 3, "judged": 4},
+                         {"team": EVIL, "executors": 3, "finished": False, "duration_s": None,
+                          "spent_usd": 0.0, "cost_complete": False, "accepted": 1, "total": 4,
+                          "first_time": 0, "judged": 0}]}
+        view.update(over)
+        return view
+
+    def test_it_exists_only_for_a_team_that_declared_a_benchmark(self):
+        plain = run("render", [snapshot()])["dom"]["benchCard"]
+        assert plain["html"] == "" and "hidden" in plain["cls"].split()
+        dom = run("render", [snapshot(benchmark=self.benchmark())])["dom"]
+        assert "hidden" not in dom["benchCard"]["cls"].split()
+        assert "Сопоставимых измерений пока нет" in dom["benchBody"]["html"]
+
+    def test_without_two_finished_teams_it_says_so_and_shows_the_rows(self):
+        body = run("render", [snapshot(benchmark=self.benchmark())])["dom"]["benchBody"]["html"]
+        assert "Сопоставимых измерений пока нет" in body and "<b>" not in body.split("</p>")[0]
+        # One block per team, every measure in words at any width.
+        assert '<div class="record finished"><div class="tt">solo <span class="muted">· 1 специалист</span> ' \
+            '<span class="state done">завершена</span></div><dl><dt>Время</dt><dd>1 ч 6 мин</dd>' \
+            '<dt>Затраты</dt><dd>$10.00</dd><dt>С первого раза</dt><dd>3 из 4</dd>' in body
+        assert '<div class="record unfinished"><div class="tt">' + EVIL_ESCAPED + \
+            ' <span class="muted">· 3 специалиста</span> <span class="state idle">не завершена</span></div>' in body
+        assert "<table" not in body
+        # Attempts, problems and clashes (spec 19); an engine that sends
+        # none of them is not read as zero.
+        assert "<dt>Цена принятого результата</dt><dd>не определена</dd>" in body
+        assert "<dt>Проверок</dt><dd>нет данных</dd><dt>Проблем</dt><dd>нет данных</dd>" \
+            "<dt>Конфликтов объединения</dt><dd>нет данных</dd>" in body
+        view = self.benchmark()
+        view["rows"][0].update(attempts=5, problems=2, conflicts=1, usd_per_result=2.5)
+        view["rows"][1]["executors"] = None
+        body = run("render", [snapshot(benchmark=view)])["dom"]["benchBody"]["html"]
+        assert "<dt>Цена принятого результата</dt><dd>$2.50</dd>" in body
+        assert "<dt>Проверок</dt><dd>5</dd><dt>Проблем</dt><dd>2</dd><dt>Конфликтов объединения</dt><dd>1</dd>" in body
+        assert "· специалистов: ?</span>" in body
+        assert "не завершена" in body and "не определены" in body and "нет проверок" in body
+        assert EVIL_ESCAPED in body and EVIL not in body
+
+    def test_the_sentence_comes_from_the_engine_as_it_is(self):
+        statement = "Команда из 3 специалистов выполнила набор задач на 25% быстрее, чем команда из 1 исполнителя."
+        body = run("render", [snapshot(benchmark=self.benchmark(statement=statement))])["dom"]["benchBody"]["html"]
+        assert "<p class=\"story-text\"><b>" + statement + "</b></p>" in body
+
+
+    def test_a_single_check_is_called_so(self):
+        quality = {"handed_over": 1, "checks": 1, "passed": 0, "failed": 1, "accepted_by_check": 0,
+                   "accepted_by_decision": 0, "first_time": 0, "reworked": 1, "judged": 1,
+                   "machine": {"run": 1, "passed": 0, "failed": 1, "forced": 0}, "awaited": [],
+                   "problems": [], "story": "s"}
+        body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
+        assert "<b>1</b><span>проверка</span>" in body and "<b>1</b><span>доработка</span>" in body
+        assert "<b>0</b><span>прошли с первого раза" in body

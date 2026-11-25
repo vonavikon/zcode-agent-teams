@@ -296,7 +296,7 @@ class TestOneResourcePerAddress:
         agents = get_json(board["port"], "/api/agents?team=t")
         assert [a["name"] for a in agents["agents"]] == ["AI-специалист"]
         cost = get_json(board["port"], "/api/cost?team=t")
-        assert set(cost) == {"ok", "cost", "level", "now"} and cost["cost"]["usd"] == 0.0
+        assert set(cost) == {"ok", "cost", "budget", "level", "now"} and cost["cost"]["usd"] == 0.0
 
     def test_one_task_comes_with_its_own_history(self, board):
         engine.op_claim(board["root"], "t", "a", "w1")
@@ -475,6 +475,30 @@ class TestReadingFurtherBack:
         assert get_json(board["port"], f"/api/events?team=t&before={oldest}")["events"] == []
         assert call(board["port"], "GET", "/api/events?team=t&before=-1")[0] == 400
         assert call(board["port"], "GET", "/api/events?team=t&before=abc")[0] == 400
+
+
+class TestTheAnalyticsAddresses:
+    def test_metrics_recovery_integration_and_artifacts(self, board):
+        engine.op_claim(board["root"], "t", "a", "w1")
+        metrics = get_json(board["port"], "/api/metrics?team=t")
+        assert {"quality", "recovery", "integration", "budget", "cost", "progress"} <= set(metrics)
+        assert metrics["integration"]["steps"][0]["text"] == "0 из 1"
+        recovery = get_json(board["port"], "/api/recovery?team=t")
+        assert set(recovery) == {"ok", "recovery", "attention", "level", "now"}
+        integration = get_json(board["port"], "/api/integration?team=t")
+        assert set(integration) == {"ok", "integration", "run", "level", "now"}
+        artifacts = get_json(board["port"], "/api/artifacts?team=t")
+        assert artifacts["artifacts"] == [{"task": "a", "title": HOSTILE_TITLE, "ready": False,
+                                           "handed_over": False, "files": []}]
+        assert "budget" in get_json(board["port"], "/api/cost?team=t")
+
+    def test_they_refuse_writes_and_other_hosts_like_the_rest(self, board):
+        before = sha(board["db"])
+        for path in ("/api/metrics?team=t", "/api/recovery?team=t", "/api/integration?team=t",
+                     "/api/artifacts?team=t"):
+            assert call(board["port"], "DELETE", path)[0] == 405, path
+            assert call(board["port"], "GET", path, host="evil.example")[0] == 403, path
+        assert sha(board["db"]) == before
 
 
 class TestStarting:

@@ -32,6 +32,20 @@
 - Integration conflicts: the conflicting files are listed; resolve them
   in a task branch (or rework the overlap) and integrate again. Task
   branches and the project branch are never touched by a failed gate.
+- `BUDGET_LIMIT` (exit code 2) on a `claim` - the budget of the team,
+  or the limit of this task, is spent. It is not a fault of the
+  executor: executors already running are not stopped and nothing was
+  left behind. Ask the owner; with the owner's word the lead raises the
+  limit: `team.py budget --usd <n>` (or `--per-task <n>`)
+  `--lead-token <tok>`. The board names how many records have no price:
+  the limit does not count them.
+- The board shows a stage's cost as "not defined" - none of its records
+  has a price (an unknown model or a notification without numbers).
+  It is not a zero; `team.py cost` lists the records.
+- "Сравнение команд" says there is nothing to compare - the card exists
+  only for a team that declares `benchmark` in its config, and a
+  sentence about speed or money needs at least two teams of that set
+  that finished it.
 - `team.py ui`: `port ... is already in use` - another board (or another
   program) holds the port: pass `--port`, or `--port 0` for any free
   one. `team ... has no state ...; run init first` - the board needs a

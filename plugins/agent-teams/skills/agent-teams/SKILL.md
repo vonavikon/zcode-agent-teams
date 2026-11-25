@@ -47,9 +47,23 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
    plan as a graph and as a list, how the time went, what each
    specialist is doing, what waits for the owner's decision and why, in
    plain words, and the files of every result as they were accepted.
+   It also says what the numbers mean: how far the results can be
+   trusted (a machine check, the checker's judgement and a decision of
+   yours are never summed into one), the spend against the budget, the
+   problems and how each ended, how the parts become the whole result.
    Offer it when the owner wants to watch or is not technical. `--open`
    opens the browser; it stops with Ctrl-C. Nothing on the board can
    change the run.
+8. **Budget** (when the owner agrees one): put it in the spec's config
+   (`budget_usd`, `budget_per_task_usd`, `budget_warn_ratio`) or set it
+   as the lead:
+   `python <skill>/scripts/team.py budget --team <id> --project-root <root> --usd 10 --per-task 2.5 --lead-token <tok>`
+   Without the token the command only shows the budget and the spend.
+   When the budget is spent, every new `claim` is refused with exit
+   code 2 and `BUDGET_LIMIT` in the message: running executors are not
+   stopped, nothing is left behind. Tell the owner and raise the limit
+   only on the owner's word; the board shows the budget as exhausted
+   and names it among the problems that wait for the owner.
 
 ## Task schema
 
@@ -57,7 +71,8 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 {
   "title": "Security review of the billing service",
   "goal": "Find what an attacker could reach in billing and say what to fix first",
-  "config": {"workspace": "auto", "max_verification_failures": 2},
+  "config": {"workspace": "auto", "max_verification_failures": 2,
+             "budget_usd": 10, "budget_per_task_usd": 2.5, "budget_warn_ratio": 0.8},
   "agents": [{"id": "sec-lens", "role": "executor"}],
   "tasks": [
     {
@@ -89,6 +104,16 @@ Acceptance types: `test`, `file_check`, `security_check` (each requires a
 `code_review`, `documentation`, `manual` (human or verifier judgement).
 Plain strings are still accepted as manual criteria.
 
+The budget keys are optional (no limit without them): `budget_usd` is
+the budget of the team, `budget_per_task_usd` the limit of one task,
+`budget_warn_ratio` the share from which the board warns (0 to 1, 0.8
+by default). To compare teams of different sizes on one set of tasks,
+each of them declares it: `"benchmark": {"name": "<set name>",
+"executors": <n>}`. Only teams with the same name are compared, and a
+sentence about speed or money is made only from teams that finished
+the set; use the same tasks, models and conditions for all of them, or
+the comparison is worth nothing.
+
 ## Commands (team.py)
 
 Lifecycle: `init`, `claim --by`, `submit --token`, `verify --verdict
@@ -97,9 +122,15 @@ Inspection: `status`, `inspect`, `graph`, `agents`, `logs`, `diff`,
 `workspace`, `plan`.
 Economics: `tokens`, `usage --notification FILE`, `cost`, `metrics`,
 `report --out FILE`, `langfuse`.
+Budget: `budget [--usd n | none] [--per-task n | none] [--warn-ratio r]
+[--lead-token]`.
 Integration: `integrate [--check CMD] [--apply]`.
 Mailbox: `message`, `read`. Board: `ui [--host] [--port] [--open]`.
 All commands take `--project-root` and `--json`.
+
+`team.py budget` without the lead token shows the limits, the known
+spend and the state (no budget, within, warning, limit reached) as the
+board decides them.
 
 ## Rules for the lead
 
@@ -130,4 +161,10 @@ All commands take `--project-root` and `--json`.
 - `team_v02.py` runs old teams created before v0.3 (no state.db).
 - The round limit blocks on the Nth failed verdict exactly
   (`max_verification_failures`, default 2).
+- `BUDGET_LIMIT` on a claim is not a failure of the executor: the budget
+  or the task's limit is spent. The board names the records without a
+  price, which the limit does not count.
+- A comparison of teams is shown only for a declared benchmark, and
+  says "nothing to compare" until two teams finished: do not present a
+  guess as a measurement.
 - Trace ids in Langfuse are strictly 32 hex: use the engine's export.

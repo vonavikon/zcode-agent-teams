@@ -114,6 +114,11 @@ def integration_base_of(project_root: Path, team: str) -> str:
     return _git(["rev-parse", "HEAD"], project_root).stdout.strip()
 
 
+def integration_branch_name(team: str) -> str:
+    """The branch the results of a team are merged on."""
+    return f"agent-teams/{team}/integration"
+
+
 def merge_shas(project_root: Path, team_root: Path, team: str,
                shas: list[str], *, check_command: str = ""
                ) -> dict:
@@ -123,7 +128,7 @@ def merge_shas(project_root: Path, team_root: Path, team: str,
     branch and worktree, sequential merges, an optional check command;
     conflicts and failed checks change nothing that was accepted.
     """
-    integration_branch = f"agent-teams/{team}/integration"
+    integration_branch = integration_branch_name(team)
     workspace = team_root / "integration" / "workspace"
     # The worktree holds a checkout ref: remove it before deleting the
     # branch, or the deletion silently fails and the recreate explodes.
@@ -180,7 +185,7 @@ def merge_branches(project_root: Path, team_root: Path, team: str,
     "check": {...}, "workspace": path}. On any failure the integration
     branch is removed; accepted task branches are never touched.
     """
-    integration_branch = f"agent-teams/{team}/integration"
+    integration_branch = integration_branch_name(team)
     workspace = team_root / "integration" / "workspace"
     _git(["branch", "-D", integration_branch], project_root, check=False)
     base = _git(["rev-parse", "HEAD"], project_root).stdout.strip()

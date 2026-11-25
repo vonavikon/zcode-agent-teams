@@ -314,6 +314,40 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 22px; height: 10px; border-radius: 999px; display: inline-block; }
+/* How the results got accepted: one bar, a share per result, and the
+   legend that says each share in words (spec 10.2). */
+.dist { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--gray-soft); margin-bottom: 10px; }
+.dist i { display: block; height: 100%; width: 0; transition: width 500ms var(--ease); }
+.dist i:first-child { border-radius: 999px 0 0 999px; }
+.swatch.cap { width: 12px; height: 12px; vertical-align: -1px; }
+.dist i.first { background: var(--green); }
+.dist i.reworked { background: var(--yellow); }
+.dist i.decision { background: var(--blue); }
+.dist i.awaiting { background: var(--gray); }
+.legend { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 14px; font-size: 12.5px; }
+.legend li { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.legend li.zero { opacity: 0.55; }
+.legend .swatch { flex: none; margin-top: 5px; background: var(--gray); }
+.legend .swatch.reworked { background: var(--yellow); }
+.legend .swatch.decision { background: var(--blue); }
+.legend .swatch.awaiting { background: var(--gray); }
+.legend small { display: block; font-size: 11.5px; color: var(--text-3); }
+.legend .num { color: var(--text-2); }
+/* The checks in the order they came back: one mark per check. */
+.strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.strip i { width: 14px; height: 14px; border-radius: 4px; }
+.swatch.ok, .strip i.ok { background: var(--green); }
+.swatch.bad, .strip i.bad { background: var(--red); }
+h3 .count { color: var(--text-2); font-weight: 500; }
+/* A block per model (the technical level) or per team (the comparison):
+   every measure stays visible at any width. */
+.records { display: grid; gap: 8px; }
+.record { padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font-size: 12.5px; min-width: 0; }
+.record .tt { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.record dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; }
+.record dt { color: var(--text-3); }
+.record dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.record.unfinished .tt > span:first-child { color: var(--text-3); font-weight: 400; }
 .swatch.work { background: var(--blue); } .swatch.check, .swatch.fix { background: var(--yellow); }
 .swatch.wait { background: var(--gray); } .swatch.recovery { background: var(--blue-soft); border: 1px dashed var(--blue); }
 .swatch.done { background: var(--green); } .swatch.stopped { background: var(--red); }
@@ -349,12 +383,70 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .result { margin-top: 8px; }
 .result-text { margin: 0; padding: 12px 14px; max-height: 360px; overflow: auto; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .result-img { display: block; max-width: 100%; max-height: 420px; border-radius: var(--r-sm); border: 1px solid var(--hairline); }
+/* The analytics cards: figures with their explanations, bars, a gauge */
+.story-text { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 10px; margin-bottom: 14px; }
+/* Six figures of the money card read better in wider cells, three per row. */
+.stats.wide { grid-template-columns: repeat(auto-fit, minmax(164px, 1fr)); }
+.stat { padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); min-width: 0; }
+.stat b { display: block; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.stat span { display: block; font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+.stat small { display: block; font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
+.duo { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.duo > div { min-width: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
+.duo h3, .core > h3 { font-size: 13.5px; font-weight: 600; margin: 16px 0 8px; }
+.duo h3 { margin-top: 0; }
+/* A panel of a pair that holds one sentence keeps its heading level with
+   the neighbour's, and the sentence stands in the middle of what is left. */
+.duo > div:has(> h3 + p:last-child) { display: flex; flex-direction: column; }
+.duo > div:has(> h3 + p:last-child) > p { margin: auto 0; }
+.core ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
+.core ul.plain li { padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); overflow-wrap: anywhere; }
+.bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+/* A line of a bar list: the name at its full length with the sum, the
+   bar underneath across the whole width. */
+.bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: baseline; font-size: 12.5px; }
+.bars .name { min-width: 0; overflow-wrap: anywhere; }
+.bars .bar { grid-column: 1 / -1; }
+/* What a sum of the list does not include (a record with no price). */
+.bars .note { grid-column: 1 / -1; margin-top: -2px; font-size: 11.5px; color: var(--text-3); }
+.bars .bar { display: block; height: 8px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; }
+.bars .bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width 500ms var(--ease); }
+.bars .value { font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.gauge { position: relative; height: 10px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; margin-bottom: 6px; }
+.gauge i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: var(--green); transition: width 500ms var(--ease); }
+.gauge.warning i { background: var(--yellow); } .gauge.limit i { background: var(--red); }
+.gauge em { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); opacity: 0.45; }
+.spark { display: block; width: 100%; height: 56px; }
+.spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.incidents { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.incidents li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); font-size: 13.5px; }
+.incidents li svg.i { margin-top: 2px; flex: none; }
+.incidents li.open { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+.incidents li.open svg.i { color: var(--red); } .incidents li.closed svg.i { color: var(--green); }
+.incidents .tt { font-weight: 500; } .incidents .dd { font-size: 12.5px; color: var(--text-2); margin-top: 3px; }
+.incidents .outcome { color: var(--text); }
+.steps.big { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.steps.big li { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); color: var(--text-3); font-size: 14px; }
+.steps.big li.on { color: var(--text); } .steps.big li.on svg.i { color: var(--green); }
+.steps.big small { display: block; font-size: 12.5px; color: var(--text-2); }
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--text-2); padding: 6px 10px; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--hairline); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.table tr:last-child td { border-bottom: 0; }
+.table tr.unfinished td { color: var(--text-3); }
 @media (max-width: 640px) {
   body { padding: 0 12px 80px; }
-  .topbar { padding: 8px 10px 8px 16px; gap: 8px; }
-  /* The goal may take two lines instead of being cut after one. */
+  /* The header stays two short rows: the name with the goal, then the
+     state at the left and the mode with the theme at the right. It is
+     sticky, so a taller one hid a quarter of the screen; the start and
+     the elapsed time are on the "now" card anyway. */
+  .topbar { padding: 8px 10px 8px 16px; gap: 6px 8px; justify-content: space-between; border-radius: 24px; }
   .topbar .title { flex: 1 1 100%; }
   .topbar .title span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #startedAt, #elapsed, .topbar .spacer { display: none; }
+  .seg button { padding: 6px 8px; }
   .card > .core { padding: 16px; }
   /* A plan row keeps its icon, but the role moves under the title: three
      columns cannot hold a sentence at this width. */

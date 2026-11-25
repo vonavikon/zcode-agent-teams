@@ -25,9 +25,24 @@ DEFAULTS: dict[str, Any] = {
     "workspace": "auto",
     "allow_write_overlaps": False,
     "allow_write_overlaps_reason": "",
+    # Money, in USD (the currency of the price table). None means no
+    # limit. At the hard limit the engine starts no new attempt; it never
+    # stops one that is running (v2.1 spec 11.2).
+    "budget_usd": None,
+    "budget_per_task_usd": None,
+    # The share of the budget at which the board warns.
+    "budget_warn_ratio": 0.8,
+    # A declared comparable run (v2.1 spec 19): {"name": str, "executors": int}.
+    # Teams that declare one benchmark name may be compared; no other
+    # comparison is made.
+    "benchmark": None,
 }
 
 WORKSPACE_MODES = ("auto", "worktree", "shared")
+
+# The keys that came with v2.1 (spec 11.2 and 19); checked in one place.
+BUDGET_KEYS = frozenset({"budget_usd", "budget_per_task_usd", "budget_warn_ratio",
+                         "benchmark"})
 
 _INT_KEYS = ("max_verification_failures", "max_execution_retries", "max_agent_restarts")
 _NUMBER_KEYS = ("execution_timeout_s", "heartbeat_timeout_s", "lock_timeout_s")
@@ -59,6 +74,25 @@ def _check_config(config: dict[str, Any]) -> None:
             "config.allow_write_overlaps_reason is required when allow_write_overlaps is true: "
             "the lead must explain why two tasks may write the same files"
         )
+    for key in ("budget_usd", "budget_per_task_usd"):
+        value = config[key]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise UsageError(f"config.{key} must be a number > 0 or null, got {value!r}")
+    ratio = config["budget_warn_ratio"]
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) \
+            or not 0 < ratio <= 1:
+        raise UsageError(
+            f"config.budget_warn_ratio must be a number above 0 and at most 1, got {ratio!r}")
+    benchmark = config["benchmark"]
+    if benchmark is not None:
+        if not isinstance(benchmark, dict) or set(benchmark) != {"name", "executors"} \
+                or not isinstance(benchmark["name"], str) or not benchmark["name"].strip() \
+                or isinstance(benchmark["executors"], bool) \
+                or not isinstance(benchmark["executors"], int) or benchmark["executors"] < 1:
+            raise UsageError(
+                'config.benchmark must be an object {"name": "<text>", "executors": <int >= 1>}')
 
 
 def merge_config(overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:

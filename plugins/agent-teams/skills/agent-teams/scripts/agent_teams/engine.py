@@ -31,7 +31,8 @@ from pathlib import Path
 from . import events as eventlog
 from . import statemachine
 from .config import merge_config
-from .errors import NotFoundError, PermissionDenied, StateRejected, UsageError
+from .errors import (BudgetExceeded, NotFoundError, PermissionDenied, StateRejected,
+                     UsageError)
 from .locking import StateLock
 from .storage import Store, now_iso, open_store
 
@@ -267,6 +268,114 @@ def _new_token() -> str:
     return secrets.choice(string.ascii_letters + string.digits) + secrets.token_urlsafe(23)
 
 
+def _known_spend(store: Store, team: str, task_id: str | None = None) -> float:
+    """Money the engine knows the team (or one task of it) has spent.
+
+    Records without a price are not a zero: they are left out here, and
+    the board says that the limit is watched over the known part only.
+    """
+    from .observability import cost_of
+
+    return round(sum(cost_of(record)[0] or 0.0
+                     for record in store.list_usage(team, task_id=task_id)), 6)
+
+
+def _usd(value: float) -> str:
+    """Money for a message: cents when there are any, else the small sum as it is."""
+    return f"${value:,.2f}" if value >= 0.01 or value == 0 else f"${value:.6f}"
+
+
+def _budget_gate(store: Store, team: str, config: dict, task_id: str) -> None:
+    """Refuse a new attempt once the agreed budget is spent (v2.1 spec 11.2).
+
+    Only new work is refused, and nothing is left behind: the check
+    runs before a workspace is made. An attempt that is already running
+    is never stopped by the budget.
+    """
+    # Both sides at the precision of the price table: a budget that is
+    # exactly spent is spent, whatever the floating point says.
+    budget = config.get("budget_usd")
+    if budget is not None:
+        spent = _known_spend(store, team)
+        if spent >= round(budget, 6):
+            raise BudgetExceeded(
+                f"BUDGET_LIMIT: {_usd(spent)} of the {_usd(budget)} budget is spent. "
+                "New work does not start until the lead raises the budget "
+                "(team.py budget --usd <new limit> --lead-token <tok>); "
+                "executors already running are not stopped")
+    per_task = config.get("budget_per_task_usd")
+    if per_task is not None:
+        spent = _known_spend(store, team, task_id=task_id)
+        if spent >= round(per_task, 6):
+            raise BudgetExceeded(
+                f"BUDGET_LIMIT: task {task_id} spent its {_usd(per_task)} limit. "
+                "No new attempt of this task starts without the lead's decision "
+                "(team.py budget --per-task <new limit> --lead-token <tok>)")
+
+
+KEEP = object()   # a budget value the command did not mention
+
+
+def op_budget(root: Path, team: str, lead_token: str | None = None, *,
+              usd=KEEP, per_task=KEEP, warn_ratio=KEEP) -> dict:
+    """Show the budget and where the team stands against it; with the lead
+    token, change it (an audited decision, v2.1 spec 11.2).
+
+    A value of ``None`` removes a limit; a number sets it; ``KEEP``
+    leaves it as it is.
+    """
+    from .observability import cost_of
+
+    store, d, team_row = _open_team(root, team)
+    try:
+        with StateLock(d, "budget"):
+            config = merge_config(team_row["config"])
+            if any(value is not KEEP for value in (usd, per_task, warn_ratio)):
+                _require_lead(team_row, lead_token or "")
+                changed = dict(config)
+                for key, value in (("budget_usd", usd), ("budget_per_task_usd", per_task),
+                                   ("budget_warn_ratio", warn_ratio)):
+                    if value is not KEEP:
+                        changed[key] = value
+                config = merge_config(changed)      # checks the values
+                with store.transaction():
+                    store.update_team(team, config=config)
+                    eventlog.append_event(
+                        store.conn, event_type="budget_changed", team_id=team,
+                        run_id=(_current_run(store, team) or {}).get("id", ""),
+                        actor_id="lead",
+                        metadata={"budget_usd": config["budget_usd"],
+                                  "budget_per_task_usd": config["budget_per_task_usd"],
+                                  "budget_warn_ratio": config["budget_warn_ratio"]})
+            spent = _known_spend(store, team)
+            unknown = len([record for record in store.list_usage(team)
+                           if cost_of(record)[0] is None])
+            per_task = config.get("budget_per_task_usd")
+            budget, ratio = config["budget_usd"], config["budget_warn_ratio"]
+            state = "none"
+            if budget is not None:
+                state = ("limit" if spent >= round(budget, 6)
+                         else "warning" if spent >= round(ratio * budget, 6) else "ok")
+            return {"team": team, "budget_usd": budget,
+                    "budget_per_task_usd": per_task,
+                    "budget_warn_ratio": ratio,
+                    "spent_usd": spent,
+                    # Where the team stands, decided once, here.
+                    "state": state,
+                    "remaining_usd": (max(0.0, round(budget - spent, 6))
+                                      if budget is not None else None),
+                    "unknown_records": unknown,
+                    "tasks": {t["id"]: round(_known_spend(store, team, task_id=t["id"]), 6)
+                              for t in store.list_tasks(team)
+                              if per_task is not None},
+                    "tasks_at_limit": [t["id"] for t in store.list_tasks(team)
+                                       if per_task is not None
+                                       and _known_spend(store, team, task_id=t["id"])
+                                       >= round(per_task, 6)]}
+    finally:
+        store.close()
+
+
 def _last_event(store: Store, team_id: str) -> dict:
     rows = eventlog.list_events(store.conn, team_id)
     return rows[-1] if rows else {}
@@ -307,6 +416,7 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
             statemachine.assert_transition(
                 task["status"], statemachine.TaskStatus.IN_PROGRESS,
                 task_id=task_id)
+            _budget_gate(store, team, config, task_id)
             # The trusted base the attempt is measured against, and the
             # commit its worktree grows from (spec 3.2, 3.3).
             base = start = None
@@ -747,7 +857,11 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                     override = False
                     if verdict == "pass":
                         if submission is None or not submission.get("commit_sha"):
-                            pass  # shared mode: no snapshot to bind a report to
+                            # Shared mode: no snapshot to bind a report to, so
+                            # a PASS needs none. A reason given is still the
+                            # lead's own decision, and is recorded as one:
+                            # the board must never show it as a passed check.
+                            override = bool(override_reason.strip())
                         elif report is None:
                             if override_reason.strip():
                                 override = True

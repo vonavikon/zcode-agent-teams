@@ -27,6 +27,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import signal
 import socketserver
 import sys
 import threading
@@ -55,7 +56,8 @@ DEFAULT_PORT = 8765
 # own address, /api/tasks/<id>, and one file of a result another,
 # /api/results/<task>/<file>.
 ENDPOINTS = ("/api/status", "/api/events", "/api/snapshot", "/api/tasks",
-             "/api/agents", "/api/cost")
+             "/api/agents", "/api/cost", "/api/metrics", "/api/recovery",
+             "/api/integration", "/api/artifacts", "/api/benchmark")
 # A file of a result is the team's own content. It is shown as text or as
 # a picture and is never allowed to act as a page of the board.
 RESULT_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
@@ -232,8 +234,30 @@ class _Handler(BaseHTTPRequestHandler):
                     body = {"ok": True, "agents": snap["agents"], "level": snap["level"],
                             "now": snap["now"]}
                 elif path == "/api/cost":
-                    body = {"ok": True, "cost": snap["cost"], "level": snap["level"],
+                    body = {"ok": True, "cost": snap["cost"], "budget": snap["budget"],
+                            "level": snap["level"], "now": snap["now"]}
+                elif path == "/api/metrics":
+                    body = {"ok": True, "quality": snap["quality"], "recovery": snap["recovery"],
+                            "integration": snap["integration"], "budget": snap["budget"],
+                            "cost": snap["cost"], "progress": snap["progress"],
+                            "level": snap["level"], "now": snap["now"]}
+                elif path == "/api/recovery":
+                    body = {"ok": True, "recovery": snap["recovery"],
+                            "attention": snap["attention"], "level": snap["level"],
                             "now": snap["now"]}
+                elif path == "/api/integration":
+                    body = {"ok": True, "integration": snap["integration"], "run": snap["run"],
+                            "level": snap["level"], "now": snap["now"]}
+                elif path == "/api/benchmark":
+                    body = {"ok": True, "benchmark": snap.get("benchmark"),
+                            "level": snap["level"], "now": snap["now"]}
+                elif path == "/api/artifacts":
+                    body = {"ok": True, "level": snap["level"], "now": snap["now"],
+                            "artifacts": [{"task": t["id"], "title": t["title"],
+                                           "ready": t["result"]["ready"],
+                                           "handed_over": t["result"]["handed_over"],
+                                           "files": t["result"]["files"]}
+                                          for t in snap["tasks"]]}
                 else:
                     body = {"ok": True, **snap}
             self._json(HTTPStatus.OK, body)
@@ -361,6 +385,12 @@ def op_ui(root: Path, team: str, *, host: str = DEFAULT_HOST,
             if open_browser:
                 import webbrowser
                 webbrowser.open(url)
+            # A script that starts the board in the background leaves the
+            # interrupt ignored in this process, and Python keeps what it
+            # inherits: Ctrl-C would do nothing, and the command promises
+            # to stop on it. The signal is taken back; nothing else is.
+            if signal.getsignal(signal.SIGINT) == signal.SIG_IGN:
+                signal.signal(signal.SIGINT, signal.default_int_handler)
             server.serve_forever(poll_interval=0.5)
         except KeyboardInterrupt:
             pass

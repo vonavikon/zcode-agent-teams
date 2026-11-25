@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from . import dashboard_server, engine
-from .errors import EngineError
+from .errors import EngineError, UsageError
 
 
 def _add_common(sp, *, team=True):
@@ -239,6 +239,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--name", default="")
     sp.set_defaults(fn=_cmd_langfuse)
 
+    sp = sub.add_parser("budget", parents=[json_flag],
+                        help="show the budget and the spend, or change the budget as the lead")
+    _add_common(sp)
+    sp.add_argument("--lead-token", default="",
+                    help="with it the given limits are set (an audited decision)")
+    sp.add_argument("--usd", default=None,
+                    help="the budget of the team in USD, or 'none' for no limit")
+    sp.add_argument("--per-task", dest="per_task", default=None,
+                    help="the limit of one task in USD, or 'none' for no limit")
+    sp.add_argument("--warn-ratio", dest="warn_ratio", default=None,
+                    help="the share of the budget from which the board warns (0 to 1)")
+    sp.set_defaults(fn=_cmd_budget)
+
     sp = sub.add_parser("ui", parents=[json_flag],
                         help="open the read-only web dashboard of a team")
     _add_common(sp)
@@ -382,6 +395,46 @@ def _cmd_langfuse(args):
     from .langfuse import op_langfuse
 
     return op_langfuse(Path(args.project_root), args.team, args.name)
+
+
+def _limit(text, what: str):
+    """A money limit from the command line: a number, 'none', or absent."""
+    if text is None:
+        return engine.KEEP
+    if text.strip().lower() in ("none", "off"):
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        raise UsageError(f"{what} must be a number or 'none', got {text!r}") from None
+
+
+def _cmd_budget(args):
+    result = engine.op_budget(Path(args.project_root), args.team, args.lead_token or None,
+                              usd=_limit(args.usd, "--usd"),
+                              per_task=_limit(args.per_task, "--per-task"),
+                              warn_ratio=_limit(args.warn_ratio, "--warn-ratio"))
+    if args.json:
+        return result
+    money = lambda value: "not set" if value is None else engine._usd(value)   # noqa: E731
+    spent = engine._usd(result["spent_usd"])
+    print(f"team {result['team']}: budget {money(result['budget_usd'])}, spent {spent},"
+          f" left {money(result['remaining_usd'])}")
+    warn = result["budget_warn_ratio"]
+    print(f"warning from {warn:.0%} of the budget; limit of one task "
+          f"{money(result['budget_per_task_usd'])}")
+    if result["unknown_records"]:
+        print(f"note: {result['unknown_records']} usage records carry no price; "
+              "the limit is watched over the known spend only")
+    if result["state"] == "limit":      # the engine decides where the team stands
+        print("LIMIT REACHED: no new attempt starts until the lead raises the budget "
+              "(--usd <new limit> --lead-token <tok>); running executors are not stopped")
+    elif result["state"] == "warning":
+        print("warning: the budget is nearly spent")
+    for task_id in result["tasks_at_limit"]:
+        print(f"task {task_id}: its limit is spent ({engine._usd(result['tasks'][task_id])}"
+              f" of {engine._usd(result['budget_per_task_usd'])})")
+    return None
 
 
 def _cmd_ui(args):

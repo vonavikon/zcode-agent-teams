@@ -256,6 +256,35 @@ class TestOverlaps:
         assert "E_CONFIG_INVALID" in codes(validate_team_spec(spec, tmp_path))
 
 
+class TestBudget:
+    """Money limits of a team (v2.1 spec 11.2) live in the config."""
+
+    def _spec(self, **config):
+        spec = spec_minimal()
+        spec["config"] = config
+        return spec
+
+    def test_limits_and_a_declared_benchmark_are_accepted(self, tmp_path):
+        spec = self._spec(budget_usd=10, budget_per_task_usd=2.5, budget_warn_ratio=0.9,
+                          benchmark={"name": "billing", "executors": 3})
+        assert validate_team_spec(spec, tmp_path).ok
+
+    def test_no_budget_is_the_default_and_null_removes_a_limit(self, tmp_path):
+        assert validate_team_spec(self._spec(budget_usd=None), tmp_path).ok
+
+    @pytest.mark.parametrize("config", [
+        {"budget_usd": 0}, {"budget_usd": -5}, {"budget_usd": "10"}, {"budget_usd": True},
+        {"budget_per_task_usd": 0}, {"budget_warn_ratio": 0}, {"budget_warn_ratio": 1.01},
+        {"budget_warn_ratio": "80%"},
+        {"benchmark": {"name": "", "executors": 2}}, {"benchmark": {"executors": 2}},
+        {"benchmark": {"name": "x", "executors": 0}}, {"benchmark": {"name": "x", "executors": "3"}},
+        {"benchmark": {"name": "x", "executors": 3, "extra": 1}}, {"benchmark": "x"},
+    ])
+    def test_bad_values_are_rejected(self, tmp_path, config):
+        result = validate_team_spec(self._spec(**config), tmp_path)
+        assert "E_CONFIG_INVALID" in codes(result), config
+
+
 class TestCollectsAllIssues:
     def test_many_problems_at_once(self, tmp_path):
         spec = {
