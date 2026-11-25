@@ -12,7 +12,14 @@ Every execution attempt gets its own directory
 `tasks/<task>/attempts/<n>/workspace` and branch `a<n>`, grown from
 the last verified submission or the run base. A fenced attempt moves
 to `tasks/<task>/quarantine/` and stays inspectable for manual
-salvage. Submit requires a clean worktree (uncommitted files are
+salvage. A rename or a copy is checked on both of its paths: moving a file out of
+a forbidden location is a violation. A task with `deps` starts from the
+accepted results of its parents (see docs/verification.md and SPEC.md
+section 7); conflicting parents are rejected at claim. A failed attempt
+leaves a draft a new attempt may continue from, but changes are always
+judged against the trusted base (the run base or the last accepted
+result), so a violation cannot be hidden by a retry.
+Submit requires a clean worktree (uncommitted files are
 rejected with the list) and pins an immutable snapshot ref.
 
 Lifecycle:

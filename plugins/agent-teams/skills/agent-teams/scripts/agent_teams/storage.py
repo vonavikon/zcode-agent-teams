@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .errors import CorruptStateError, ExternalError
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DB_FILENAME = "state.db"
 
 _MIGRATION_V1 = """
@@ -213,8 +213,18 @@ ALTER TABLE runs ADD COLUMN integration_base_commit TEXT;
 ALTER TABLE runs ADD COLUMN integration_commit_sha TEXT;
 """
 
+# Columns are added, never rebuilt: every existing row keeps its values and
+# reads the default of a column that is younger than the row.
+_MIGRATION_V4 = """
+ALTER TABLE tasks ADD COLUMN trusted_base_commit TEXT;
+ALTER TABLE tasks ADD COLUMN draft_checkpoint_commit TEXT;
+ALTER TABLE tasks ADD COLUMN dependency_base_json TEXT DEFAULT '[]';
+ALTER TABLE submissions ADD COLUMN evidence_status TEXT DEFAULT 'pending';
+ALTER TABLE submissions ADD COLUMN evidence_notes_json TEXT DEFAULT '[]';
+"""
+
 MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_V1), (2, _MIGRATION_V2),
-                                     (3, _MIGRATION_V3)]
+                                     (3, _MIGRATION_V3), (4, _MIGRATION_V4)]
 
 _JSON_SUFFIX = "_json"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
@@ -244,6 +254,24 @@ def _decode(row: sqlite3.Row) -> dict:
 
 def _encode(value) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _split_statements(script: str) -> list[str]:
+    """Cut a migration script into single SQL statements.
+
+    A statement ends where sqlite3 itself sees the end of one, so a
+    semicolon in a string literal or in a trigger body is not a cut. The
+    text after the last cut is a statement without its semicolon, unless
+    it is only whitespace and comments.
+    """
+    statements, start = [], 0
+    for position, char in enumerate(script):
+        if char == ";" and sqlite3.complete_statement(script[start:position + 1]):
+            statements.append(script[start:position + 1])
+            start = position + 1
+    if script[start:].strip():
+        statements.append(script[start:])
+    return statements
 
 
 class Store:
@@ -309,21 +337,33 @@ class Store:
             if target <= version:
                 continue
             self.backup()
-            # executescript() commits any open transaction by itself, so the
-            # script runs outside transaction() and is idempotent instead.
-            try:
-                self.conn.executescript(sql)
-            except sqlite3.OperationalError as exc:
-                # ALTER TABLE ... ADD COLUMN cannot use IF NOT EXISTS. A crash
-                # between the ALTER and the user_version update would leave the
-                # column in place; that state is safe to finish, not an error.
-                if "duplicate column" not in str(exc).lower():
-                    raise
+            self._apply_statements(sql)
             with self.transaction():
                 self.conn.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (target, now_iso()))
                 self.conn.execute(f"PRAGMA user_version = {target}")
+
+    def _apply_statements(self, script: str) -> None:
+        """Run a migration script one statement at a time.
+
+        The statements run outside transaction(): executescript() commits
+        an open transaction by itself, and a crash between a statement and
+        the user_version update leaves the script partly applied, to be run
+        again from the start by the next open(). CREATE ... IF NOT EXISTS
+        repeats harmlessly, but ALTER TABLE ... ADD COLUMN has no IF NOT
+        EXISTS and a script stops at its first failed statement: left as
+        one script, the statements after a duplicate column would never run.
+        So every statement is sent on its own and a duplicate column is the
+        one tolerated error: it is a column this script added before the
+        crash. Any other error still fails the migration.
+        """
+        for statement in _split_statements(script):
+            try:
+                self.conn.executescript(statement)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     # -- queries --------------------------------------------------------
 

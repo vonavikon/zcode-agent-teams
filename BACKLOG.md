@@ -1,5 +1,36 @@
 # Backlog
 
+## Engine defects found while running a real team (2026-11-25)
+
+Found by driving the engine as a lead during the v2.1 Milestone 1 run.
+Each one cost real time or produced a wrong verdict.
+
+- A weak machine criterion can accept an EMPTY snapshot. The criterion
+  `pytest tests/unit/test_storage_migration.py` existed before the task,
+  so it passed on a submission pinned to the run base with no work in it;
+  the lead override then completed the task. A criterion must prove the
+  new artefact exists in the snapshot (`test -f <new file> && ...`)
+  before running tests. The engine cannot know what "new" means, so this
+  is a documentation and template rule, plus a possible warning when
+  `changed_files` is empty on a submit that is not a shared-mode task.
+- Task branches are named after the team, not the run
+  (`agent-teams/<team>/<task>/a<n>`). Rebuilding a team with the same
+  name reuses the old branches, and a new attempt silently starts from
+  the previous team's work. Branch names should include the run id.
+- A lead cannot submit on behalf of an executor whose execution token was
+  lost (the agent crashed or hit the provider rate limit). The only path
+  is recover, a new claim and carrying the commit into the new worktree
+  by hand. A lead-side `submit --for <task>` with an audited reason would
+  make this a first-class operation.
+- There is no way to abort a team. `cancel` is allowed only from
+  `pending`, so tasks that are in progress or awaiting verification when
+  the lead decides to stop cannot be closed through the engine.
+- Machine criteria run with the system `python3` from PATH. On a machine
+  where pytest is not installed there (Homebrew Python is PEP 668
+  managed), a `python -m pytest` criterion fails with exit 1, and the
+  lead override does not bypass it. Criteria should name their
+  interpreter or the engine should expose the interpreter it runs under.
+
 ## Done in the production hardening (2026-11-24, v1.1.0 - v2.0.0)
 
 - v1.1.0: immutable execution (clean submit, pinned snapshots,

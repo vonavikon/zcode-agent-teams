@@ -8,10 +8,10 @@ the mechanism details; when they disagree with this file, this file wins.
 
 | Artifact | Where | Current |
 |---|---|---|
-| Plugin | plugin.json, marketplace.json | 2.0.0 |
-| Engine | agent_teams/version.py ENGINE_VERSION | 2.0.0 |
+| Plugin | plugin.json, marketplace.json | 2.1.0a1 |
+| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a1 |
 | Task specification format | agent_teams/version.py SPEC_VERSION | 1.0 |
-| SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 3 |
+| SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 4 |
 | Verification report | verification.REPORT_SCHEMA_VERSION | 1.0 |
 
 The versions evolve independently; every change to behavior bumps the
@@ -98,6 +98,15 @@ quarantine/ and stay inspectable for manual salvage; nothing from an
 old attempt is ever trusted as the next attempt's starting point beyond
 the last verified submission SHA.
 
+A task with dependencies starts from its dependency base: the accepted
+SHAs of its parents, composed in topological order, recorded as
+`dependency_base` (`[{task, accepted_commit_sha}]`). Parents that
+changed different lines of one file compose; parents that changed
+the same lines are a conflict, detected at claim BEFORE the executor
+gets a workspace: the claim is rejected naming the file and both
+parents, the task stays pending and nothing accepted is touched.
+Independent tasks never see each other's files.
+
 ## 8. Immutable snapshots
 
 Every submit pins its commit: a git ref
@@ -107,6 +116,19 @@ files and the verification status. Machine checks and verifier review
 run against an ephemeral clean worktree at the pinned SHA, never the
 executor's live directory. After a PASS the accepted SHA is pinned on
 the task; changing branches afterwards cannot alter what integrates.
+
+Version notions of a task (schema v4): `trusted_base_commit` (the run
+base or the last ACCEPTED result), `draft_checkpoint_commit` (the
+commit a failed attempt left; kept for continuation, never trusted)
+and `accepted_commit_sha`. A new attempt may continue from a draft,
+but its changes are always judged against the trusted base, so a
+violation found earlier cannot be hidden by a retry. Every attempt
+records the base it used, bound to a SHA.
+
+A rename or a copy is judged on BOTH of its paths: moving a file out
+of a forbidden location is a violation of that location. The git
+output is parsed NUL-separated, so names with spaces and non-ASCII
+characters are handled correctly.
 
 ## 9. Acceptance and verification
 
@@ -167,7 +189,11 @@ engine features arrive through SQLite migrations (schema v3 adds
 submissions, accepted SHA, integration SHAs) that never delete history.
 The JSON mirrors and the CLI command set stay backward compatible;
 strictness changes (clean submit, report requirement) are engine
-version 2.0.0 behavior and are documented as such.
+version 2.0.0 behavior and are documented as such. Schema v4 adds
+nullable columns only (`trusted_base_commit`,
+`draft_checkpoint_commit`, `dependency_base_json` on tasks;
+`evidence_status`, `evidence_notes_json` on submissions); migrations
+run one statement at a time and never drop history.
 
 ## 15. Testing strategy
 
