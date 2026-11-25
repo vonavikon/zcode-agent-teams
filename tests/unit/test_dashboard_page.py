@@ -354,6 +354,26 @@ class TestItRefreshesWithoutDisturbingTheReader:
         assert out["snapshotFetchesAfterNew"] == 2
         assert "Передал результат на проверку" in out["feedAfterNew"]
 
+    def test_a_refresh_rewrites_only_the_blocks_that_changed(self):
+        # A new line in the journal: the feed and the progress figures.
+        newer = snapshot(events=[event(1), event(2, title="Передал результат на проверку")], last_seq=2)
+        # The spend moved: the money card joins, and the feed loses the
+        # mark of the line that was new a moment ago.
+        costlier = with_money(events=[event(1), event(2, title="Передал результат на проверку")],
+                              last_seq=3, spent_usd=2.5, spent_text="$2.50", remaining_usd=7.5, share=0.25)
+        out = run("redraw", [snapshot(), newer, costlier])
+
+        def moved(before, after):
+            return {key for key in after if after[key] != before.get(key)}
+
+        assert moved(out["start"], out["afterEvent"]) == {"feed", "counters"}
+        assert moved(out["afterEvent"], out["afterMoney"]) == {"feed", "counters", "moneyBody"}
+        # What did not change was written once, with the first picture, and
+        # never again: the graph, the lists and the cards that read the same.
+        for block in ("graph", "planList", "teamList", "timeline", "attList", "qualityBody",
+                      "problemBody", "buildBody", "nowList"):
+            assert out["afterMoney"][block] == out["start"][block] == 1, block
+
     def test_only_the_new_line_is_marked_as_new(self):
         newer = snapshot(events=[event(1), event(2)], last_seq=2)
         newer2 = snapshot(events=[event(1), event(2), event(3)], last_seq=3)

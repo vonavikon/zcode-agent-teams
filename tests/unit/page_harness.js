@@ -311,6 +311,15 @@ async function main() {
     out.newLineMarked = (feed().match(/is-new/g) || []).length;
     await poll();                       // another one
     out.markedAfterNext = (feed().match(/is-new/g) || []).length;
+  } else if (scenario === "redraw") {
+    /* How many times each block was written (v2.1 spec 21): a refresh
+       must rewrite only the blocks whose markup changed. */
+    const count = () => ({ ...state.writes });
+    out.start = count();
+    await poll();                       // a new line in the journal
+    out.afterEvent = count();
+    await poll();                       // the spend moved
+    out.afterMoney = count();
   } else if (scenario === "outage") {
     out.storyBefore = state.text.storyLine;
     state.failWith = new TypeError("Failed to fetch");

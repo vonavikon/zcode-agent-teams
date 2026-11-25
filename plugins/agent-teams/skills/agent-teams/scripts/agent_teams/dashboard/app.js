@@ -35,6 +35,18 @@
   function icon(name) { return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || ICONS.circle) + '</svg>'; }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function $(id) { return document.getElementById(id); }
+  /* A block is written only when its markup changed (v2.1 spec 21): a
+     refresh that moved nothing leaves the screen exactly as it was, and
+     one that moved a single card redraws that card alone. What the page
+     changes inside a block afterwards (a bar's width, the graph's
+     position, an open file) is kept, because the block is not rebuilt. */
+  function paint(el, html) {
+    if (!el) return false;
+    if (el.painted === html) return false;
+    el.painted = html;
+    el.innerHTML = html;
+    return true;
+  }
   function list(value) { return Array.isArray(value) ? value : []; }
   function plural(n, one, few, many) {
     var last = n % 10, tenth = n % 100;
@@ -230,11 +242,11 @@
         (cost.complete || Number(cost.usd) > 0 ? "" : ' <span class="muted">(данные о ценах недоступны)</span>') +
         ' · <span class="nowrap">объём использования AI: ' + (Number(cost.tokens) || 0).toLocaleString("ru-RU") + '</span></div>';
     }
-    $("nowList").innerHTML = html;
+    paint($("nowList"), html);
   }
 
   function renderTeam(agents, tasks) {
-    $("teamList").innerHTML = agents.map(function (a, index) {
+    paint($("teamList"), agents.map(function (a, index) {
       var facts = [];
       if (a.checks != null) facts.push("проверок: " + (Number(a.checks) || 0) +
         (Number(a.completed) > 0 ? " · принято по проверке: " + (Number(a.completed) || 0) : ""));
@@ -247,15 +259,15 @@
         '<div class="doing">' + esc(a.doing) + '</div><div class="facts">' + facts.join(" · ") + "</div></div>" +
         '<span class="state ' + esc(a.kind || "idle") + '">' + icon(a.icon) + esc(a.state) + "</span>" +
         "</article>";
-    }).join("") || '<div class="empty">Специалистов пока нет: план ещё не сформирован.</div>';
+    }).join("") || '<div class="empty">Специалистов пока нет: план ещё не сформирован.</div>');
   }
 
   function renderAttention(items) {
     $("attCount").textContent = items.length;
     $("attCount").className = "pill" + (items.length ? " state attention" : "");
     $("attCard").className = "card" + (items.length ? " attention" : "");
-    if (!items.length) { $("attList").innerHTML = '<div class="empty">Ничего не требует вашего решения. Команда справляется сама.</div>'; return; }
-    $("attList").innerHTML = items.map(function (a) {
+    if (!items.length) { paint($("attList"), '<div class="empty">Ничего не требует вашего решения. Команда справляется сама.</div>'); return; }
+    paint($("attList"), items.map(function (a) {
       return '<article class="attention-item ' + esc(a.kind) + '"><h3>' + icon(a.icon) + '<span>' + esc(a.title) + '</span></h3>' +
         (a.remarks ? '<div class="remarks"><b>Замечания проверяющего</b>' + esc(a.remarks) + '</div>' : '') +
         '<dl>' +
@@ -264,11 +276,11 @@
         '<dt>Что система сделала</dt><dd>' + esc(a.tried) + '</dd>' +
         '<dt>Что нужно от вас</dt><dd>' + esc(a.action) + '</dd>' +
         '<dt>Если ничего не делать</dt><dd>' + esc(a.if_nothing) + '</dd></dl></article>';
-    }).join("");
+    }).join(""));
   }
 
   function renderPlan(tasks) {
-    $("planList").innerHTML = tasks.map(function (t, i) {
+    paint($("planList"), tasks.map(function (t, i) {
       var bad = list(t.violations);
       var changed = list(t.changed_files);
       var files = changed.map(function (f) { return fileChip(f, bad.indexOf(f) >= 0); }).join("") +
@@ -290,7 +302,7 @@
         "</div>" +
         '<div class="who">' + esc(t.role) + (failed ? "<br>" + failed + " " + plural(failed, "раз", "раза", "раз") + " возвращена на доработку" : "") + "</div>" +
         "</div>";
-    }).join("") || '<div class="empty">План ещё не сформирован.</div>';
+    }).join("") || '<div class="empty">План ещё не сформирован.</div>');
   }
 
   function renderFeed(events, knownSeq) {
@@ -305,16 +317,16 @@
     // The lead and the system are no card: their lines are found by name.
     all.forEach(function (e) { if (e.specialist && e.by == null) names[e.specialist] = true; });
     var who = $("feedWho"), current = feedView.who;
-    who.innerHTML = '<option value="">Все специалисты</option>' +
+    paint(who, '<option value="">Все специалисты</option>' +
       list(lastSnap && lastSnap.agents).map(function (a, index) {
         return '<option value="' + index + '">' + esc(a.name) + "</option>";
-      }).join("") + Object.keys(names).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + "</option>"; }).join("");
+      }).join("") + Object.keys(names).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + "</option>"; }).join(""));
     who.value = current;
     var stage = $("feedTask");
-    stage.innerHTML = '<option value="">Все этапы</option>' +
+    paint(stage, '<option value="">Все этапы</option>' +
       list(lastSnap && lastSnap.tasks).map(function (t) {
         return '<option value="' + esc(t.title) + '">' + esc(t.title) + "</option>";
-      }).join("");
+      }).join(""));
     stage.value = feedView.task;
     var idsByTitle = {};
     list(lastSnap && lastSnap.tasks).forEach(function (t) { idsByTitle[t.title] = t.id; });
@@ -325,7 +337,7 @@
     var oldest = all.reduce(function (low, e) { return Math.min(low, e.seq); }, Infinity);
     $("feedOlder").classList.toggle("hidden", !(lastSnap && isFinite(oldest) && oldest > 1));
     events = listEvents;
-    $("feed").innerHTML = events.map(function (e) {
+    paint($("feed"), events.map(function (e) {
       var isNew = knownSeq !== null && e.seq > knownSeq;
       var cls = "feed-item " + esc(e.kind || "normal") + (isNew ? " is-new" : "");
       var sub = join([e.specialist, e.task]);
@@ -337,7 +349,7 @@
         (e.detail ? '<div class="dd">' + esc(e.detail) + '</div>' : '') +
         techBlock(e.tech) +
         "</div></div>";
-    }).join("") || '<div class="empty">' + (all.length ? "По этим условиям событий нет." : "Событий пока нет.") + "</div>";
+    }).join("") || '<div class="empty">' + (all.length ? "По этим условиям событий нет." : "Событий пока нет.") + "</div>");
   }
 
   /* ---- the plan as a graph (spec 6): left to right, the position is the
@@ -402,7 +414,7 @@
     }).join("");
     $("graph").setAttribute("viewBox", "0 0 " + (width || 600) + " " + (height || 120));
     $("graph").setAttribute("height", height || 120);
-    $("graph").innerHTML = '<g id="graphViewport">' + links + nodes + "</g>";
+    paint($("graph"), '<g id="graphViewport">' + links + nodes + "</g>");
     graphMove();
   }
   function redrawGraph() { if (lastSnap) renderGraph(lastSnap.tasks); }
@@ -460,7 +472,7 @@
   var SPAN_ORDER = ["work", "check", "fix", "wait", "recovery", "done", "stopped"];
   function renderTimeline(tl) {
     var rows = list(tl && tl.rows);
-    if (!tl || !rows.length) { $("timeline").innerHTML = ""; $("timeLegend").innerHTML = ""; return; }
+    if (!tl || !rows.length) { paint($("timeline"), ""); paint($("timeLegend"), ""); return; }
     var start = Date.parse(tl.start), end = Date.parse(tl.end) || Date.now();
     if (!(end > start)) end = start + 3600000;
     var left = 172, top = 34, rowH = 46;
@@ -498,12 +510,12 @@
     $("timeline").setAttribute("viewBox", "0 0 " + width + " " + height);
     $("timeline").setAttribute("width", width);
     $("timeline").setAttribute("height", height);
-    $("timeline").innerHTML = axis + body;
+    paint($("timeline"), axis + body);
     var present = {};
     rows.forEach(function (row) { row.spans.forEach(function (sp) { present[sp.kind] = true; }); });
-    $("timeLegend").innerHTML = SPAN_ORDER.filter(function (kind) { return present[kind]; }).map(function (kind) {
+    paint($("timeLegend"), SPAN_ORDER.filter(function (kind) { return present[kind]; }).map(function (kind) {
       return '<span class="legend-item"><i class="swatch ' + esc(kind) + '"></i>' + esc(tl.span_text[kind] || kind) + "</span>";
-    }).join("") + '<span class="legend-item"><i class="swatch mark"></i>событие</span>';
+    }).join("") + '<span class="legend-item"><i class="swatch mark"></i>событие</span>');
   }
   opener($("timeline"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
 
@@ -701,7 +713,7 @@
                {n: q.passed, label: "пройдено"}, {n: q.failed, label: "не пройдено"}])
       : '<p class="muted small">Проверок ещё не было.</p>';
     var problems = list(q.problems);
-    $("qualityBody").innerHTML =
+    var qualityHtml =
       '<p class="story-text">' + esc(q.story) + "</p>" +
       stats([{n: q.handed_over, label: "передано на проверку", note: "результатов, которые исполнители сдали"},
              {n: q.first_time, label: q.first_time === 1 ? "прошёл с первого раза" : "прошли с первого раза",
@@ -720,6 +732,7 @@
       }).join("") + "</ul>" : "") +
       (list(q.awaited).length ? "<h3>Ещё ждут проверки</h3>" + linesOf(list(q.awaited)) : "") +
       techBlock(q);
+    paint($("qualityBody"), qualityHtml);
     fitBars($("qualityBody"));
   }
 
@@ -756,7 +769,7 @@
     }
     html += modelsList(cost && cost.models);
     html += techBlock(b);
-    $("moneyBody").innerHTML = html;
+    paint($("moneyBody"), html);
     fitBars($("moneyBody"));
     Array.prototype.forEach.call($("moneyBody").querySelectorAll("[data-x]"), function (el) {
       el.style.left = el.getAttribute("data-x") + "%";
@@ -817,19 +830,19 @@
       }
     }
     html += techBlock(r);
-    $("problemBody").innerHTML = html;
+    paint($("problemBody"), html);
   }
 
   function renderBuild(g) {
     if (!g) return;
     var steps = list(g.steps);
-    $("buildBody").innerHTML = '<p class="story-text">' + esc(g.story) + "</p>" +
+    paint($("buildBody"), '<p class="story-text">' + esc(g.story) + "</p>" +
       '<ol class="steps big">' + steps.map(function (s) {
         return '<li class="' + (s.done ? "on" : "") + '">' + icon(s.done ? "check" : "circle") + "<span><b>" + esc(s.title) +
           "</b><small>" + esc(s.text) + "</small></span></li>";
       }).join("") + "</ol>" +
       (g.conflict ? '<div class="remarks"><b>Что помешало</b>' + esc(g.conflict.title) + ". " + esc(g.conflict.detail) + "</div>" : "") +
-      techBlock(g);
+      techBlock(g));
   }
 
   /* ---- comparing teams that ran one set of tasks (spec 19). The card
@@ -859,8 +872,8 @@
         "<dt>Проблем</dt><dd>" + esc(measured(r.problems)) + "</dd>" +
         "<dt>Конфликтов объединения</dt><dd>" + esc(measured(r.conflicts)) + "</dd></dl></div>";
     }).join("") + "</div>" : "";
-    $("benchBody").innerHTML = (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
-      '<p class="story-text">' + esc(b.note || "") + "</p>") + blocks + techBlock(b);
+    paint($("benchBody"), (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
+      '<p class="story-text">' + esc(b.note || "") + "</p>") + blocks + techBlock(b));
   }
 
   /* ---- the detail sheet: a specialist or a task (spec 5.1, 8) ---- */
@@ -1126,14 +1139,14 @@
     card.classList.remove("hidden");
     var actions = list(snap.actions);
     if (!actions.length) {
-      $("actList").innerHTML = '<p class="muted">Сейчас от вас ничего не нужно.</p>';
+      paint($("actList"), '<p class="muted">Сейчас от вас ничего не нужно.</p>');
       return;
     }
-    $("actList").innerHTML = actions.map(function (a) {
+    paint($("actList"), actions.map(function (a) {
       return '<button type="button" class="action' + (a.confirm ? " danger" : "") + '" data-action="' +
         esc(a.key) + '" data-task="' + esc(a.task || "") + '" data-confirm="' + esc(a.confirm || "") +
         '" data-ask="' + esc(a.ask || "") + '">' + esc(a.label) + "</button>";
-    }).join("");
+    }).join(""));
   }
   function doAction(button) {
     if (acting) return;
