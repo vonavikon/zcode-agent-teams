@@ -364,7 +364,7 @@ def delivered(tmp_path):
     lead = engine.op_init(tmp_path, "t", spec)["lead_token"]
     claim = engine.op_claim(tmp_path, "t", "a", "w1")
     workspace = Path(claim["workspace"])
-    (workspace / "out" / "report.md").write_text("# Отчёт\nПервая версия\n", encoding="utf-8")
+    (workspace / "out" / "report.md").write_bytes("# Отчёт\nПервая версия\n".encode("utf-8"))
     (workspace / "out" / "notes.html").write_text("<script>alert(1)</script>примечания",
                                                   encoding="utf-8")
     (workspace / "out" / "chart.png").write_bytes(PNG)
@@ -446,8 +446,10 @@ class TestTheResultWithoutGit:
         lead = engine.op_init(tmp_path, "t", spec)["lead_token"]
         claim = engine.op_claim(tmp_path, "t", "a", "w1")
         (tmp_path / "out").mkdir(exist_ok=True)
-        (tmp_path / "out" / "notes.md").write_text("заметки\n", encoding="utf-8")
-        (tmp_path / "secret.txt").write_text("SECRET", encoding="utf-8")
+        # Written as bytes: in text mode Windows would store CRLF, and the
+        # board shows a file exactly as the engine has it.
+        (tmp_path / "out" / "notes.md").write_bytes("заметки\n".encode("utf-8"))
+        (tmp_path / "secret.txt").write_bytes(b"SECRET")
         engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
         engine.op_verify(tmp_path, "t", "a", "pass", "", lead)
         server = serve(tmp_path, "t", port=0)
