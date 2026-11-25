@@ -334,3 +334,28 @@ def test_parent_conflict_detected_before_executor_starts(git_project):
     assert row["status"] == "pending"
     assert row["owner"] is None and row["execution_token_hash"] is None
     assert row["attempt"] == child["attempt"]
+
+
+def test_parents_with_overlapping_writes_on_different_lines_compose(git_project):
+    """v2.1 spec 3.3: an overlap in files_write is not by itself a conflict.
+
+    Two accepted parents both may write one file (the lead allowed the
+    overlap) and each edited a DIFFERENT line of it. The child must start
+    normally and see BOTH parent changes in its worktree. An
+    implementation that rejects any file overlap among parents would pass
+    the four tests above and still be wrong; this one closes that gap.
+    """
+    shared = "out/shared.md"
+    commit_file(git_project, shared, "base line 1\nbase line 2\n")
+    created = init_team(git_project, [
+        task("p1", files_write=[shared]), task("p2", files_write=[shared]),
+        task("c", deps=["p1", "p2"])],
+        allow_write_overlaps=True,
+        allow_write_overlaps_reason="the parents edit different lines on purpose")
+    lead = created["lead_token"]
+    accept(git_project, "p1", lead, path=shared, text="p1 line 1\nbase line 2\n")
+    accept(git_project, "p2", lead, path=shared, text="p1 line 1\np2 line 2\n")
+
+    claim = engine.op_claim(git_project, TEAM, "c", "w1")  # must not raise
+    ws = Path(claim["workspace"])
+    assert (ws / shared).read_text(encoding="utf-8") == "p1 line 1\np2 line 2\n"
