@@ -1262,9 +1262,12 @@
       .then(function (status) {
         lastGood = Date.now();
         setConn("", "");
-        if (typeof status.control === "boolean") store.control = status.control;
+        // The right to act can change only with a restart of the board,
+        // and then the picture has to follow at once.
+        var controlChanged = typeof status.control === "boolean" && status.control !== store.control;
+        if (controlChanged) store.control = status.control;
         var changed = status.last_seq !== lastSnap.last_seq;
-        if (changed || Date.now() - snapshotAt > RESYNC_MS) return takeSnapshot();
+        if (changed || controlChanged || Date.now() - snapshotAt > RESYNC_MS) return takeSnapshot(controlChanged);
         $("updatedAt").textContent = "обновлено в " + fmtClock(status.now);
         timers();
       }, requestFailed);

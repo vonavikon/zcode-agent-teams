@@ -364,6 +364,10 @@ class _Handler(BaseHTTPRequestHandler):
                                           for t in snap["tasks"]]}
                 else:
                     body = {"ok": True, **snap}
+                    if path == "/api/snapshot":
+                        # Said with the first picture too: the owner must
+                        # not wait for a poll to learn that the board can act.
+                        body["control"] = self.server.lead_token is not None
             self._json(HTTPStatus.OK, body)
         except DashboardDataError as exc:
             self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})

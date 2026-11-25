@@ -1090,6 +1090,18 @@ class TestTheActionsCard:
         quiet = run("control", [snapshot(actions=[], control=True)])["steps"][0]
         assert quiet["hidden"] is False and "Сейчас от вас ничего не нужно." in quiet["buttons"]
 
+    def test_the_right_to_act_is_known_with_the_first_picture_and_when_it_changes(self):
+        # The server says it with the snapshot: no poll is needed to see the card.
+        snap = snapshot(actions=self.ACTIONS, control=True)
+        first = run("control", [snap])["steps"][0]
+        assert first["hidden"] is False and first["buttons"].count("<button") == 5
+        # A board restarted with the right to act, on a team where nothing
+        # else moved: the light poll says so and the picture follows.
+        quiet = snapshot(actions=self.ACTIONS)
+        awoken = snapshot(actions=self.ACTIONS, control=True)
+        out = run("control", [dict(quiet, _control=[["poll"]]), awoken])
+        assert out["steps"][0]["hidden"] is True and out["steps"][1]["hidden"] is False
+
     def test_nothing_from_the_wire_becomes_markup(self):
         written = self.run_control([], actions=[{"key": EVIL, "task": EVIL, "label": EVIL,
                                                   "confirm": EVIL, "ask": EVIL}])["start"]["buttons"]

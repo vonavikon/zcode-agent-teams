@@ -198,7 +198,9 @@ global.fetch = (url, options) => {
   }
   if (/\/api\/status/.test(url)) {          // the light "has anything changed?"
     const { now, run, progress, last_seq, attention, cost } = next;
-    return likeTheServer({ ok: true, now, run, progress, last_seq, attention: attention.length, cost });
+    const status = { ok: true, now, run, progress, last_seq, attention: attention.length, cost };
+    if (next.control !== undefined) status.control = next.control;
+    return likeTheServer(status);
   }
   if (/\/api\/results\//.test(url)) {       // one file of a task's result
     const match = /\/api\/results\/([^/]+)\/(.+)$/.exec(url.split("?")[0]);
@@ -215,8 +217,11 @@ global.fetch = (url, options) => {
                                    events: (next.task_events || {})[id] || [] })
                 : Promise.resolve({ ok: false, status: 404, json: async () => ({ ok: false, error: "task not found" }) });
   }
-  // Like the server, the answer says which level it was asked for.
-  return likeTheServer({ ...next, level });
+  // Like the server, the answer says which level it was asked for, and
+  // (the snapshot alone) whether the owner can act.
+  const whole = { ...next, level };
+  if (next.control !== undefined && /\/api\/snapshot/.test(url)) whole.control = next.control;
+  return likeTheServer(whole);
 };
 
 vm.runInThisContext(pageSource, { filename: "app.js" });
