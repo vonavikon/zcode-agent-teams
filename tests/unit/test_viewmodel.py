@@ -56,7 +56,8 @@ def strings(node):
 
 
 TITLES = {"t1": "Собрать отчёт", "t2": "Проверить отчёт"}
-ROLES = {"researcher": "AI-редактор документации", "analyst": "AI-аналитик"}
+ROLES = {("researcher", None): "AI-редактор документации",
+         ("analyst", None): "AI-аналитик", ("analyst", "t2"): "AI-аналитик производительности"}
 
 
 class TestVocabularyCoversTheEngine:
@@ -128,11 +129,22 @@ class TestSimpleLevelNamesNobodyById:
         assert named["name"] == "AI-аналитик"
         assert agent_view(agent, [task()], level="advanced", now=NOW)["tech"]["agent_id"] == "analyst"
 
+    def test_on_its_own_task_a_specialist_wears_that_tasks_role(self):
+        # One executor, two lenses: the feed must not call it by its other task.
+        own = event_view(event("task_claimed", actor="analyst", task_id="t2"),
+                         titles=TITLES, roles=ROLES)
+        assert own["specialist"] == "AI-аналитик производительности"
+        other = event_view(event("task_claimed", actor="analyst", task_id="t1"),
+                           titles=TITLES, roles=ROLES)
+        assert other["specialist"] == "AI-аналитик"
+        loose = event_view(event("agent_finished", actor="analyst", task_id=None), roles=ROLES)
+        assert loose["specialist"] == "AI-аналитик"
+
     @pytest.mark.parametrize("etype, actor, expected", [
         ("task_claimed", "researcher", "AI-редактор документации"),
-        ("verification_passed", "verifier", "Проверяющий"),
-        ("verification_failed", "analyst", "Проверяющий"),
-        ("task_blocked", "verifier", "Проверяющий"),
+        ("verification_passed", "verifier", "AI-проверяющий"),
+        ("verification_failed", "analyst", "AI-проверяющий"),
+        ("task_blocked", "verifier", "AI-проверяющий"),
         ("task_released", "lead", "Руководитель команды"),
         ("task_released", "recovery", "Система"),
         ("task_claimed", "someone-new", "AI-специалист"),
@@ -372,6 +384,99 @@ class TestAttention:
                                   None, now=NOW)[0]
         ready = attention_items([task()], {"status": "apply_pending"}, now=NOW)[0]
         assert blocked["icon"] == "alert" and ready["icon"] == "check"
+
+
+class TestTheWordsOfAStage:
+    def test_what_is_expected_and_how_it_is_judged(self):
+        view = task_view(task(spec={"description": "Собрать данные"}, files_write=["out/a.md"],
+                              acceptance=[{"description": "tests pass", "type": "test"},
+                                          {"description": "reads well", "type": "documentation"},
+                                          {"description": "a string criterion"}]), now=NOW)
+        assert view["description"] == "Собрать данные"
+        assert view["expected"] == ["out/a.md"]
+        assert view["criteria"] == [
+            {"text": "tests pass", "how": "автоматическая проверка: запускается команда"},
+            {"text": "reads well", "how": "оценка содержания проверяющим"},
+            {"text": "a string criterion", "how": "решение человека"}]
+        assert task_view(task(), now=NOW)["description"] == ""
+
+    @pytest.mark.parametrize("status, words", [
+        ("completed", "Готово, результат принят"), ("cancelled", "Задача снята"),
+        ("blocked", "Ждёт вашего решения"),
+        ("awaiting_verification", "Идёт проверка качества"),
+        ("in_progress", "Специалист работает"), ("pending", "Ожидает исполнителя"),
+    ])
+    def test_the_next_step_of_every_state(self, status, words):
+        assert task_view(task(status=status), now=NOW)["next_step"] == words
+
+    def test_a_silent_executor_does_not_get_next_step_working(self):
+        late = task(status="in_progress", owner="researcher", heartbeat_at=iso(901))
+        assert task_view(late, now=NOW)["next_step"].startswith("Ждёт ответа исполнителя")
+        assert task_view(late, now=NOW, threshold_s=5000)["next_step"] == "Специалист работает"
+
+    def test_a_task_waits_for_the_parents_that_are_not_done(self):
+        by_id = {"done": task(status="completed", title="Готово"),
+                 "off": task(status="cancelled", title="Снято"),
+                 "work": task(status="in_progress", title="В работе"),
+                 "wait": task(status="pending", title="В очереди")}
+        view = task_view(task(deps=["done", "off", "work", "wait", "gone"]), now=NOW, by_id=by_id)
+        assert view["next_step"] == "Ждёт завершения: В работе, В очереди, другой этап"
+        assert by_id["done"]["title"] == "Готово"
+
+    @pytest.mark.parametrize("status, started, expected", [
+        ("pending", None, [False, False, False]),
+        ("in_progress", iso(500), [True, False, False]),
+        ("in_progress", None, [False, False, False]),      # never claimed: no checkpoint
+        ("awaiting_verification", iso(500), [True, True, False]),
+        ("completed", iso(500), [True, True, True]),
+    ])
+    def test_only_the_checkpoints_the_engine_recorded(self, status, started, expected):
+        view = task_view(task(status=status, claimed_at=started), now=NOW)
+        assert list(view["checkpoints"].values()) == expected
+
+    def test_time_on_the_task_is_measured_from_what_the_engine_wrote(self):
+        done = task_view(task(status="completed", claimed_at=iso(600),
+                              completed_at=iso(100)), now=NOW)
+        assert done["worked_s"] == 500            # the time it took, not until now
+        live = task_view(task(status="in_progress", claimed_at=iso(600)), now=NOW)
+        assert live["worked_s"] == 600
+        assert task_view(task(status="pending"), now=NOW)["worked_s"] is None
+
+
+class TestSpecialistCards:
+    def test_a_card_says_who_the_specialist_is_and_what_they_do(self):
+        agent = {"id": "analyst", "role": "executor", "status": "running",
+                 "heartbeat_at": iso(5), "restarts": 0}
+        mine = [task(assignee="analyst", owner="analyst", lens="behavior",
+                     status="in_progress", claimed_at=iso(500)),
+                task(assignee="analyst", lens="behavior", status="pending")]
+        view = agent_view(agent, mine, now=NOW)
+        assert view["name"] == "AI-аналитик"
+        assert view["does"] == "Собирает и сравнивает данные, делает выводы."
+        assert view["worked_s"] == 500 and view["silent_s"] == 500   # silence is read from its tasks
+        assert view["tasks"] == [
+            {"id": "t1", "title": "Собрать отчёт", "state": "В работе", "kind": "busy"},
+            {"id": "t1", "title": "Собрать отчёт", "state": "В очереди", "kind": "idle"}]
+        assert view["checks"] is None
+
+    def test_every_role_has_its_responsibility(self):
+        names = set(viewmodel._ROLE_BY_LENS.values()) | {viewmodel.VERIFIER_ROLE, "AI-специалист"}
+        assert all(viewmodel.role_does(name) for name in names)
+        assert viewmodel.role_does("a role nobody heard of") == viewmodel.role_does("AI-специалист")
+
+    def test_the_checker_is_counted_by_its_checks(self):
+        tasks = [task(status="awaiting_verification", title="Отчёт")]
+        attempts = [{"verdict": "pass"}, {"verdict": "fail"}, {"verdict": "pass"}]
+        view = viewmodel.verifier_view(tasks, attempts)
+        assert view["name"] == "AI-проверяющий"
+        assert (view["state"], view["doing"], view["checks"], view["completed"]) == \
+            ("Проверяет", "проверяет: Отчёт", 3, 2)
+        idle = viewmodel.verifier_view([], attempts)
+        assert (idle["state"], idle["doing"]) == ("Свободен", "ждёт результатов для проверки")
+
+    def test_the_actor_of_a_check_is_the_checker_under_any_id(self):
+        passed = event_view(event("verification_passed", actor="v-9"), titles=TITLES, roles=ROLES)
+        assert passed["specialist"] == "AI-проверяющий"
 
 
 class TestProgressAndCost:

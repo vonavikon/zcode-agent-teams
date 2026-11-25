@@ -285,6 +285,47 @@ class TestTheAnswers:
         assert "Python" not in headers["server"]
 
 
+class TestOneResourcePerAddress:
+    """The board's addresses of v2.1 spec 16.3 that its data is ready for."""
+
+    def test_tasks_agents_and_cost_are_served_apart(self, board):
+        tasks = get_json(board["port"], "/api/tasks?team=t")
+        assert tasks["ok"] is True and tasks["level"] == "simple"
+        assert [t["title"] for t in tasks["tasks"]] == [HOSTILE_TITLE]
+        agents = get_json(board["port"], "/api/agents?team=t")
+        assert [a["name"] for a in agents["agents"]] == ["AI-специалист"]
+        cost = get_json(board["port"], "/api/cost?team=t")
+        assert set(cost) == {"ok", "cost", "level", "now"} and cost["cost"]["usd"] == 0.0
+
+    def test_one_task_comes_with_its_own_history(self, board):
+        engine.op_claim(board["root"], "t", "a", "w1")
+        got = get_json(board["port"], "/api/tasks/a?team=t")
+        assert got["task"]["id"] == "a" and got["task"]["title"] == HOSTILE_TITLE
+        assert [e["title"] for e in got["events"]] == ["Приступил к задаче"]
+        assert got["task"]["next_step"] == "Специалист работает"
+        advanced = get_json(board["port"], "/api/tasks/a?team=t&level=advanced")
+        assert [e["title"] for e in advanced["events"]] == [
+            "Задача добавлена в план", "Приступил к задаче", "Специалист приступил к работе"]
+        assert advanced["task"]["tech"]["assignee"] == "w1"
+
+    def test_an_unknown_task_is_not_found_and_a_bad_id_is_a_bad_request(self, board):
+        status, _headers, data = call(board["port"], "GET", "/api/tasks/nope?team=t")
+        assert status == 404 and json.loads(data) == {"ok": False, "error": "task 'nope' not found"}
+        for bad in ("a%2Fb", "x" * 65, "%20"):
+            assert call(board["port"], "GET", f"/api/tasks/{bad}?team=t")[0] == 400, bad
+        assert call(board["port"], "GET", "/api/tasks/?team=t")[0] == 200   # the list itself
+        # A path that climbs out of the address is simply no task address.
+        assert call(board["port"], "GET", "/api/tasks/..%2Fstate.db?team=t")[0] == 404
+
+    def test_they_are_read_only_and_behind_the_same_host_rule(self, board):
+        before = sha(board["db"])
+        for path in ("/api/tasks?team=t", "/api/tasks/a?team=t", "/api/agents?team=t",
+                     "/api/cost?team=t"):
+            assert call(board["port"], "POST", path, body=b"")[0] == 405, path
+            assert call(board["port"], "GET", path, host="evil.example")[0] == 403, path
+        assert sha(board["db"]) == before
+
+
 class TestStarting:
     def test_a_taken_port_is_reported_not_crashed(self, board):
         assert serve(board["root"], "t", port=board["port"]) is None

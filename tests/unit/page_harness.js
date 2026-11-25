@@ -1,4 +1,5 @@
-/* Runs the dashboard page script on a fake page (spec v2.1, section 16).
+/* Runs the dashboard page script on a fake page (v2.1 spec, sections 4, 5,
+ * 8 and 16).
  *
  * The page must render real data without a single error and must not let
  * any value from the wire become markup. A browser is not needed for
@@ -6,7 +7,8 @@
  * to run it under Node and to read what it wrote.
  *
  * Usage: node page_harness.js <dashboard dir> <scenario>
- *        (snapshots, one per poll, arrive on stdin as a JSON array)
+ *        (the states of the server arrive on stdin as a JSON array, in
+ *        order: every poll moves the world to the next one)
  * Output: one JSON object with what the page wrote and did.
  */
 "use strict";
@@ -26,7 +28,8 @@ const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), (m) => m[1]);
 const state = {
   html: {}, text: {}, attrs: {}, classes: {}, writes: {}, listeners: {},
   fetches: [], intervals: [], tech: [], errors: [], prefs: {}, now: 1_000_000,
-  snapshots: JSON.parse(fs.readFileSync(0, "utf8")), failWith: null, respond: null,
+  snapshots: JSON.parse(fs.readFileSync(0, "utf8")), cursor: 0, failWith: null,
+  responses: [], timerTexts: [],
 };
 
 function classList(id) {
@@ -47,7 +50,7 @@ function classList(id) {
 function makeElement(id) {
   const el = {
     id, style: {}, offsetHeight: 100, scrollHeight: 1000, scrollTop: 0, clientHeight: 100,
-    children: [], classList: classList(id),
+    children: [], parent: null, classList: classList(id),
     setAttribute(k, v) { (state.attrs[id] = state.attrs[id] || {})[k] = String(v); },
     getAttribute(k) { return (state.attrs[id] || {})[k]; },
     addEventListener(type, fn) { (state.listeners[id] = state.listeners[id] || {})[type] = fn; },
@@ -58,7 +61,6 @@ function makeElement(id) {
       child.parent = el;
       return child;
     },
-    parent: null,
   };
   Object.defineProperty(el, "innerHTML", {
     get: () => state.html[id] || "",
@@ -71,6 +73,14 @@ function makeElement(id) {
     get: () => (state.classes[id] || []).join(" "),
     set: (v) => { state.classes[id] = String(v).split(/\s+/).filter(Boolean); },
   });
+  if (id === "sheet") {  // the detail sheet is a <dialog>
+    el.open = false;
+    el.showModal = () => { el.open = true; };
+    el.close = () => {
+      el.open = false;
+      if (state.listeners.sheet && state.listeners.sheet.close) state.listeners.sheet.close();
+    };
+  }
   return el;
 }
 
@@ -78,14 +88,27 @@ const elements = Object.fromEntries(ids.map((id) => [id, makeElement(id)]));
 const htmlElement = makeElement("html");
 const docListeners = {};
 
-/* The page finds its technical blocks with a class selector. The fake
-   page cannot parse markup, so it lists the blocks the page itself just
-   wrote and records what is done to them. */
+const written = () => Object.values(state.html).join("\n");
+
+/* The page finds its technical blocks with a class selector, and the
+   places its clocks are shown with an attribute selector. The fake page
+   cannot parse markup, so it lists what the page itself just wrote and
+   records what is done to them. */
 function techBlocks() {
-  const written = Object.values(state.html).join("\n").match(/class="tech( hidden)?"/g) || [];
-  return written.map(() => ({
+  return (written().match(/class="tech( hidden)?"/g) || []).map(() => ({
     classList: { toggle: (name, force) => state.tech.push([name, !!force]) },
   }));
+}
+function clockPlaces() {
+  const found = [];
+  for (const m of written().matchAll(/<(\w+)[^>]*\bdata-(silent|worked)="(\d+)"[^>]*>/g)) {
+    const kind = m[2];
+    found.push({
+      getAttribute: (name) => (name === "data-" + kind ? m[3] : name === "data-live" ? (kind === "worked" ? "1" : null) : null),
+      set textContent(v) { state.timerTexts.push([kind, String(v)]); },
+    });
+  }
+  return found;
 }
 
 global.window = global;
@@ -101,7 +124,8 @@ global.document = {
   hidden: false,
   documentElement: htmlElement,
   getElementById: (id) => elements[id] || null,
-  querySelectorAll: (selector) => (selector === ".tech" ? techBlocks() : []),
+  querySelectorAll: (selector) => (selector === ".tech" ? techBlocks()
+    : selector === "[data-silent],[data-worked]" ? clockPlaces() : []),
   addEventListener: (type, fn) => { docListeners[type] = fn; },
 };
 global.setInterval = (fn) => { state.intervals.push(fn); return state.intervals.length; };
@@ -110,28 +134,44 @@ global.console.error = (...args) => state.errors.push(args.join(" "));
 global.fetch = (url) => {
   state.fetches.push(url);
   if (state.failWith) return Promise.reject(state.failWith);
-  if (state.respond) {
-    const { ok, status, body } = state.respond;
-    state.respond = null;
-    return Promise.resolve({ ok, status, json: async () => body });
+  const hit = state.responses.find((r) => url.includes(r.match));
+  if (hit) {   // a scripted answer, well-formed or not
+    state.responses.splice(state.responses.indexOf(hit), 1);
+    return Promise.resolve({ ok: hit.ok, status: hit.status, json: async () => hit.body });
   }
-  const snap = state.snapshots.shift();
-  if (!snap) return new Promise(() => {});  // no more data: the request hangs
+  const level = (/level=(\w+)/.exec(url) || [, "simple"])[1];
+  const next = state.snapshots[state.cursor];   // what the server is like right now
+  const likeTheServer = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+  if (/\/api\/status/.test(url)) {          // the light "has anything changed?"
+    const { now, run, progress, last_seq, attention, cost } = next;
+    return likeTheServer({ ok: true, now, run, progress, last_seq, attention: attention.length, cost });
+  }
+  if (/\/api\/tasks\//.test(url)) {         // the history of one task
+    const id = decodeURIComponent(/\/api\/tasks\/([^?]+)/.exec(url)[1]);
+    const task = next.tasks.find((t) => t.id === id);
+    return task ? likeTheServer({ ok: true, task, level, now: next.now,
+                                   events: (next.task_events || {})[id] || [] })
+                : Promise.resolve({ ok: false, status: 404, json: async () => ({ ok: false, error: "task not found" }) });
+  }
   // Like the server, the answer says which level it was asked for.
-  const level = /level=(\w+)/.exec(url)[1];
-  return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...snap, level }) });
+  return likeTheServer({ ...next, level });
 };
 
 vm.runInThisContext(pageSource, { filename: "app.js" });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-const settle = async () => { for (let i = 0; i < 4; i++) await tick(); };
-const poll = async () => { state.intervals[0](); await settle(); };
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+const poll = async () => {   // the world moves on, then the page asks
+  state.cursor = Math.min(state.cursor + 1, state.snapshots.length - 1);
+  state.intervals[0]();
+  await settle();
+};
 const click = async (id) => { state.listeners[id].click(); await settle(); };
 const dom = () => Object.fromEntries(ids.map((id) => [id, {
   html: state.html[id] || "", text: state.text[id] || "", cls: (state.classes[id] || []).join(" "),
 }]));
 const feed = () => state.html.feed || "";
+const card = (attribute, value) => ({ target: { closest: (selector) => (selector === "[" + attribute + "]" ? { getAttribute: () => value } : null) } });
 
 async function main() {
   await settle();
@@ -140,6 +180,7 @@ async function main() {
     out.dom = dom();
     out.tech = state.tech;
     out.theme = state.attrs.html;
+    out.console = state.errors.map((line) => line.split("\n").slice(0, 3).join(" | "));
   } else if (scenario === "modes") {
     out.simpleTech = state.tech.filter(([, hidden]) => hidden === false).length;
     await click("modeAdvanced");
@@ -162,10 +203,12 @@ async function main() {
     await poll();                       // same last_seq: nothing new
     out.writesAfterSame = state.writes.feed;
     out.feedAfterSame = feed();
+    out.snapshotFetchesAfterSame = state.fetches.filter((u) => u.includes("/api/snapshot")).length;
     await poll();                       // a new event arrived
     out.writesAfterNew = state.writes.feed;
     out.feedAfterNew = feed();
-    out.newLineMarked = /is-new/.test(feed());
+    out.snapshotFetchesAfterNew = state.fetches.filter((u) => u.includes("/api/snapshot")).length;
+    out.newLineMarked = (feed().match(/is-new/g) || []).length;
     await poll();                       // another one
     out.markedAfterNext = (feed().match(/is-new/g) || []).length;
   } else if (scenario === "outage") {
@@ -180,13 +223,16 @@ async function main() {
     out.storyAfter = state.text.storyLine;
     out.keptContent = state.html.attList;
   } else if (scenario === "badrequest") {
-    state.respond = { ok: false, status: 404, body: { ok: false, error: "no team state at /x/state.db" } };
+    state.responses.push({ match: "/api/status", ok: false, status: 404,
+      body: { ok: false, error: "no team state at /x/state.db" } });
     await poll();
     out.banner = [state.classes.conn.join(" "), state.text.conn];
     out.console = state.errors;
   } else if (scenario === "badrender") {
     out.storyBefore = state.text.storyLine;
-    state.respond = { ok: true, status: 200, body: { team: "demo", level: "simple", last_seq: 7, tasks: null } };
+    // The status says something changed; the snapshot that follows is broken.
+    state.responses.push({ match: "/api/snapshot", ok: true, status: 200,
+      body: { team: "demo", level: "simple", last_seq: 7, tasks: null } });
     await poll();
     out.banner = [state.classes.conn.join(" "), state.text.conn];
     out.storyAfter = state.text.storyLine;
@@ -204,8 +250,35 @@ async function main() {
     global.matchMedia = () => ({ matches: false });
     state.listeners.window.resize();
     out.columnsWide = ["colA", "colB"].map((id) => elements[id].children.map((c) => c.id));
-    out.allCardsPlaced = ["attCard", "nowCard", "planCard", "feedCard"].every((id) =>
-      ["colA", "colB"].some((c) => elements[c].children.some((card) => card.id === id)));
+    out.allCardsPlaced = ["attCard", "nowCard", "teamCard", "planCard", "feedCard"].every((id) =>
+      ["colA", "colB"].some((c) => elements[c].children.some((x) => x.id === id)));
+  } else if (scenario === "sheet") {
+    state.listeners.teamList.click(card("data-specialist", "1"));
+    await settle();
+    out.specialist = { open: elements.sheet.open, title: state.text.sheetTitle, body: state.html.sheetBody };
+    // A task opens from the keyboard as well as from a click.
+    let prevented = false;
+    state.listeners.planList.keydown({ key: "Enter", preventDefault: () => { prevented = true; },
+                                       ...card("data-task", "a") });
+    await settle(); await settle();
+    out.task = { prevented, open: elements.sheet.open, title: state.text.sheetTitle,
+                 body: state.html.sheetBody, lastFetch: state.fetches.at(-1) };
+    await poll();                        // new data: the sheet stays open and follows it
+    out.afterRefresh = { open: elements.sheet.open, title: state.text.sheetTitle };
+    await click("sheetClose");
+    out.closed = elements.sheet.open;
+    out.closedByBackdrop = (() => {
+      state.listeners.planList.click(card("data-task", "a"));
+      return elements.sheet.open;
+    })();
+    state.listeners.sheet.click({ target: elements.sheet });
+    out.afterBackdropClick = elements.sheet.open;
+  } else if (scenario === "timers") {
+    state.timerTexts.length = 0;
+    state.now += 65_000;                 // a little over a minute passes
+    state.intervals[1]();                // the one-second clock tick
+    out.clock = state.timerTexts.slice();
+    out.elapsed = state.text.elapsed;
   }
   process.stdout.write(JSON.stringify(out));
 }

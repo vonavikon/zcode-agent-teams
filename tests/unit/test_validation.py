@@ -271,3 +271,32 @@ class TestCollectsAllIssues:
         assert {"E_UNKNOWN_KEY", "E_TASK_ID_INVALID", "E_TASK_TITLE",
                 "E_TASK_ASSIGNEE", "E_TASK_STATUS_IN_SPEC", "E_ACCEPTANCE_EMPTY",
                 "E_DEP_UNKNOWN", "E_PATH_ABSOLUTE"} <= found
+
+
+class TestWordsForPeople:
+    """The name and the goal of a team, and what a task is about (spec 1.1)."""
+
+    def test_title_goal_and_description_are_accepted_and_kept(self, tmp_path):
+        spec = spec_minimal(description="Собрать данные по трём конкурентам")
+        spec["title"] = "Исследование рынка"
+        spec["goal"] = "Сравнить конкурентов и подготовить рекомендации"
+        assert validate_team_spec(spec, tmp_path).ok
+
+    @pytest.mark.parametrize("field, value", [
+        ("title", ""), ("title", "   "), ("title", 5), ("title", "x" * 121),
+        ("goal", ""), ("goal", ["compare"]), ("goal", "x" * 1001),
+    ])
+    def test_a_blank_or_oversized_text_is_rejected(self, tmp_path, field, value):
+        spec = spec_minimal()
+        spec[field] = value
+        result = validate_team_spec(spec, tmp_path)
+        assert "E_TEXT" in codes(result)
+        assert any(field in i.message for i in result.errors)
+
+    @pytest.mark.parametrize("value", ["", "  ", 7, "x" * 501])
+    def test_the_same_for_a_task_description(self, tmp_path, value):
+        result = validate_team_spec(spec_minimal(description=value), tmp_path)
+        assert "E_TEXT" in codes(result)
+
+    def test_a_spec_without_them_is_still_valid(self, tmp_path):
+        assert validate_team_spec(spec_minimal(), tmp_path).ok

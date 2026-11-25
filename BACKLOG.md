@@ -28,6 +28,30 @@ Defects found and fixed on the way:
   the release; text stays the default everywhere.
 - SKILL.md told the lead to PASS without the verifier's report, which
   a git project rejects (the first finding of the docs audit).
+- `main` was red on Windows since v2.1.0a1 and nobody looked: the
+  rename tests built `double "quote".txt`, a name Windows refuses, and
+  the whole file errored at setup. Such names are skipped there now.
+  Found only because the next pull request read its own CI results.
+- The board's server resolved its own address into a domain name at
+  start. A network lookup the board does not need; on the CI runners of
+  macOS it took longer than the test's patience. Removed: the board
+  answers by address and works offline.
+
+Found while checking the first cut of this milestone against the text
+of the spec (it was not complete, and said so only after that check):
+
+- The list of specialists was not on the board at all, though the spec
+  puts "understandable specialist cards" in this milestone. Added, with
+  the checker as a specialist and a sheet per specialist.
+- The header had no project name, goal or start time. The spec format
+  takes optional `title`, `goal` and a task `description` now (1.1).
+- A stage said neither what comes next nor what result is expected.
+  Added, with the three checkpoints the engine records.
+- Every poll took the whole snapshot. Now a light "has anything
+  changed?" comes first (spec 16.3).
+- An executor with tasks of different lenses was named by its first
+  task on every line of the feed, while the task card named it by its
+  own role. On a task's event the task's role wins.
 
 ## Open, found while building the board (2026-11-25)
 

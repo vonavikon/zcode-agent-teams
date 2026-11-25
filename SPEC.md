@@ -10,7 +10,7 @@ the mechanism details; when they disagree with this file, this file wins.
 |---|---|---|
 | Plugin | plugin.json, marketplace.json | 2.1.0a2 |
 | Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a2 |
-| Task specification format | agent_teams/version.py SPEC_VERSION | 1.0 |
+| Task specification format | agent_teams/version.py SPEC_VERSION | 1.1 |
 | SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 4 |
 | Verification report | verification.REPORT_SCHEMA_VERSION | 1.0 |
 
@@ -54,8 +54,12 @@ record and grants nothing.
 
 ## 4. Task specification
 
-JSON with optional config and agents, and a non-empty tasks array
-(schemas/tasks.schema.json). Validated before creation: unique ids,
+JSON with optional title (the name of the team for people), goal (what
+it is for), config and agents, and a non-empty tasks array
+(schemas/tasks.schema.json). A task may carry a description (what it
+is about). These three are words for people: optional, shown by the
+board as they are (specification format 1.1; older specifications stay
+valid). Validated before creation: unique ids,
 name patterns, acceptance criteria (structured with types
 test/code_review/file_check/security_check/documentation/manual, or
 legacy strings), dependency DAG (unknown deps, cycles rejected), path
@@ -240,11 +244,23 @@ Python 3.10-3.14 plus vermin, schema validation and manifest checks;
 board for a reader who does not know the engine's vocabulary. It binds
 to 127.0.0.1, prints its address, and runs until interrupted.
 
-It shows overall progress in whole tasks (equal weight: the engine has
-no size estimate), what is happening now, what needs the owner's
-decision (each item says what happened, why it matters, what the system
-tried, what is needed and what happens otherwise), the plan, and the
-activity feed. The clock of a team stops with its run.
+It shows the project, its goal and when the work began; overall
+progress in whole tasks (equal weight: the engine has no size estimate);
+what is happening now (with the time on the task and the latest word
+about it); the specialists (one card each, with its responsibility, its
+state, what it is doing and its count of tasks; the busy first); the
+plan (each stage with its state, what it waits for, what comes next,
+the expected result, and the three checkpoints the engine records:
+started, handed over, accepted); what needs the owner's decision (each
+item says what happened, why it matters, what the system tried, what is
+needed and what happens otherwise); and the activity feed. The clock of
+a team stops with its run.
+
+A specialist or a stage opens a sheet with its details and its history:
+what the stage is about, what is expected, how it is judged (a machine
+check and a judgement of content are told apart), who does it, what is
+done, the checks with the checker's remarks. An open sheet stays open
+across refreshes and follows the data.
 
 Two levels are built from one snapshot: `simple` (roles and titles, no
 identifier longer than a display name, bookkeeping events left out) and
@@ -255,7 +271,13 @@ The words are the engine's facts, never a guess:
 
 - A task is "in work" only while its executor answers. One silent for
   longer than the team's own `heartbeat_timeout_s` is shown as not
-  answering, in the task and in its specialist alike.
+  answering, in the task, in its next step and in its specialist alike.
+- No checkpoint, percentage or count is shown that the engine did not
+  record.
+- The checker is a specialist too, counted by its checks; a result the
+  lead accepted by decision is not counted as the checker's.
+- An executor with tasks of different lenses is named, on each task,
+  by that task's role.
 - A manual acceptance is shown as one decision (section 9).
 - The remark of the checker travels with the failed check and with the
   stop it caused, into the feed and into the attention card.
@@ -264,6 +286,13 @@ The words are the engine's facts, never a guess:
 - A block that recovery writes and releases in one step is not shown as
   a stop: nothing is waited from the reader.
 - A cost that is not known is said to be not known.
+
+The API answers `/api/status` (has anything changed), `/api/snapshot`
+(the whole board), `/api/events` (with a cursor), `/api/tasks`,
+`/api/tasks/<id>` (one task with its history), `/api/agents`,
+`/api/cost` and `/api/health`. The page polls `/api/status` every 3
+seconds and takes a whole snapshot only when something changed (or once
+in a while, so its clocks stay true): a refresh stays light.
 
 The texts of the board are Russian today; localization is an open
 decision (BACKLOG).

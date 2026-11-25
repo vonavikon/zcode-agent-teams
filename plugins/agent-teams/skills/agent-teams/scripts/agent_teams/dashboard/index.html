@@ -10,10 +10,11 @@
 <body>
 <header class="topbar">
   <div class="title">
-    <b id="teamName">AI-команда</b>
-    <span id="teamGoal">загрузка</span>
+    <b id="projectName">AI-команда</b>
+    <span id="projectGoal">загрузка</span>
   </div>
   <span class="pill" id="runState"><span class="dot idle" id="runDot"></span><span id="runStateText">нет данных</span></span>
+  <span class="pill muted hidden" id="startedAt"></span>
   <span class="pill muted hidden" id="elapsed"></span>
   <span class="spacer"></span>
   <div class="seg" role="group" aria-label="Режим отображения">
@@ -26,6 +27,14 @@
 </header>
 
 <main>
+  <nav class="anchors" aria-label="Разделы">
+    <a href="#progressH">Обзор</a>
+    <a href="#teamH">Специалисты</a>
+    <a href="#planH">План</a>
+    <a href="#attH">Что нужно от вас</a>
+    <a href="#feedH">Активность</a>
+  </nav>
+
   <section class="card" aria-labelledby="progressH">
     <div class="core">
       <div class="cardhead"><h2 id="progressH">Общий прогресс</h2><span class="small muted" id="updatedAt"></span></div>
@@ -50,9 +59,15 @@
         <div class="now-list" id="nowList"></div>
       </div>
     </section>
+<section class="card" id="teamCard" aria-labelledby="teamH">
+      <div class="core">
+        <div class="cardhead"><h2 id="teamH">Специалисты</h2><span class="small muted">нажмите на карточку, чтобы увидеть историю работы</span></div>
+        <div class="team-list" id="teamList"></div>
+      </div>
+    </section>
 <section class="card" id="planCard" aria-labelledby="planH">
       <div class="core">
-        <div class="cardhead"><h2 id="planH">План работы</h2></div>
+        <div class="cardhead"><h2 id="planH">План работы</h2><span class="small muted">нажмите на этап, чтобы увидеть подробности</span></div>
         <div class="plan" id="planList"></div>
       </div>
     </section>
@@ -73,6 +88,16 @@
     </div>
   </div>
 </main>
+
+<dialog class="sheet" id="sheet" aria-labelledby="sheetTitle">
+  <div class="sheet-head">
+    <h2 id="sheetTitle"></h2>
+    <button type="button" class="iconbtn" id="sheetClose" aria-label="Закрыть">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</dialog>
 
 <noscript><p>Для работы доски нужен включённый JavaScript.</p></noscript>
 <div class="conn" id="conn" role="status"></div>

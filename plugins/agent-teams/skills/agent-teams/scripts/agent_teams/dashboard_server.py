@@ -51,6 +51,10 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self';"
        " frame-ancestors 'none'")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+# The read-only answers of the board (v2.1 spec 16.3). One task has its
+# own address, /api/tasks/<id>.
+ENDPOINTS = ("/api/status", "/api/events", "/api/snapshot", "/api/tasks",
+             "/api/agents", "/api/cost")
 _LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -165,7 +169,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/health":  # a liveness probe names no team
             self._json(HTTPStatus.OK, {"ok": True, "service": "agent-teams-ui"})
             return
-        if path not in ("/api/status", "/api/events", "/api/snapshot"):
+        if not path.startswith("/api/tasks/") and path not in ENDPOINTS:
             self._json(HTTPStatus.NOT_FOUND,
                        {"ok": False, "error": f"unknown endpoint {path}"})
             return
@@ -185,17 +189,43 @@ class _Handler(BaseHTTPRequestHandler):
             after_seq = int(after) if after is not None else None
             if after_seq is not None and after_seq < 0:
                 raise ValueError("after must not be negative")
-            snap = snapshot(root, team, level=level, event_limit=limit,
-                            event_after=after_seq)
-            if path == "/api/status":
-                body = {"ok": True, "now": snap["now"], "run": snap["run"],
-                        "progress": snap["progress"], "last_seq": snap["last_seq"],
-                        "attention": len(snap["attention"]), "cost": snap["cost"]}
-            elif path == "/api/events":
-                body = {"ok": True, "events": snap["events"],
-                        "last_seq": snap["last_seq"], "now": snap["now"]}
+            if path.startswith("/api/tasks/"):
+                task_id = urllib.parse.unquote(path[len("/api/tasks/"):])
+                if not NAME_RE.match(task_id):
+                    self._json(HTTPStatus.BAD_REQUEST,
+                               {"ok": False, "error": "a valid task id is required"})
+                    return
+                snap = snapshot(root, team, level=level, event_limit=1000,
+                                parts=("task_events",))
+                task = next((t for t in snap["tasks"] if t["id"] == task_id), None)
+                if task is None:
+                    self._json(HTTPStatus.NOT_FOUND,
+                               {"ok": False, "error": f"task {task_id!r} not found"})
+                    return
+                body = {"ok": True, "task": task, "level": snap["level"],
+                        "now": snap["now"],
+                        "events": snap["task_events"].get(task_id, [])}
             else:
-                body = {"ok": True, **snap}
+                snap = snapshot(root, team, level=level, event_limit=limit,
+                                event_after=after_seq)
+                if path == "/api/status":
+                    body = {"ok": True, "now": snap["now"], "run": snap["run"],
+                            "progress": snap["progress"], "last_seq": snap["last_seq"],
+                            "attention": len(snap["attention"]), "cost": snap["cost"]}
+                elif path == "/api/events":
+                    body = {"ok": True, "events": snap["events"],
+                            "last_seq": snap["last_seq"], "now": snap["now"]}
+                elif path == "/api/tasks":
+                    body = {"ok": True, "tasks": snap["tasks"], "level": snap["level"],
+                            "now": snap["now"]}
+                elif path == "/api/agents":
+                    body = {"ok": True, "agents": snap["agents"], "level": snap["level"],
+                            "now": snap["now"]}
+                elif path == "/api/cost":
+                    body = {"ok": True, "cost": snap["cost"], "level": snap["level"],
+                            "now": snap["now"]}
+                else:
+                    body = {"ok": True, **snap}
             self._json(HTTPStatus.OK, body)
         except DashboardDataError as exc:
             self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})

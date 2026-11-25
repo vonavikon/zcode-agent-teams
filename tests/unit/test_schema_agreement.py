@@ -33,8 +33,11 @@ def engine_structural_ok(spec, root) -> bool:
     try:
         if not isinstance(spec, dict):
             return False
-        if set(spec) - {"tasks", "config", "agents"}:
+        if set(spec) - {"tasks", "config", "agents", "title", "goal"}:
             return False
+        for key, limit in (("title", 120), ("goal", 1000)):
+            if key in spec and (not isinstance(spec[key], str) or len(spec[key]) > limit):
+                return False
         config = spec.get("config")
         if config is not None:
             if not isinstance(config, dict) or set(config) - {
@@ -77,7 +80,11 @@ def engine_structural_ok(spec, root) -> bool:
             if not isinstance(task, dict):
                 return False
             if set(task) - {"id", "title", "assignee", "lens", "files_read",
-                            "files_write", "acceptance", "deps"}:
+                            "files_write", "acceptance", "deps", "description"}:
+                return False
+            if "description" in task and (
+                    not isinstance(task["description"], str)
+                    or len(task["description"]) > 500):
                 return False
             for must in ("id", "title", "assignee", "acceptance"):
                 if must not in task:
@@ -117,6 +124,19 @@ SPECS = {
                    "deps": [], "acceptance": ["x", {"id": "AC-1",
                    "description": "y", "type": "test", "required": True,
                    "verification": "pytest a.py"}]}]},
+    "with-words": {
+        "title": "Market study",
+        "goal": "Compare the competitors and prepare recommendations",
+        "tasks": [{"id": "t1", "title": "d", "description": "what this is about",
+                   "assignee": "w1", "acceptance": ["x"]}]},
+    "number-title": {"title": 5, "tasks": [{"id": "t1", "title": "d",
+                                            "assignee": "w1", "acceptance": ["x"]}]},
+    "long-title": {"title": "x" * 121, "tasks": [{"id": "t1", "title": "d",
+                                                  "assignee": "w1", "acceptance": ["x"]}]},
+    "long-task-description": {"tasks": [{"id": "t1", "title": "d", "description": "x" * 501,
+                                         "assignee": "w1", "acceptance": ["x"]}]},
+    "list-goal": {"goal": ["compare"], "tasks": [{"id": "t1", "title": "d",
+                                                  "assignee": "w1", "acceptance": ["x"]}]},
     "empty-tasks": {"tasks": []},
     "missing-tasks": {"config": {}},
     "not-object": ["nope"],

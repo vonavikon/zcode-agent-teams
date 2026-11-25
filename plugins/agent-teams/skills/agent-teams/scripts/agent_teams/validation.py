@@ -38,8 +38,12 @@ CONFIG_KEYS = frozenset({
 })
 TASK_KEYS = frozenset({
     "id", "title", "assignee", "lens", "files_read", "files_write",
-    "acceptance", "deps",
+    "acceptance", "deps", "description",
 })
+
+# Words for people (v2.1 spec 4.1, 8.1): the name and the goal of a team,
+# and what a task is about. Optional; the board shows them as they are.
+TEXT_LIMITS = {"title": 120, "goal": 1000, "description": 500}
 
 _RESERVED_DIRS = (".agent-teams", ".git")
 _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
@@ -395,6 +399,14 @@ def _check_config(spec: dict, errors: list, warnings: list) -> dict:
     return config
 
 
+def _check_text(value: object, where: str, limit: int, errors: list) -> None:
+    """A text for people: present means non-blank and not longer than ``limit``."""
+    if not isinstance(value, str) or not value.strip():
+        errors.append(Issue("E_TEXT", f"{where} must be a non-empty text"))
+    elif len(value) > limit:
+        errors.append(Issue("E_TEXT", f"{where} is longer than {limit} characters"))
+
+
 def validate_team_spec(spec: object, project_root: Path,
                        *, check_fs: bool = True) -> ValidationResult:
     errors: list[Issue] = []
@@ -404,11 +416,14 @@ def validate_team_spec(spec: object, project_root: Path,
             errors=(Issue("E_SPEC_NOT_OBJECT",
                           f"the spec must be a JSON object, got {type(spec).__name__}"),))
 
-    known_top = {"tasks", "config", "agents"}
+    known_top = {"tasks", "config", "agents", "title", "goal"}
     unknown_top = sorted(set(spec) - known_top)
     if unknown_top:
         errors.append(Issue("E_UNKNOWN_KEY",
                             f"unknown top-level keys: {', '.join(unknown_top)}"))
+    for key in ("title", "goal"):
+        if key in spec:
+            _check_text(spec[key], key, TEXT_LIMITS[key], errors)
 
     config = _check_config(spec, errors, warnings)
     roles = _check_agents(spec, errors, warnings)
@@ -451,6 +466,9 @@ def validate_team_spec(spec: object, project_root: Path,
         title = task.get("title")
         if not isinstance(title, str) or not title.strip():
             errors.append(Issue("E_TASK_TITLE", f"{where}.title is missing or empty"))
+        if "description" in task:
+            _check_text(task["description"], f"{where}.description",
+                        TEXT_LIMITS["description"], errors)
         if "status" in task:
             errors.append(Issue(
                 "E_TASK_STATUS_IN_SPEC",

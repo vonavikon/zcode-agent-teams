@@ -330,10 +330,21 @@ class TestCost:
         # A notification carries no model: the price is unknown, not zero.
         cost = snapshot(fresh_team["root"], "t")["cost"]
         assert cost == {"tokens": 1234, "usd": 0.0, "unknown_records": 1,
-                        "complete": False, "quality": "unknown"}
+                        "complete": False, "quality": "unknown",
+                        "by_task": {}, "by_role": {}}   # nothing known to break down
         with sqlite3.connect(fresh_team["db"]) as conn:
             stored = conn.execute("SELECT cost_usd, cost_quality FROM token_usage").fetchone()
         assert stored == (None, "unknown")
+
+    def test_known_spend_is_broken_down_by_task_and_by_role_in_words(self, fresh_team):
+        engine.op_tokens(fresh_team["root"], "t", "b", 1_000_000, "w2", "glm-5.3")
+        engine.op_tokens(fresh_team["root"], "t", "a", 1_000_000, "analyst", "glm-5.3")
+        cost = snapshot(fresh_team["root"], "t")["cost"]
+        one = pytest.approx(1.8)
+        assert cost["by_task"] == {"Собрать отчёт": one, "Проверить отчёт": one}
+        # "analyst" is nobody's id here: its spend is counted, named by nobody.
+        assert cost["by_role"] == {"AI-аналитик": one}
+        assert cost["usd"] == pytest.approx(3.6)
 
 
 class TestReadingCannotWrite:
@@ -360,6 +371,125 @@ class TestReadingCannotWrite:
             snapshot(fresh_team["root"], "broken")
         with pytest.raises(DashboardDataError, match="no team state"):
             snapshot(fresh_team["root"] / "elsewhere", "t")
+
+
+class TestTheWordsOfTheSpec:
+    def test_the_project_is_named_and_described_by_its_spec(self, tmp_path):
+        root = tmp_path / "Исследование рынка"      # an unnamed team takes the folder name
+        (root / "out").mkdir(parents=True)
+        spec_file(root)
+        engine.op_init(root, "t", spec_file(root))
+        plain = snapshot(root, "t")["project"]
+        assert plain == {"name": "Исследование рынка", "goal": "", "started_at": plain["started_at"]}
+        assert "root" not in plain
+        assert snapshot(root, "t", level="advanced")["project"]["root"] == str(root.resolve())
+
+    def test_a_goal_and_a_name_written_in_the_spec_are_shown_as_they_are(self, tmp_path):
+        spec_file(tmp_path)
+        path = tmp_path / "spec.json"
+        spec = json.loads(path.read_text(encoding="utf-8"))
+        spec["title"] = "Исследование рынка"
+        spec["goal"] = "Сравнить конкурентов и подготовить рекомендации"
+        spec["tasks"][0]["description"] = "Собрать данные по трём конкурентам"
+        path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+        engine.op_init(tmp_path, "t", path)
+        snap = snapshot(tmp_path, "t")
+        assert snap["project"]["name"] == "Исследование рынка"
+        assert snap["project"]["goal"] == "Сравнить конкурентов и подготовить рекомендации"
+        assert snap["tasks"][0]["description"] == "Собрать данные по трём конкурентам"
+
+
+class TestSpecialists:
+    def test_the_busy_come_first_and_everyone_is_named_by_role(self, team):
+        agents = snapshot(team["root"], "t")["agents"]
+        # Two executors (the first wears two hats: tasks a and c), both in
+        # trouble, then the free checker.
+        assert [(a["name"], a["state"]) for a in agents] == [
+            ("AI-аналитик", "Проблема"), ("AI-редактор документации", "Проблема"),
+            ("AI-проверяющий", "Свободен")]
+        analyst = agents[0]
+        assert analyst["does"] == "Собирает и сравнивает данные, делает выводы."
+        assert analyst["tasks"] == [{"id": "b", "title": TITLES["b"], "state": "Не отвечает",
+                                     "kind": "problem"}]   # silent here too, not "in work"
+        assert analyst["worked_s"] is not None and analyst["checks"] is None
+        assert agents[1]["tasks"] == [
+            {"id": "a", "title": TITLES["a"], "state": "Принято", "kind": "done"},
+            {"id": "c", "title": TITLES["c"], "state": "Нужно ваше внимание", "kind": "problem"}]
+        for role in agents:
+            assert role["does"] and "id" not in role and "tech" not in role
+
+    def test_the_checker_is_a_specialist_once_there_is_something_to_check(self, tmp_path):
+        spec_file(tmp_path)
+        engine.op_init(tmp_path, "t", spec_file(tmp_path))
+        assert [a["name"] for a in snapshot(tmp_path, "t")["agents"]] == [
+            "AI-аналитик", "AI-редактор документации"]
+        token = engine.op_claim(tmp_path, "t", "a", "w1")["execution_token"]
+        engine.op_submit(tmp_path, "t", "a", "w1", token)
+        waiting = snapshot(tmp_path, "t")["agents"]
+        # The one checking comes first, then the one waiting, then the free.
+        assert [(a["name"], a["state"]) for a in waiting] == [
+            ("AI-проверяющий", "Проверяет"), ("AI-редактор документации", "Ожидает"),
+            ("AI-аналитик", "Свободен")]
+        checker = waiting[0]
+        assert checker["doing"] == f"проверяет: {TITLES['a']}"
+        assert (checker["checks"], checker["completed"]) == (0, 0)
+
+    def test_what_the_checker_did_is_counted_and_its_ids_stay_in_the_technical_level(self, team):
+        simple = snapshot(team["root"], "t")["agents"][-1]
+        # Three checks; the one result that was accepted was accepted by the
+        # lead's decision, so it is not counted as the checker's.
+        assert simple["name"] == "AI-проверяющий" and (simple["checks"], simple["completed"]) == (3, 0)
+        advanced = snapshot(team["root"], "t", level="advanced")["agents"][-1]
+        assert advanced["tech"] == {"verifiers": ["verifier"]}
+
+    def test_every_event_points_at_the_card_of_who_did_it(self, team):
+        snap = snapshot(team["root"], "t")
+        names = [a["name"] for a in snap["agents"]]
+        said = {names[e["by"]]: True for e in snap["events"] if e.get("by") is not None}
+        assert set(said) == {"AI-редактор документации", "AI-проверяющий", "AI-аналитик"}
+        # The lead and the system are not specialists: their lines point at nobody.
+        assert all(e.get("by") is None for e in snap["events"]
+                   if e["specialist"] in ("Руководитель команды", "Система"))
+
+
+class TestWhatAStageSays:
+    def view(self, snap, task_id):
+        return next(t for t in snap["tasks"] if t["id"] == task_id)
+
+    def test_expected_results_criteria_and_the_next_step_in_words(self, team):
+        snap = snapshot(team["root"], "t")
+        blocked = self.view(snap, "c")
+        assert blocked["expected"] == ["out/c.md"]
+        assert blocked["criteria"] == [{"text": "риски", "how": "решение человека"}]
+        assert blocked["next_step"] == "Ждёт вашего решения"
+        assert blocked["checkpoints"] == {"started": True, "submitted": True, "accepted": False}
+        accepted = self.view(snap, "a")
+        assert accepted["next_step"] == "Готово, результат принят"
+        assert accepted["checkpoints"] == {"started": True, "submitted": True, "accepted": True}
+        assert accepted["last_event"]["title"] == "Этап завершён"
+        assert accepted["worked_s"] >= 0
+        assert self.view(snap, "b")["next_step"].startswith("Ждёт ответа исполнителя")   # silent
+        # No description was written for these tasks: nothing is invented.
+        assert accepted["description"] == ""
+
+    @pytest.mark.parametrize("task_id, words", [
+        ("a", "Готово, результат принят"),
+        ("b", "Ждёт ответа исполнителя; без ответа система вернёт задачу в очередь"),
+        ("c", "Ждёт вашего решения"),
+    ])
+    def test_the_next_step_of_every_task_of_the_team(self, team, task_id, words):
+        assert self.view(snapshot(team["root"], "t"), task_id)["next_step"] == words
+
+    def test_a_machine_check_and_judgement_of_content_are_told_apart(self, team):
+        criteria = json.dumps([
+            {"id": "AC-1", "description": "tests pass", "type": "test", "verification": "true"},
+            {"id": "AC-2", "description": "reads well", "type": "documentation"},
+            {"id": "AC-3", "description": "owner is happy", "type": "manual"}])
+        with sqlite3.connect(team["db"]) as conn:
+            conn.execute("UPDATE tasks SET acceptance_json = ? WHERE id = 'a'", (criteria,))
+        how = [c["how"] for c in self.view(snapshot(team["root"], "t"), "a")["criteria"]]
+        assert how == ["автоматическая проверка: запускается команда",
+                       "оценка содержания проверяющим", "решение человека"]
 
 
 class TestTheClock:

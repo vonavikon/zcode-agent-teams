@@ -34,7 +34,7 @@ _TASK_COLUMNS = (
     " workspace_path, trusted_base_commit, draft_checkpoint_commit,"
     " accepted_commit_sha, dependency_base_json, files_read_json,"
     " files_write_json, acceptance_json, tokens, metadata_json,"
-    " created_at, updated_at")
+    " created_at, updated_at, spec_json")
 _AGENT_COLUMNS = ("id, role, status, current_task, started_at, finished_at,"
                   " heartbeat_at, restarts")
 # Keys of tasks.metadata_json safe to expose. The rest may hold free text
@@ -102,6 +102,42 @@ def team_dir(project_root: Path, team: str) -> Path:
     return Path(project_root).resolve() / TEAMS_DIR / team
 
 
+_SPECIALIST_ORDER = {"working": 0, "verifying": 1, "problem": 2, "waiting": 3,
+                     "recovering": 4, "free": 5, "done": 6}
+_SPECIALIST_STATE_INDEX = {label: key for key, state in viewmodel.AGENT_STATE.items()
+                           for label in [state["label"]]}
+
+
+def _specialist_order(specialist: dict) -> tuple:
+    """The busy first, then those in trouble, then the free, then the done."""
+    return (_SPECIALIST_ORDER.get(_SPECIALIST_STATE_INDEX.get(specialist["state"], "free"), 9),
+            specialist["name"])
+
+
+def with_last_event(task: dict, event: dict | None) -> dict:
+    """The newest line of the feed about this task, for its card (spec 4.3)."""
+    if event is not None:
+        task["last_event"] = {"title": event["title"], "detail": event.get("detail", ""),
+                              "ts": event.get("ts")}
+    return task
+
+
+def project_view(team_row: dict, project_root: Path, level: str) -> dict:
+    """The name and the goal the reader gave the team (spec 4.1).
+
+    Both are optional words of the spec. A team without a name is called
+    by the name of its project folder; the full path is for the
+    technical level only.
+    """
+    spec = team_row.get("spec") or {}
+    view = {"name": str(spec.get("title") or "").strip() or Path(project_root).name,
+            "goal": str(spec.get("goal") or "").strip(),
+            "started_at": team_row.get("created_at")}
+    if level == "advanced":
+        view["root"] = str(project_root)
+    return view
+
+
 def _checks(attempts: list[dict] | None, manual_pass: bool) -> list[dict] | None:
     """Verification attempts of a task, with the override marked.
 
@@ -136,12 +172,14 @@ def _event_metadata(raw, level: str) -> dict:
 
 
 def snapshot(project_root: Path, team: str, *, level: str = "simple",
-             event_limit: int = 200, event_after: int | None = None
-             ) -> dict:
+             event_limit: int = 200, event_after: int | None = None,
+             parts: tuple[str, ...] = ()) -> dict:
     """Everything the dashboard needs, in one consistent read.
 
     ``level`` is ``simple`` or ``advanced``; ``event_after`` returns only
-    events with a greater ``seq`` (cursor-based polling).
+    events with a greater ``seq`` (cursor-based polling). ``parts`` asks
+    for what the whole board does not need on every poll: ``task_events``
+    (the history of each task, by task id) for the page of one task.
     """
     if level not in ("simple", "advanced"):
         level = "simple"
@@ -150,7 +188,7 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     with _readonly(tdir) as conn:
         team_row = _decode(conn.execute(
             "SELECT id, project_root, created_at, status, base_commit,"
-            " config_json FROM teams WHERE id = ?", (team,)).fetchone())
+            " config_json, spec_json FROM teams WHERE id = ?", (team,)).fetchone())
         if team_row is None:
             raise DashboardDataError(f"team {team!r} not found")
         run = _decode(conn.execute(
@@ -192,12 +230,25 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
                          if isinstance(meta, dict) and k in meta}
 
     # Id to name: the simple level shows roles and titles, never ids.
+    threshold = merge_config(team_row.get("config") or {})["heartbeat_timeout_s"]
     titles = {t["id"]: t["title"] for t in tasks}
+    by_id = {t["id"]: t for t in tasks}
     first_task: dict[str, dict] = {}
     for t in tasks:
         first_task.setdefault(t.get("assignee"), t)
-    roles = {a["id"]: viewmodel.role_name(first_task.get(a["id"]))
-             for a in agents}
+    # Tasks whose result the lead accepted by decision: found once, read
+    # twice (the pairing of the journal events and the checker's count).
+    accepted_by_lead = {row["task_id"] for row in raw_events
+                        if row["event_type"] == "verification_passed"
+                        and isinstance(_decode(row).get("metadata"), dict)
+                        and (_decode(row).get("metadata") or {}).get("override")}
+    # (agent, task) -> the role that agent wears on that task; (agent,
+    # None) -> the specialist as a whole, named by its first task.
+    roles = {(a["id"], None): viewmodel.role_name(first_task.get(a["id"])) for a in agents}
+    roles.update({(t.get("assignee") or t.get("owner"), t["id"]): viewmodel.role_name(t)
+                  for t in tasks if t.get("assignee") or t.get("owner")})
+    role_by_agent = {agent_id: name for (agent_id, task_id), name in roles.items()
+                     if task_id is None}
     quarantined = {t["id"] for t in tasks if t["metadata"].get("quarantine_dir")}
     checks_by_task: dict[str, list[dict]] = {}
     remarks: dict[str, str] = {}
@@ -206,7 +257,24 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         if a.get("verdict") == "fail" and a.get("feedback"):
             remarks[a["task_id"]] = a["feedback"]
 
+    # The checker is a specialist of the team too; the engine keeps no
+    # agent row for one without tasks of its own.
+    cards = [(a["id"], viewmodel.agent_view(a, tasks, level=level, now=now,
+                                            threshold_s=threshold)) for a in agents]
+    verifiers = tuple(sorted({a["verifier"] for a in attempts if a.get("verifier")}))
+    if attempts or any(t["status"] == "awaiting_verification" for t in tasks):
+        checker = viewmodel.verifier_view(tasks, attempts, accepted_by_lead)
+        if level == "advanced":
+            checker["tech"] = {"verifiers": list(verifiers)}
+        cards.append((verifiers, checker))
+    cards.sort(key=lambda card: _specialist_order(card[1]))
+    # Which card an event's actor belongs to, as a position (never an id).
+    index_of = {agent_id: position for position, (ids, _view) in enumerate(cards)
+                for agent_id in (ids if isinstance(ids, tuple) else (ids,))}
+
     events = []
+    last_by_task: dict[str, dict] = {}
+    task_events: dict[str, list[dict]] = {}
     overridden: dict[str, str] = {}  # submission id -> task id, manual acceptance
     for row in reversed(raw_events):  # oldest first, the order of a story
         e = _decode(row)
@@ -227,7 +295,11 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             quarantined=e.get("task_id") in quarantined,
             after_override=after_override)
         if item is not None:
+            item["by"] = index_of.get(e.get("actor_id"))
             events.append(item)
+            if e.get("task_id") is not None:
+                last_by_task[e["task_id"]] = item
+                task_events.setdefault(e["task_id"], []).append(item)
     # The cursor follows the journal, not the filtered feed: the newest
     # events may all be hidden ones, and a cursor that stopped before
     # them would ask for the same empty page forever.
@@ -247,13 +319,14 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
                                 "integration_base_commit": run.get("integration_base_commit"),
                                 "integration_commit_sha": run.get("integration_commit_sha")}
 
+    specialists = [view for _ids, view in cards]
+
     # The clock of the team stops with its run; a finished team is not
     # "in work for three days".
     started = viewmodel.parse_time(team_row.get("created_at"))
     end = now
     if run and run.get("finished_at"):
         end = viewmodel.parse_time(run["finished_at"]) or now
-    threshold = merge_config(team_row.get("config") or {})["heartbeat_timeout_s"]
 
     out = {
         "team": team,
@@ -264,22 +337,23 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         "finished": bool(run and run.get("finished_at")),
         "run": run_view,
         "level": level,
+        "project": project_view(team_row, project_root, level),
         "progress": viewmodel.progress(tasks),
-        "tasks": [viewmodel.task_view(t, level=level, now=now,
-                                      attempts=_checks(checks_by_task.get(t["id"]),
-                                                       t["id"] in manual_tasks),
-                                      titles=titles, threshold_s=threshold)
-                  for t in tasks],
-        "agents": [viewmodel.agent_view(a, tasks, level=level, now=now,
-                                        threshold_s=threshold)
-                   for a in agents],
+        "tasks": [with_last_event(viewmodel.task_view(
+            t, level=level, now=now,
+            attempts=_checks(checks_by_task.get(t["id"]), t["id"] in manual_tasks),
+            titles=titles, threshold_s=threshold, by_id=by_id), last_by_task.get(t["id"]))
+            for t in tasks],
+        "agents": specialists,
         "attention": viewmodel.attention_items(
             tasks, run, now=now, threshold_s=threshold, remarks=remarks),
         "events": events,
         "last_seq": last_seq,
-        "cost": viewmodel.cost_view(usage),
+        "cost": viewmodel.cost_view(usage, task_of=titles, role_of=role_by_agent),
     }
     if level == "advanced":
         out["tech"] = {"submissions": submissions, "attempts": attempts,
                        "usage": usage}
+    if "task_events" in parts:
+        out["task_events"] = task_events
     return out

@@ -53,12 +53,15 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 
 ```json
 {
+  "title": "Security review of the billing service",
+  "goal": "Find what an attacker could reach in billing and say what to fix first",
   "config": {"workspace": "auto", "max_verification_failures": 2},
   "agents": [{"id": "sec-lens", "role": "executor"}],
   "tasks": [
     {
       "id": "lens-security",
       "title": "security lens review",
+      "description": "Read the auth and payment paths, list findings with file:line",
       "assignee": "sec-lens",
       "lens": "security",
       "files_read": ["src/auth.py"],
@@ -74,6 +77,10 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
   ]
 }
 ```
+
+`title`, `goal` and a task's `description` are optional words for people:
+the board shows them to the owner as they are, so write them for the
+owner, not for the engine.
 
 Acceptance types: `test`, `file_check`, `security_check` (each requires a
 `verification` shell command the engine runs in the task workspace),

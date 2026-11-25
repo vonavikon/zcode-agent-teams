@@ -99,6 +99,7 @@ EVENT_TEXT = {
 # Actors that stand for a function, not for a specialist. None of these
 # names reaches the reader as the raw identifier the engine stores.
 _FUNCTION_ACTORS = {"lead": "Руководитель команды", "recovery": "Система"}
+VERIFIER_ROLE = "AI-проверяющий"
 _VERIFIER_EVENTS = ("verification_started", "verification_passed",
                     "verification_failed", "verify_pass", "verify_fail")
 # How the feed marks an event: a kind sets the tone of its icon, so a
@@ -178,6 +179,22 @@ def _ago(iso: str | None, now: datetime) -> int | None:
     return max(0, int((now - then).total_seconds()))
 
 
+def _task_state(task: dict, now: datetime, threshold_s: float) -> dict:
+    """The task's state as a reader should see it.
+
+    An executor silent for longer than ``threshold_s`` (the engine's own
+    heartbeat limit) makes the task "not answering": it is still
+    ``in_progress`` for the engine, but "in work" would be a lie to the
+    reader, and the attention card already asks about it.
+    """
+    state = TASK_STATE.get(task["status"], TASK_STATE["pending"])
+    silent_s = _silent_s(task, now)
+    if silent_s is not None and silent_s > threshold_s:
+        return {"label": "Не отвечает", "hint": "исполнитель долго не выходит на связь",
+                "kind": "problem", "icon": "alert"}
+    return state
+
+
 def _silent_s(task: dict, now: datetime) -> int | None:
     """How long the executor of a task has been silent.
 
@@ -207,6 +224,32 @@ _ROLE_BY_LENS = {
 }
 
 
+_ROLE_DOES = {
+    "AI-специалист по безопасности": "Ищет риски и слабые места, проверяет защиту.",
+    "AI-редактор документации": "Пишет и проверяет документы и инструкции.",
+    "AI-дизайнер интерфейса": "Проектирует экраны и удобство работы.",
+    "AI-разработчик движка": "Пишет внутреннюю логику и правила работы.",
+    "AI-разработчик": "Пишет код и исправляет ошибки.",
+    "AI-инженер платформы": "Отвечает за то, на чём всё работает: запуск, обновления, совместимость.",
+    "AI-аналитик": "Собирает и сравнивает данные, делает выводы.",
+    "AI-аналитик производительности": "Ищет, где работа идёт медленно, и ускоряет.",
+    "AI-инженер": "Проверяет, что результат выдержит реальные условия.",
+    VERIFIER_ROLE: "Проверяет результаты других специалистов, прежде чем они будут приняты.",
+    "AI-специалист": "Выполняет задачи по своему профилю.",
+}
+# How a criterion is checked, in the reader's words. The machine checks
+# (a command, a file, a security scanner) are kept apart from judgement
+# of content: they do not mean the same thing (spec 10.3).
+_CRITERION_HOW = {
+    "test": "автоматическая проверка: запускается команда",
+    "file_check": "автоматическая проверка: нужен файл",
+    "security_check": "автоматическая проверка: безопасность",
+    "code_review": "оценка содержания проверяющим",
+    "documentation": "оценка содержания проверяющим",
+    "manual": "решение человека",
+}
+
+
 def role_name(task: dict | None = None) -> str:
     """A human role derived from the task, never from a raw identifier."""
     lens = (task or {}).get("lens")
@@ -215,21 +258,61 @@ def role_name(task: dict | None = None) -> str:
     return "AI-специалист"
 
 
-def _actor_name(event_type, actor, roles: dict | None, meta: dict) -> str:
+def role_does(role: str) -> str:
+    """What the role is responsible for, in one line."""
+    return _ROLE_DOES.get(role, _ROLE_DOES["AI-специалист"])
+
+
+def _next_step(task: dict, by_id: dict | None, silent: bool = False) -> str:
+    """What happens to a task next, from its status and its dependencies."""
+    status = task["status"]
+    if status == "completed":
+        return "Готово, результат принят"
+    if status == "cancelled":
+        return "Задача снята"
+    if status == "blocked":
+        return "Ждёт вашего решения"
+    if status == "awaiting_verification":
+        return "Идёт проверка качества"
+    if status == "in_progress":
+        if silent:
+            return "Ждёт ответа исполнителя; без ответа система вернёт задачу в очередь"
+        return "Специалист работает"
+    waiting = []
+    for dep in task.get("deps") or []:
+        dep_task = (by_id or {}).get(dep)
+        if dep_task is None or dep_task.get("status") not in ("completed", "cancelled"):
+            waiting.append(dep_task["title"] if dep_task else "другой этап")
+    if waiting:
+        return "Ждёт завершения: " + ", ".join(waiting)
+    return "Ожидает исполнителя"
+
+
+def _actor_name(event_type, actor, roles: dict | None, meta: dict,
+                task_id=None) -> str:
+    """Who did it, as a role.
+
+    An executor with tasks of different lenses wears several hats: on a
+    task's own event it is named by THAT task, so the feed and the task
+    card say the same name. ``roles`` is keyed by (agent id, task id)
+    with a (agent id, None) entry for the specialist as a whole.
+    """
     if actor in _FUNCTION_ACTORS:
         return _FUNCTION_ACTORS[actor]
     if event_type in _VERIFIER_EVENTS or (event_type in ("task_blocked", "round_limit")
                                           and "failures" in meta):
         # The gate writes the block at the verification limit.
-        return "Проверяющий"
+        return VERIFIER_ROLE
     if not actor:
         return ""
-    return (roles or {}).get(actor, "AI-специалист")
+    named = (roles or {})
+    return named.get((actor, task_id)) or named.get((actor, None)) or "AI-специалист"
 
 
 def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
               attempts: list[dict] | None = None,
-              titles: dict | None = None, threshold_s: float = 900.0) -> dict:
+              titles: dict | None = None, threshold_s: float = 900.0,
+              by_id: dict | None = None) -> dict:
     """One task as the dashboard shows it.
 
     ``titles`` turns the ids of the tasks this one depends on into their
@@ -241,19 +324,18 @@ def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
     to the reader, and the attention card already asks about it.
     """
     now = now or datetime.now(timezone.utc)
-    state = TASK_STATE.get(task["status"], TASK_STATE["pending"])
     meta = task.get("metadata") or {}
     deps = list(task.get("deps") or [])
     silent_s = _silent_s(task, now)
-    silent = silent_s is not None and silent_s > threshold_s
+    state = _task_state(task, now, threshold_s)
+    silent = state["label"] == "Не отвечает"
     view = {
         "id": task["id"],
         "title": task["title"],
-        "state": "Не отвечает" if silent else state["label"],
-        "state_hint": ("исполнитель долго не выходит на связь" if silent
-                       else state["hint"]),
-        "kind": "problem" if silent else state["kind"],
-        "icon": "alert" if silent else state["icon"],
+        "state": state["label"],
+        "state_hint": state["hint"],
+        "kind": state["kind"],
+        "icon": state["icon"],
         "role": role_name(task),
         "attempt": task.get("attempt", 0),
         "failed_checks": task.get("verification_failures", 0),
@@ -267,7 +349,28 @@ def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
         "silent": silent,
         "started_at": task.get("claimed_at"),
         "finished_at": task.get("completed_at"),
+        # What is expected and how it is judged, in words (spec 4.4, 8.1).
+        "description": ((task.get("spec") or {}).get("description") or ""),
+        "expected": list(task.get("files_write") or []),
+        "criteria": [{"text": str(c.get("description") or ""),
+                      "how": _CRITERION_HOW.get(c.get("type"), "решение человека")}
+                     for c in (task.get("acceptance") or []) if isinstance(c, dict)],
+        "next_step": _next_step(task, by_id, silent),
+        # The checkpoints the engine really records; no percentage is
+        # invented between them (spec 4.2: no precision beyond the data).
+        "checkpoints": {
+            "started": bool(task.get("claimed_at") or task.get("attempt")),
+            "submitted": bool(task.get("submitted_at"))
+                         or task["status"] in ("awaiting_verification", "completed"),
+            "accepted": task["status"] == "completed",
+        },
     }
+    started, finished = parse_time(task.get("claimed_at")), parse_time(task.get("completed_at"))
+    if started:
+        view["worked_s"] = max(0, int(((finished if task["status"] == "completed"
+                                        and finished else now) - started).total_seconds()))
+    else:
+        view["worked_s"] = None
     if attempts is not None:
         view["checks"] = [{
             "n": a.get("attempt"),
@@ -289,6 +392,7 @@ def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
             "files_read": task.get("files_read"), "files_write": task.get("files_write"),
             "acceptance": task.get("acceptance"),
             "deps": deps, "restarts": task.get("restarts"),
+            "files_write": task.get("files_write"), "criteria": task.get("acceptance"),
             "heartbeat_at": task.get("heartbeat_at"),
             "lease_expires_at": task.get("lease_expires_at"),
         }
@@ -340,15 +444,25 @@ def agent_view(agent: dict, tasks: list[dict], *, level: str = "simple",
     key, doing = _agent_state(agent, tasks, stale_s=silent, threshold_s=threshold_s)
     state = AGENT_STATE[key]
     mine = [t for t in tasks if t.get("assignee") == agent["id"]]
+    live = [t for t in mine if t["status"] != "cancelled"]
+    starts = [parse_time(t.get("claimed_at")) for t in open_tasks]
+    starts = [start for start in starts if start]
     view = {
         "name": role_name(mine[0] if mine else None),
+        "does": role_does(role_name(mine[0] if mine else None)),
         "state": state["label"],
         "state_hint": state["hint"],
         "icon": state["icon"],
         "doing": doing,
         "silent_s": silent,
+        "worked_s": max(0, int((now - min(starts)).total_seconds())) if starts else None,
         "completed": len([t for t in mine if t["status"] == "completed"]),
-        "total": len([t for t in mine if t["status"] != "cancelled"]),
+        "total": len(live),
+        "checks": None,
+        "tasks": [{"id": t["id"], "title": t["title"],
+                   "state": _task_state(t, now, threshold_s)["label"],
+                   "kind": _task_state(t, now, threshold_s)["kind"]}
+                  for t in live],
     }
     if level == "advanced":
         view["tech"] = {"agent_id": agent["id"], "role": agent.get("role"),
@@ -359,13 +473,38 @@ def agent_view(agent: dict, tasks: list[dict], *, level: str = "simple",
     return view
 
 
+def verifier_view(tasks: list[dict], attempts: list[dict],
+                 manual_tasks: set[str] | None = None) -> dict:
+    """The checker as a specialist of the team (spec 5.1).
+
+    The engine keeps no agent row for a checker without tasks of its
+    own; what it did is in the verification attempts. A result the lead
+    accepted by decision is not the checker's doing: the engine records
+    it as a passed attempt, and it is left out of the count here.
+    """
+    waiting = [t for t in tasks if t["status"] == "awaiting_verification"]
+    key = "verifying" if waiting else "free"
+    state = AGENT_STATE[key]
+    return {
+        "name": VERIFIER_ROLE,
+        "does": role_does(VERIFIER_ROLE),
+        "state": state["label"], "state_hint": state["hint"], "icon": state["icon"],
+        "doing": f"проверяет: {waiting[0]['title']}" if waiting else "ждёт результатов для проверки",
+        "silent_s": None, "worked_s": None,
+        "completed": len([a for a in attempts if a.get("verdict") == "pass"
+                         and a.get("task_id") not in (manual_tasks or set())]),
+        "total": len(attempts), "checks": len(attempts), "tasks": [],
+    }
+
+
 def event_view(event: dict, *, level: str = "simple", titles: dict | None = None,
                roles: dict | None = None, quarantined: bool = False,
                after_override: bool = False) -> dict | None:
     """One feed item, or None when the event means nothing to a reader.
 
-    ``titles`` maps a task id to its title and ``roles`` an agent id to a
-    role name, so no raw identifier reaches the simple level.
+    ``titles`` maps a task id to its title and ``roles`` an
+    (agent id, task id) pair to a role name, so no raw identifier reaches
+    the simple level.
     ``quarantined`` says that the workspace of this task's previous
     attempt was archived. ``after_override`` marks the journal half of a
     manual acceptance (the engine writes two events for one decision).
@@ -385,7 +524,8 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
         return {"seq": event.get("seq"), "ts": event.get("timestamp"),
                 "title": "Запись о принятии вручную", "type": etype,
                 "kind": "manual", "icon": "refresh",
-                "specialist": _actor_name(etype, event.get("actor_id"), roles, meta),
+                "specialist": _actor_name(etype, event.get("actor_id"), roles, meta,
+                                          event.get("task_id")),
                 "task": (titles or {}).get(event.get("task_id")),
                 "detail": "Служебная запись: результат принят решением руководителя команды, проверка не выполнялась.",
                 "tech": {"event_id": event.get("event_id"), "run_id": event.get("run_id"),
@@ -404,7 +544,7 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
     item = {
         "seq": event.get("seq"), "ts": event.get("timestamp"),
         "title": text, "type": etype, "kind": kind, "icon": mark,
-        "specialist": _actor_name(etype, actor, roles, meta),
+        "specialist": _actor_name(etype, actor, roles, meta, task_id),
         "task": (titles or {}).get(task_id),
     }
     # The engine uses one event type for two different situations. A write
@@ -583,21 +723,36 @@ def progress(tasks: list[dict]) -> dict:
             "total": total, "percent": round(100 * done / total) if total else 0}
 
 
-def cost_view(usage: list[dict]) -> dict:
+def cost_view(usage: list[dict], *, task_of: dict | None = None,
+              role_of: dict | None = None) -> dict:
     """Spend in plain terms. An unknown cost is reported as unknown, never
     as zero money (spec 11.2).
 
     A cost stored with the record is the price of the moment the work
-    was done; a record without one is estimated here.
+    was done; a record without one is estimated here. ``task_of`` and
+    ``role_of`` name a usage record's task and specialist; with them the
+    spend is also broken down by task and by role.
     """
     tokens = sum(u.get("total_tokens") or 0 for u in usage)
     known = 0.0
     unknown = 0
+    by_task: dict[str, float] = {}
+    by_role: dict[str, float] = {}
     for u in usage:
         cost, quality = cost_of(u)
         if cost is None:
             unknown += 1
-        else:
-            known += cost
-    return {"tokens": tokens, "usd": round(known, 6), "unknown_records": unknown,
-            "complete": unknown == 0, "quality": "estimated" if known else "unknown"}
+            continue
+        known += cost
+        task = (task_of or {}).get(u.get("task_id"))
+        role = (role_of or {}).get(u.get("agent_id"))
+        if task:
+            by_task[task] = by_task.get(task, 0.0) + cost
+        if role:
+            by_role[role] = by_role.get(role, 0.0) + cost
+    out = {"tokens": tokens, "usd": round(known, 6), "unknown_records": unknown,
+           "complete": unknown == 0, "quality": "estimated" if known else "unknown"}
+    if task_of is not None or role_of is not None:
+        out["by_task"] = {k: round(v, 6) for k, v in sorted(by_task.items())}
+        out["by_role"] = {k: round(v, 6) for k, v in sorted(by_role.items())}
+    return out
