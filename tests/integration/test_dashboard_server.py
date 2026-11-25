@@ -12,6 +12,7 @@ import http.client
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -324,6 +325,154 @@ class TestOneResourcePerAddress:
             assert call(board["port"], "POST", path, body=b"")[0] == 405, path
             assert call(board["port"], "GET", path, host="evil.example")[0] == 403, path
         assert sha(board["db"]) == before
+
+
+PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+       b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\x00\x01"
+       b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+
+
+def git(cwd: Path, *args: str) -> str:
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                          text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+@pytest.fixture
+def delivered(tmp_path):
+    """A git project where one task handed a result in and it was accepted.
+
+    The result is two text files, a picture and a binary, all pinned in
+    the accepted commit; the project folder itself holds something else.
+    """
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / ".gitkeep").write_text("", encoding="utf-8")   # git keeps no empty folder
+    (tmp_path / ".gitignore").write_text(".agent-teams/\n", encoding="utf-8")
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "config", "user.email", "t@e.i")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({"title": "Отчёт", "tasks": [
+        {"id": "a", "title": "Собрать отчёт", "assignee": "w1",
+         "files_write": ["out/report.md", "out/notes.html", "out/chart.png", "out/data.bin",
+                         "out/big.txt"],
+         "acceptance": ["готово"], "deps": []}]}), encoding="utf-8")
+    lead = engine.op_init(tmp_path, "t", spec)["lead_token"]
+    claim = engine.op_claim(tmp_path, "t", "a", "w1")
+    workspace = Path(claim["workspace"])
+    (workspace / "out" / "report.md").write_text("# Отчёт\nПервая версия\n", encoding="utf-8")
+    (workspace / "out" / "notes.html").write_text("<script>alert(1)</script>примечания",
+                                                  encoding="utf-8")
+    (workspace / "out" / "chart.png").write_bytes(PNG)
+    (workspace / "out" / "data.bin").write_bytes(b"\x00\x01\xff")
+    (workspace / "out" / "big.txt").write_text("x" * 300_000, encoding="utf-8")
+    git(workspace, "add", "-A")
+    git(workspace, "commit", "-qm", "work")
+    engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
+    engine.op_verify(tmp_path, "t", "a", "pass", "", lead, by="verifier",
+                     override_reason="demo")
+    # The folder moves on after the result was accepted.
+    (tmp_path / "out" / "report.md").write_text("# Отчёт\nИЗМЕНЕНО ПОЗЖЕ\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("SECRET base\n", encoding="utf-8")
+    server = serve(tmp_path, "t", port=0)
+    yield {"root": tmp_path, "port": server.server_address[1]}
+    server.shutdown()
+    server.server_close()
+
+
+class TestTheResultOfATask:
+    def test_the_accepted_version_is_shown_not_what_the_folder_holds_now(self, delivered):
+        status, headers, data = call(delivered["port"], "GET", "/api/results/a/out/report.md?team=t")
+        assert status == 200
+        assert data.decode("utf-8") == "# Отчёт\nПервая версия\n"
+        assert headers["content-type"] == "text/plain; charset=utf-8"
+        assert headers["content-security-policy"] == dashboard_server.RESULT_CSP
+        assert headers["x-content-type-options"] == "nosniff"
+
+    def test_a_page_of_the_result_is_text_and_can_never_act_as_the_board(self, delivered):
+        status, headers, data = call(delivered["port"], "GET", "/api/results/a/out/notes.html?team=t")
+        assert status == 200 and b"<script>" in data
+        assert headers["content-type"] == "text/plain; charset=utf-8"
+        assert "sandbox" in headers["content-security-policy"]
+        assert "unsafe-inline" not in headers["content-security-policy"].split("style-src")[0]
+
+    def test_a_picture_and_a_download(self, delivered):
+        _s, headers, data = call(delivered["port"], "GET", "/api/results/a/out/chart.png?team=t")
+        assert headers["content-type"] == "image/png" and data == PNG
+        _s, headers, data = call(delivered["port"], "GET", "/api/results/a/out/data.bin?team=t")
+        assert headers["content-type"] == "application/octet-stream"
+        assert headers["content-disposition"] == "attachment"
+
+    def test_only_the_files_the_result_consists_of(self, delivered):
+        for path in ("/api/results/a/README.md?team=t", "/api/results/a/out/../README.md?team=t",
+                     "/api/results/a/out/%2e%2e/README.md?team=t", "/api/results/a/.git/config?team=t",
+                     "/api/results/a/out/report.md/../../README.md?team=t",
+                     "/api/results/nope/out/report.md?team=t", "/api/results/a/out/nothing.md?team=t",
+                     "/api/results/a/out?team=t"):
+            status, _h, data = call(delivered["port"], "GET", path)
+            assert status in (400, 404), path
+            assert b"SECRET" not in data and "Первая версия".encode("utf-8") not in data, path
+
+    def test_a_file_too_large_to_show_is_said_so(self, delivered):
+        status, _h, data = call(delivered["port"], "GET", "/api/results/a/out/big.txt?team=t")
+        assert status == 413 and b"too large" in data
+
+    def test_the_same_rules_as_the_rest_of_the_board(self, delivered):
+        for method in ("POST", "PUT", "DELETE"):
+            assert call(delivered["port"], method, "/api/results/a/out/report.md?team=t",
+                        body=b"")[0] == 405
+        assert call(delivered["port"], "GET", "/api/results/a/out/report.md?team=t",
+                    host="evil.example")[0] == 403
+        assert call(delivered["port"], "GET", "/api/results/t/out/report.md?team=nobody")[0] == 404
+        assert call(delivered["port"], "GET", "/api/results/a/?team=t")[0] == 400
+
+    def test_the_project_folder_is_not_touched(self, delivered):
+        before = sha(delivered["root"] / "out" / "report.md")
+        call(delivered["port"], "GET", "/api/results/a/out/report.md?team=t")
+        call(delivered["port"], "GET", "/api/results/a/README.md?team=t")
+        assert sha(delivered["root"] / "out" / "report.md") == before
+
+
+class TestTheResultWithoutGit:
+    def test_a_shared_team_shows_its_files_from_the_project_folder(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        spec.write_text(json.dumps({"tasks": [
+            {"id": "a", "title": "Заметки", "assignee": "w1", "files_write": ["out/notes.md"],
+             "acceptance": ["готово"], "deps": []}]}), encoding="utf-8")
+        lead = engine.op_init(tmp_path, "t", spec)["lead_token"]
+        claim = engine.op_claim(tmp_path, "t", "a", "w1")
+        (tmp_path / "out").mkdir(exist_ok=True)
+        (tmp_path / "out" / "notes.md").write_text("заметки\n", encoding="utf-8")
+        (tmp_path / "secret.txt").write_text("SECRET", encoding="utf-8")
+        engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
+        engine.op_verify(tmp_path, "t", "a", "pass", "", lead)
+        server = serve(tmp_path, "t", port=0)
+        try:
+            port = server.server_address[1]
+            status, headers, data = call(port, "GET", "/api/results/a/out/notes.md?team=t")
+            assert (status, data) == (200, "заметки\n".encode("utf-8"))
+            assert call(port, "GET", "/api/results/a/secret.txt?team=t")[0] == 404
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestReadingFurtherBack:
+    def test_before_gives_the_events_older_than_a_cursor(self, board):
+        engine.op_claim(board["root"], "t", "a", "w1")
+        whole = get_json(board["port"], "/api/events?team=t&level=advanced")["events"]
+        oldest = whole[0]["seq"]
+        recent = whole[-2:]
+        page = get_json(board["port"], f"/api/events?team=t&level=advanced&before={recent[0]['seq']}")
+        assert [e["seq"] for e in page["events"]] == [e["seq"] for e in whole if e["seq"] < recent[0]["seq"]]
+        assert page["last_seq"] == whole[-1]["seq"]        # the cursor stays on the journal
+        assert get_json(board["port"], f"/api/events?team=t&before={oldest}")["events"] == []
+        assert call(board["port"], "GET", "/api/events?team=t&before=-1")[0] == 400
+        assert call(board["port"], "GET", "/api/events?team=t&before=abc")[0] == 400
 
 
 class TestStarting:

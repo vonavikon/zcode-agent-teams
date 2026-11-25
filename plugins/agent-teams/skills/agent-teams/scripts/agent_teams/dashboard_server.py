@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TextIO
 
-from .dashboard_data import DashboardDataError, snapshot, team_dir
+from .dashboard_data import DashboardDataError, result_file, snapshot, team_dir
 from .errors import UsageError
 from .validation import NAME_RE
 
@@ -52,9 +52,13 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self';"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 # The read-only answers of the board (v2.1 spec 16.3). One task has its
-# own address, /api/tasks/<id>.
+# own address, /api/tasks/<id>, and one file of a result another,
+# /api/results/<task>/<file>.
 ENDPOINTS = ("/api/status", "/api/events", "/api/snapshot", "/api/tasks",
              "/api/agents", "/api/cost")
+# A file of a result is the team's own content. It is shown as text or as
+# a picture and is never allowed to act as a page of the board.
+RESULT_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 _LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -91,12 +95,12 @@ class _Handler(BaseHTTPRequestHandler):
     # -- helpers ---------------------------------------------------------
 
     def _send(self, status: HTTPStatus, body: bytes, ctype: str,
-              extra: dict | None = None) -> None:
+              extra: dict | None = None, policy: str = CSP) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("Content-Security-Policy", policy)
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
@@ -169,7 +173,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/health":  # a liveness probe names no team
             self._json(HTTPStatus.OK, {"ok": True, "service": "agent-teams-ui"})
             return
-        if not path.startswith("/api/tasks/") and path not in ENDPOINTS:
+        if not path.startswith(("/api/tasks/", "/api/results/")) and path not in ENDPOINTS:
             self._json(HTTPStatus.NOT_FOUND,
                        {"ok": False, "error": f"unknown endpoint {path}"})
             return
@@ -185,10 +189,16 @@ class _Handler(BaseHTTPRequestHandler):
             limit = int((query.get("limit") or ["200"])[0])
             if not 1 <= limit <= 1000:
                 raise ValueError("limit must be between 1 and 1000")
-            after = (query.get("after") or [None])[0]
-            after_seq = int(after) if after is not None else None
-            if after_seq is not None and after_seq < 0:
-                raise ValueError("after must not be negative")
+            cursors = {}
+            for name in ("after", "before"):
+                value = (query.get(name) or [None])[0]
+                cursors[name] = int(value) if value is not None else None
+                if cursors[name] is not None and cursors[name] < 0:
+                    raise ValueError(f"{name} must not be negative")
+            after_seq = cursors["after"]
+            if path.startswith("/api/results/"):
+                self._result(path, root, team)
+                return
             if path.startswith("/api/tasks/"):
                 task_id = urllib.parse.unquote(path[len("/api/tasks/"):])
                 if not NAME_RE.match(task_id):
@@ -207,7 +217,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "events": snap["task_events"].get(task_id, [])}
             else:
                 snap = snapshot(root, team, level=level, event_limit=limit,
-                                event_after=after_seq)
+                                event_after=after_seq, event_before=cursors["before"])
                 if path == "/api/status":
                     body = {"ok": True, "now": snap["now"], "run": snap["run"],
                             "progress": snap["progress"], "last_seq": snap["last_seq"],
@@ -231,6 +241,32 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
         except (UsageError, ValueError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
+    def _result(self, path: str, root: Path, team: str) -> None:
+        """One file of a task's result, as the engine pinned it (spec 8.5)."""
+        rest = path[len("/api/results/"):]
+        task_id, _, name = rest.partition("/")
+        if not NAME_RE.match(task_id) or not name:
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "error": "a task id and a file name are required"})
+            return
+        try:
+            found = result_file(root, team, task_id, name)
+        except DashboardDataError as exc:
+            too_large = "too large" in str(exc)
+            # 413 by number: its name in the standard library differs
+            # between Python 3.10 and 3.11.
+            self._json(413 if too_large else HTTPStatus.NOT_FOUND,
+                       {"ok": False, "error": str(exc)})
+            return
+        if found is None:
+            self._json(HTTPStatus.NOT_FOUND,
+                       {"ok": False, "error": f"{name!r} is not part of the result of task {task_id!r}"})
+            return
+        data, ctype = found
+        shown = ctype.startswith(("text/", "image/"))
+        self._send(HTTPStatus.OK, data, ctype, policy=RESULT_CSP,
+                   extra={} if shown else {"Content-Disposition": "attachment"})
 
 
 class DashboardServer(ThreadingHTTPServer):

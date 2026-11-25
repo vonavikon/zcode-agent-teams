@@ -16,7 +16,7 @@ Un portage de l'approche [Claude Code Agent Teams](https://code.claude.com/docs/
 - **Porte d'intégration et apply** : les SHA acceptés fusionnent en ordre DAG dans une branche d'intégration avec contrôle facultatif ; apply est une étape séparée en fast-forward qui refuse un projet sale ou une base déplacée
 - **Récupération et fencing** : timeouts de lease, de heartbeat et de la tentative entière ; les tentatives perdues sont isolées (token mort, worktree en quarantaine conservé) et remises en file dans les limites
 - **Observabilité** : tokens tirés des notifications des sous-agents, coût avec des indicateurs de qualité explicites, métriques de run dont la comparaison équipe contre agent unique, un rapport HTML autonome et un export Langfuse idempotent
-- **Tableau de bord en direct pour un responsable non technique** : `team.py ui` ouvre dans le navigateur une page en lecture seule avec le plan, ce que fait chaque spécialiste, ce qui attend la décision du responsable et pourquoi, en mots simples ; rien sur cette page ne peut changer le déroulement
+- **Tableau de bord en direct pour un responsable non technique** : `team.py ui` ouvre dans le navigateur une page en lecture seule : le plan en schéma, comment le temps s'est passé, ce que fait chaque spécialiste, ce qui attend la décision du responsable et pourquoi, et les fichiers de chaque résultat tels qu'ils ont été acceptés, en mots simples ; rien sur cette page ne peut changer le déroulement
 
 Rôles : le lead est la session ZCode principale ; teammates et vérificateurs sont des sous-agents (les profils de rôle sont dans `agents/`).
 

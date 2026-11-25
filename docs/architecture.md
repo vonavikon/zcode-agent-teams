@@ -11,7 +11,7 @@ Seven logical components (spec section 2), one package
 | Quality gate | `quality.py` | machine-checked criteria, forced FAIL, integration gate |
 | Observability | `observability.py`, `langfuse.py`, `report.py` | usage, cost, metrics, export, HTML report |
 | Recovery | `engine.py` (recover/heartbeat) | expired leases, restart limits, worktree reuse |
-| Board | `viewmodel.py`, `dashboard_data.py`, `dashboard_server.py`, `dashboard/` | the engine's state in the reader's words, one read-only snapshot per request, a local page (spec 16) |
+| Board | `viewmodel.py`, `dashboard_data.py`, `dashboard_server.py`, `planview.py`, `dashboard/` | the engine's state in the reader's words, one read-only snapshot per request, the layout of the plan graph and the timeline, a local page (spec 16) |
 
 Team directory: `<project_root>/.agent-teams/<team>/`
 

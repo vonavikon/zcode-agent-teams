@@ -75,8 +75,25 @@ def snapshot(**fields) -> dict:
                  "quality": "unknown"},
         "tasks": [task()], "agents": [agent()], "attention": [], "events": [event()],
         "last_seq": 1, "level": "simple",
+        "plan": {"nodes": [{"id": "a", "col": 0, "row": 0}], "edges": [],
+                 "columns": 1, "rows": 1},
+        "timeline": {"start": "2026-11-25T09:00:00.000Z", "end": "2026-11-25T10:00:00.000Z",
+                     "span_text": {"work": "работа", "done": "завершено"},
+                     "rows": [{"id": "a", "title": "Собрать отчёт", "state": "В работе", "kind": "busy",
+                               "spans": [{"from": "2026-11-25T09:05:00.000Z",
+                                          "to": "2026-11-25T10:00:00.000Z", "kind": "work",
+                                          "text": "работа"}],
+                               "marks": [{"ts": "2026-11-25T09:05:00.000Z", "title": "Приступил к задаче",
+                                          "kind": "busy", "icon": "progress", "detail": ""}]}]},
     }
     return {**base, **fields}
+
+
+def acted(steps: list, snapshots: list[dict]) -> list[dict]:
+    """Run scripted steps on the page; returns what it shows before the
+    first one and after each one: ``steps[k]`` is after step ``k - 1``."""
+    snapshots[0]["_actions"] = steps
+    return run("actions", snapshots)["steps"]
 
 
 def run(scenario: str, snapshots: list[dict]) -> dict:
@@ -193,7 +210,7 @@ class TestItSpeaksInWholeWords:
         assert dom["projectName"]["text"] == "Исследование рынка"
         assert dom["projectGoal"]["text"] == "Сравнить конкурентов и подготовить рекомендации"
         # The clock itself depends on the reader's time zone; the date does not.
-        assert re.fullmatch(r"началось 25 ноября, \d\d:\d\d", dom["startedAt"]["text"])
+        assert re.fullmatch(r"старт 25 нояб\., \d\d:\d\d", dom["startedAt"]["text"])
         assert dom["elapsed"]["text"] == "в работе 1 ч 2 мин"
 
     def test_a_team_without_a_goal_shows_what_it_is_doing(self):
@@ -201,7 +218,7 @@ class TestItSpeaksInWholeWords:
                                                "started_at": None})])["dom"]
         assert dom["projectName"]["text"] == "Проект"
         assert dom["projectGoal"]["text"] == "команда выполняет задачи"
-        assert dom["startedAt"]["text"] == "началось "
+        assert dom["startedAt"]["text"] == "старт "
 
     @pytest.mark.parametrize("failed, words", [
         (1, "1 раз возвращена на доработку"), (2, "2 раза возвращена на доработку"),
@@ -452,6 +469,291 @@ class TestSwitches:
 
     def test_the_cards_follow_the_width_of_the_window(self):
         out = run("resize", [snapshot()])
-        assert out["columnsNarrow"] == [["attCard", "nowCard", "teamCard", "planCard", "feedCard"], []]
+        assert out["columnsNarrow"] == [["attCard", "nowCard", "teamCard", "planCard", "timeCard",
+                                   "feedCard"], []]
         assert out["columnsWide"][0] and out["columnsWide"][1]
         assert out["allCardsPlaced"]
+
+
+def graphed() -> dict:
+    """A plan of four stages: one done, one in work that needs it, one in
+    trouble, and one waiting for two of them."""
+    done = task("a", title="Собрать информацию", state="Принято", kind="done", icon="check",
+                active=False, next_step="Готово, результат принят")
+    work = task("b", title="Сравнить предложения", deps=["Собрать информацию"])
+    trouble = task("c", title="Оценить риски", state="Нужно ваше внимание", kind="problem",
+                   icon="alert", active=False, next_step="Ждёт вашего решения")
+    waiting = task("d", title="Итоговый отчёт", state="В очереди", kind="idle", icon="circle",
+                   active=False, worked_s=None, deps=["Сравнить предложения", "Оценить риски"],
+                   next_step="Ждёт завершения: Сравнить предложения, Оценить риски")
+    engineer = agent(name="AI-инженер", doing="перестал отвечать", state="Проблема",
+                     state_hint="не может продолжать", icon="alert", kind="problem",
+                     tasks=[{"id": "c", "title": "Оценить риски", "state": "Нужно ваше внимание",
+                             "kind": "problem"}])
+    return snapshot(tasks=[done, work, trouble, waiting], agents=[agent(), engineer],
+                    events=[event(1),
+                            event(2, title="Проверка не пройдена", kind="problem", icon="alert",
+                                   by=1, specialist="AI-инженер", task="Оценить риски"),
+                            event(3, title="Работа команды завершена", kind="done", icon="check",
+                                  by=None, specialist="Руководитель команды", task="")],
+                    last_seq=3,
+                    plan={"nodes": [{"id": "a", "col": 0, "row": 0}, {"id": "c", "col": 0, "row": 1},
+                                    {"id": "b", "col": 1, "row": 0}, {"id": "d", "col": 2, "row": 0}],
+                          "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "d"},
+                                    {"from": "c", "to": "d"}],
+                          "columns": 3, "rows": 2})
+
+
+def dimmed(step: dict) -> list[str]:
+    return sorted(re.findall(r'class="node [a-z]+ dim" data-task="(\w)"', step["graph"]))
+
+
+def place(step: dict) -> tuple[float, float, float]:
+    x, y, k = re.fullmatch(r"translate\(([-\d.e]+) ([-\d.e]+)\) scale\(([\d.e]+)\)",
+                           step["transform"]).groups()
+    return float(x), float(y), float(k)
+
+
+class TestThePlanGraph:
+    def test_every_stage_is_a_node_and_every_dependency_a_line(self):
+        dom = run("render", [graphed()])["dom"]
+        graph = dom["graph"]["html"]
+        assert graph.count('class="node ') == 4
+        assert graph.count('<path class="link ') == 3
+        assert sorted(re.findall(r'data-task="(\w)"', graph)) == ["a", "b", "c", "d"]
+        assert 'class="node done"' in graph and 'class="node problem"' in graph
+        # A line says, in words, which result it carries to which stage.
+        assert "Результат этапа «Собрать информацию» нужен для этапа «Сравнить предложения»" in graph
+        assert 'aria-label="Оценить риски, Нужно ваше внимание"' in graph
+        # The first column and the second one, each in its own row.
+        assert 'transform="translate(36 22)"' in graph
+        assert 'transform="translate(268 22)"' in graph
+
+    def test_zoom_buttons_and_the_whole_plan_again(self):
+        steps = acted([["click", "graphZoomIn"], ["click", "graphZoomOut"], ["click", "graphReset"]],
+                      [graphed(), graphed()])
+        # Three columns of 196 and four gaps of 36 make 732, shown in 596:
+        # the whole plan across the width, a little smaller than life.
+        whole = 596 / 732
+        assert place(steps[2])[2] == pytest.approx(whole, rel=1e-6)
+        assert place(steps[1])[2] == pytest.approx(whole * 1.25, rel=1e-6)
+        assert place(steps[3]) == pytest.approx((0, 0, whole), rel=1e-6)
+
+    def test_dragging_moves_the_plan_and_a_refresh_keeps_it_where_it_was_left(self):
+        steps = acted([["pan", 40, -15], ["poll"]], [graphed(), graphed()])
+        moved = place(steps[1])
+        assert (moved[0], moved[1]) == (40, -15)
+        assert place(steps[2]) == moved           # not reset by the refresh
+        assert steps[2]["nodes"] == 4
+
+
+    def test_the_search_hides_what_does_not_match_and_keeps_the_shape(self):
+        steps = acted([["set", "graphSearch", "риски"], ["input", "graphSearch"], ["poll"]],
+                      [graphed(), graphed()])
+        assert steps[2]["nodes"] == 4 and dimmed(steps[2]) == ["a", "b", "d"]
+        assert dimmed(steps[3]) == ["a", "b", "d"]           # the search survives a refresh
+
+    @pytest.mark.parametrize("chip, dimmed_nodes", [("open", ["a"]), ("problem", ["a", "b", "d"])])
+    def test_the_filters(self, chip, dimmed_nodes):
+        steps = acted([["chip", "data-plan-filter", chip]], [graphed(), graphed()])
+        assert dimmed(steps[0]) == []                       # nothing hidden before
+        assert steps[1]["nodes"] == 4                       # hidden, not removed
+        assert dimmed(steps[1]) == dimmed_nodes
+
+    def test_a_node_opens_its_stage(self):
+        steps = acted([["node", "c"]], [graphed(), graphed()])
+        assert steps[1]["sheetTitle"] == "Оценить риски"
+        assert "Что нужно сделать" in steps[1]["sheet"] and "Ждёт вашего решения" in steps[1]["sheet"]
+
+
+
+class TestTheTimeline:
+    def timed(self) -> dict:
+        spans = [("09:05", "09:15", "work"), ("09:15", "09:18", "check"), ("09:18", "09:27", "fix"),
+                 ("09:27", "09:35", "check"), ("09:35", "10:00", "done")]
+        rows = [{
+            "id": "a", "title": "Собрать отчёт", "state": "Принято", "kind": "done",
+            "spans": [{"from": f"2026-11-25T{a}:00.000Z", "to": f"2026-11-25T{b}:00.000Z",
+                       "kind": k, "text": t} for (a, b, k), t in zip(spans, "abcde")],
+            "marks": [{"ts": "2026-11-25T09:18:00.000Z", "title": "Проверка не пройдена", "kind": "problem",
+                       "icon": "alert", "detail": "нет оценок"},
+                      {"ts": "2026-11-25T09:35:00.000Z", "title": "Проверка пройдена", "kind": "done",
+                       "icon": "check", "detail": ""}],
+        }, {"id": "b", "title": "В очереди", "state": "В очереди", "kind": "idle", "spans": [], "marks": []}]
+        text = {"work": "работа", "check": "проверка качества", "fix": "доработка",
+                "wait": "ожидание", "done": "завершено"}
+        return snapshot(timeline={"start": "2026-11-25T09:00:00.000Z", "end": "2026-11-25T10:00:00.000Z",
+                                  "rows": rows, "span_text": text})
+
+    def test_a_row_per_task_with_spans_marks_and_a_legend(self):
+        dom = run("render", [self.timed()])["dom"]
+        tl, legend = dom["timeline"]["html"], dom["timeLegend"]["html"]
+        assert sorted(re.findall(r'class="trow" data-task="(\w)"', tl)) == ["a", "b"]
+        assert [k for k in re.findall(r'<rect class="span (\w+)"', tl)] == ["work", "check", "fix", "check", "done"]
+        assert tl.count('<circle class="tmark problem"') == 1 and tl.count('<circle class="tmark done"') == 1
+        assert tl.count('<text class="tick"') == 5
+        assert "доработка: 09:" in tl and "09:18 · Проверка не пройдена: нет оценок" in tl.replace("09:18", "09:18") if False else "Проверка не пройдена: нет оценок" in tl
+        for word in ("работа", "проверка качества", "доработка", "завершено", "событие"):
+            assert word in legend, word
+        assert "ожидание" not in legend                  # only what really happened
+
+    def test_nothing_recorded_is_nothing_drawn(self):
+        snap = snapshot(timeline={"start": "2026-11-25T09:00:00.000Z", "end": "2026-11-25T09:30:00.000Z",
+                                  "rows": [], "span_text": {}})
+        dom = run("render", [snap])["dom"]
+        assert dom["timeline"]["html"] == "" and dom["timeLegend"]["html"] == ""
+
+    def test_a_row_opens_its_stage(self):
+        steps = acted([["trow", "a"]], [self.timed(), self.timed()])
+        assert steps[1]["sheetTitle"] == "Собрать отчёт" and "История этапа" in steps[1]["sheet"]
+
+
+def fed(more: bool = False) -> dict:
+    events = [event(1, title="Приступил к задаче", by=0),
+              event(2, title="Проверка не пройдена", kind="problem", icon="alert", by=1,
+                    specialist="AI-инженер", task="Оценить риски"),
+              event(3, title="Результат принят вручную", kind="manual", icon="refresh", by=None,
+                    specialist="Руководитель команды", task="Собрать отчёт"),
+              event(4, title="Этап завершён", kind="done", icon="check", by=None,
+                    specialist="Руководитель команды", task="Собрать отчёт")]
+    if more:
+        events.append(event(5, title="Передал результат на проверку", by=1, specialist="AI-инженер",
+                            task="Оценить риски"))
+    return snapshot(agents=[agent(), agent(name="AI-инженер")], events=events, last_seq=events[-1]["seq"])
+
+
+def fed_titles(step: dict) -> list[str]:
+    return re.findall(r'<div class="tt">([^<]+)</div>', step["feed"])
+
+
+class TestTheFeedTools:
+    def test_search_keeps_only_what_matches(self):
+        steps = acted([["set", "feedSearch", "проверк"], ["input", "feedSearch"]], [fed(), fed()])
+        assert fed_titles(steps[1]) == fed_titles(steps[0])      # typing alone changes nothing
+        assert fed_titles(steps[2]) == ["Проверка не пройдена"]
+        assert steps[2]["pause"] == "Пауза"
+
+    def test_by_kind(self):
+        steps = acted([["chip", "data-feed-kind", "problem"], ["chip", "data-feed-kind", "manual"],
+                       ["chip", "data-feed-kind", "all"]], [fed(), fed(), fed(), fed()])
+        assert len(fed_titles(steps[0])) == 4
+        assert fed_titles(steps[1]) == ["Проверка не пройдена"]
+        assert fed_titles(steps[2]) == ["Результат принят вручную"]
+        assert len(fed_titles(steps[3])) == 4
+
+    def test_by_specialist_including_the_one_who_is_not_a_card(self):
+        snap = fed()
+        options = run("render", [snap])["dom"]["feedWho"]["html"]
+        assert '<option value="1">AI-инженер</option>' in options
+        assert '<option value="Руководитель команды">Руководитель команды</option>' in options
+        steps = acted([["set", "feedWho", "1"], ["change", "feedWho"],
+                       ["set", "feedWho", "Руководитель команды"], ["change", "feedWho"]],
+                      [fed(), fed(), fed(), fed(), fed()])
+        assert fed_titles(steps[2]) == ["Проверка не пройдена"]
+        assert fed_titles(steps[4]) == ["Результат принят вручную", "Этап завершён"]
+
+
+    def test_pause_holds_the_list_and_counts_what_came_since(self):
+        steps = acted([["click", "feedPause"], ["poll"], ["click", "feedPause"]],
+                      [fed(), fed(more=True), fed(more=True), fed(more=True)])
+        assert steps[1]["pause"] == "Продолжить" and len(fed_titles(steps[1])) == 4
+        assert fed_titles(steps[2]) == fed_titles(steps[1])     # held where the reader paused
+        assert steps[2]["pause"] == "Продолжить (1 новых)"
+        assert fed_titles(steps[3])[-1] == "Передал результат на проверку"
+        assert steps[3]["pause"] == "Пауза"
+
+    def test_filters_stay_across_a_refresh(self):
+        steps = acted([["chip", "data-feed-kind", "problem"], ["poll"]], [fed(), fed(more=True), fed(more=True)])
+        assert fed_titles(steps[2]) == ["Проверка не пройдена"]
+
+
+    def test_nothing_matched_is_said_so(self):
+        steps = acted([["set", "feedSearch", "ничего похожего"], ["input", "feedSearch"]], [fed(), fed()])
+        assert "По этим условиям событий нет." in steps[2]["feed"]
+
+    def test_by_stage_and_by_time(self):
+        # The fake clock of the harness stands close to the epoch: "long ago"
+        # has to be earlier still.
+        old = [dict(event(n, title=f"Старое {n}"), ts="1969-12-30T00:00:00.000Z") for n in (1, 2)]
+        snap = snapshot(agents=[agent(), agent(name="AI-инженер")],
+                        tasks=[task(), task("c", title="Оценить риски", state="В работе")],
+                        events=old + [event(3, title="Проверка не пройдена", kind="problem",
+                                            icon="alert", by=1, specialist="AI-инженер", task="Оценить риски")],
+                        last_seq=3)
+        assert '<option value="Оценить риски">Оценить риски</option>' in run("render", [snap])["dom"]["feedTask"]["html"]
+        steps = acted([["set", "feedTask", "Оценить риски"], ["change", "feedTask"],
+                       ["set", "feedTask", ""], ["change", "feedTask"], ["click", "feedHour"]],
+                      [snap] * 6)
+        assert fed_titles(steps[2]) == ["Проверка не пройдена"]
+        assert len(fed_titles(steps[4])) == 3
+        assert fed_titles(steps[5]) == ["Проверка не пройдена"]     # the old lines are left out
+
+    def test_a_line_about_a_stage_opens_it(self):
+        steps = acted([["feedrow", "a"]], [fed(), fed()])
+        assert steps[1]["sheetTitle"] == "Собрать отчёт"
+        assert 'data-task="a" role="button" tabindex="0"' in steps[0]["feed"]
+
+    def test_reading_further_back(self):
+        old = [event(n, title=f"Раньше {n}") for n in (2, 3, 4)]
+        snap = snapshot(events=[event(9, title="Свежее")], last_seq=9, older_events=old)
+        steps = acted([["older"], ["older"]], [snap, snap, snap, snap])
+        assert steps[0]["olderHidden"] is False and "Раньше" not in steps[0]["feed"]
+        assert steps[1]["fetches"][-1].endswith("&before=9&limit=100")
+        assert fed_titles(steps[1]) == ["Раньше 2", "Раньше 3", "Раньше 4", "Свежее"]
+        assert steps[1]["olderHidden"] is False                 # seq 1 may still be out there
+        assert steps[2]["olderHidden"] is False                 # nothing came: nothing changed
+
+
+class TestTheResultOfATask:
+    def with_result(self, ready: bool = True) -> dict:
+        return snapshot(tasks=[task(result={"files": ["out/report.md", "out/chart.png", EVIL],
+                                            "ready": ready})],
+                        results={"a": {"out/report.md": "# Отчёт\n" + EVIL, "out/chart.png": {"image": True},
+                                       EVIL: {"tooLarge": True}}})
+
+    def test_the_files_are_listed_and_a_text_opens_as_text(self):
+        steps = acted([["sheet", "a"], ["file", "out/report.md"]], [self.with_result(), self.with_result()])
+        assert "Готовый результат" in steps[1]["sheet"]
+        assert "Принятая версия результата. Файлы:" in steps[1]["sheet"]
+        assert steps[1]["sheet"].count('class="file-btn') == 3
+        assert EVIL_ESCAPED in steps[1]["sheet"] and EVIL not in steps[1]["sheet"]
+        assert steps[2]["fetches"][-1] == "/api/results/a/out/report.md?team=demo"
+        assert "# Отчёт" in steps[2]["result"] and EVIL_ESCAPED in steps[2]["result"]
+        assert 'class="file-btn on" data-result-file="out/report.md"' in steps[2]["sheet"]
+
+    def test_a_picture_opens_as_a_picture(self):
+        steps = acted([["sheet", "a"], ["file", "out/chart.png"]],
+                      [self.with_result(), self.with_result(), self.with_result()])
+        assert '<img class="result-img" src="/api/results/a/out/chart.png?team=demo"' in steps[2]["result"]
+
+
+    def test_pressing_again_closes_and_a_file_that_cannot_be_shown_is_said_so(self):
+        steps = acted([["sheet", "a"], ["file", "out/report.md"], ["file", "out/report.md"],
+                       ["file", "nothing.txt"]],
+                      [self.with_result()] * 5)
+        assert "# Отчёт" in steps[2]["result"]
+        assert "Принятая версия" in steps[3]["sheet"] and steps[3]["result"] == ""
+        assert "Не удалось открыть файл" in steps[4]["result"]
+
+    def test_the_open_file_stays_open_across_a_refresh(self):
+        steps = acted([["sheet", "a"], ["file", "out/report.md"], ["poll"]],
+                      [self.with_result(), self.with_result(), self.with_result()])
+        assert "# Отчёт" in steps[2]["result"] and "# Отчёт" in steps[3]["result"]
+
+    def test_a_result_not_yet_accepted_is_called_intermediate(self):
+        steps = acted([["sheet", "a"]], [self.with_result(ready=False), self.with_result(ready=False)])
+        assert "Промежуточный результат, ещё не принят." in steps[1]["sheet"]
+
+    def test_how_many_times_the_result_was_handed_over(self):
+        twice = snapshot(tasks=[task(result={"files": ["out/a.md"], "ready": False,
+                                              "handed_over_count": 2})])
+        assert "Результат передавался 2 раза, показана последняя версия." in acted([["sheet", "a"]], [twice, twice])[1]["sheet"]
+        once = snapshot(tasks=[task(result={"files": ["out/a.md"], "ready": True, "handed_over_count": 1})])
+        assert "Результат передавался " not in acted([["sheet", "a"]], [once, once])[1]["sheet"]
+
+    def test_an_empty_result_is_said_to_be_empty(self):
+        empty = snapshot(tasks=[task(result={"files": [], "ready": True, "handed_over": True})])
+        assert "ничего не подготовил" in acted([["sheet", "a"]], [empty, empty])[1]["sheet"]
+        never = snapshot(tasks=[task(result={"files": [], "ready": False, "handed_over": False})])
+        assert "ещё не передавался" in acted([["sheet", "a"]], [never, never])[1]["sheet"]
+

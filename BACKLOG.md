@@ -53,6 +53,26 @@ of the spec (it was not complete, and said so only after that check):
   task on every line of the feed, while the task card named it by its
   own role. On a task's event the task's role wins.
 
+## Done in v2.1.0a3: seeing the work (2026-11-25)
+
+The plan as a left-to-right graph (zoom, drag, search, filters, the
+position kept across refreshes), a timeline drawn only from the
+journal, the files of a result opened as they were accepted, and an
+activity feed with filters by type, specialist, stage and time, a
+pause, search and reading further back.
+
+Found on the way:
+
+- A result accepted with nothing in it is shown as such ("handed over,
+  no files"), not as a missing result: the board of the demo team
+  revealed a task accepted by decision whose executor had produced no
+  file at all. Worth a line of its own in the quality dashboard (M4).
+- Two executors with one role are told apart by a number on their cards
+  and on every line of the feed.
+- On Python 3.10 the status "413 Content Too Large" carries another
+  name in the standard library; the board's server used the 3.11 name
+  and crashed there. Caught by running the new suites on a real 3.10.
+
 ## Open, found while building the board (2026-11-25)
 
 - The snapshot's `metrics` were always empty: `collect_metrics` needs
@@ -68,6 +88,13 @@ of the spec (it was not complete, and said so only after that check):
 - The board has no authentication and binds to loopback by design. An
   owner who is not at the machine needs a proxy with authentication in
   front of it; not built.
+- What a line of the plan graph means ("the result of stage X is
+  needed for stage Y") is its tooltip today. A reader on a phone has
+  no tooltip; the list below the graph says the same in its "после"
+  line, and a visible label on the line would be better.
+- In shared mode (no git) the engine keeps no diff of a result, so the
+  board shows the files the task declared. A result that wrote another
+  file is not seen there.
 - Two quirks of the journal that every human-facing reader has to
   know. A schema change could remove the need:
   - a manual acceptance is two `verification_passed` events, the

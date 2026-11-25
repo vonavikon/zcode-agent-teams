@@ -288,6 +288,19 @@ def _next_step(task: dict, by_id: dict | None, silent: bool = False) -> str:
     return "Ожидает исполнителя"
 
 
+def number_duplicates(names: dict[str, str]) -> dict[str, str]:
+    """Tell specialists of one role apart: a name that repeats gets a number."""
+    count: dict[str, int] = {}
+    for name in names.values():
+        count[name] = count.get(name, 0) + 1
+    seen: dict[str, int] = {}
+    out = {}
+    for key, name in names.items():
+        seen[name] = seen.get(name, 0) + 1
+        out[key] = f"{name} {seen[name]}" if count[name] > 1 else name
+    return out
+
+
 def _actor_name(event_type, actor, roles: dict | None, meta: dict,
                 task_id=None) -> str:
     """Who did it, as a role.
@@ -431,8 +444,12 @@ def _agent_state(agent: dict, tasks: list[dict], *, stale_s: int | None,
 
 
 def agent_view(agent: dict, tasks: list[dict], *, level: str = "simple",
-               now: datetime | None = None, threshold_s: float = 900.0) -> dict:
-    """One specialist as the dashboard shows it."""
+               now: datetime | None = None, threshold_s: float = 900.0,
+               name: str | None = None) -> dict:
+    """One specialist as the dashboard shows it.
+
+    ``name`` overrides the role name (a numbered one when two
+    specialists share a role)."""
     now = now or datetime.now(timezone.utc)
     # Silence is read from the agent's open tasks, the same signal the
     # engine's recovery uses. The agent row keeps its own heartbeat
@@ -448,7 +465,7 @@ def agent_view(agent: dict, tasks: list[dict], *, level: str = "simple",
     starts = [parse_time(t.get("claimed_at")) for t in open_tasks]
     starts = [start for start in starts if start]
     view = {
-        "name": role_name(mine[0] if mine else None),
+        "name": name or role_name(mine[0] if mine else None),
         "does": role_does(role_name(mine[0] if mine else None)),
         "state": state["label"],
         "state_hint": state["hint"],
@@ -459,7 +476,7 @@ def agent_view(agent: dict, tasks: list[dict], *, level: str = "simple",
         "completed": len([t for t in mine if t["status"] == "completed"]),
         "total": len(live),
         "checks": None,
-        "tasks": [{"id": t["id"], "title": t["title"],
+        "tasks": [{"id": t["id"], "title": t["title"], "role": role_name(t),
                    "state": _task_state(t, now, threshold_s)["label"],
                    "kind": _task_state(t, now, threshold_s)["kind"]}
                   for t in live],

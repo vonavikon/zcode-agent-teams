@@ -44,10 +44,12 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
    the summary and the report path.
 7. **Board** (any time after init): `python <skill>/scripts/team.py ui --team <id> --project-root <root>`
    prints an address and serves a read-only board in the browser: the
-   plan, what each specialist is doing, what waits for the owner's
-   decision and why, in plain words. Offer it when the owner wants to
-   watch or is not technical. `--open` opens the browser; it stops
-   with Ctrl-C. Nothing on the board can change the run.
+   plan as a graph and as a list, how the time went, what each
+   specialist is doing, what waits for the owner's decision and why, in
+   plain words, and the files of every result as they were accepted.
+   Offer it when the owner wants to watch or is not technical. `--open`
+   opens the browser; it stops with Ctrl-C. Nothing on the board can
+   change the run.
 
 ## Task schema
 

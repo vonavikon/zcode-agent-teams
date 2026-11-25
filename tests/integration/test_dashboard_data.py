@@ -409,12 +409,14 @@ class TestSpecialists:
             ("AI-проверяющий", "Свободен")]
         analyst = agents[0]
         assert analyst["does"] == "Собирает и сравнивает данные, делает выводы."
-        assert analyst["tasks"] == [{"id": "b", "title": TITLES["b"], "state": "Не отвечает",
-                                     "kind": "problem"}]   # silent here too, not "in work"
+        assert analyst["tasks"] == [{"id": "b", "title": TITLES["b"], "role": "AI-аналитик",
+                                     "state": "Не отвечает", "kind": "problem"}]   # silent, not "in work"
         assert analyst["worked_s"] is not None and analyst["checks"] is None
         assert agents[1]["tasks"] == [
-            {"id": "a", "title": TITLES["a"], "state": "Принято", "kind": "done"},
-            {"id": "c", "title": TITLES["c"], "state": "Нужно ваше внимание", "kind": "problem"}]
+            {"id": "a", "title": TITLES["a"], "role": "AI-редактор документации",
+             "state": "Принято", "kind": "done"},     # one executor, two hats
+            {"id": "c", "title": TITLES["c"], "role": "AI-инженер",
+             "state": "Нужно ваше внимание", "kind": "problem"}]
         for role in agents:
             assert role["does"] and "id" not in role and "tech" not in role
 
@@ -452,6 +454,27 @@ class TestSpecialists:
                    if e["specialist"] in ("Руководитель команды", "Система"))
 
 
+class TestSpecialistsOfOneRole:
+    def test_two_executors_with_one_role_are_numbered_on_cards_and_in_the_feed(self, tmp_path):
+        spec_file(tmp_path)
+        path = tmp_path / "spec.json"
+        spec = json.loads(path.read_text(encoding="utf-8"))
+        spec["tasks"][1]["lens"] = "docs"            # b gets the role of a: AI-редактор документации
+        spec["tasks"][1]["deps"] = []                 # and can start at once
+        path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+        engine.op_init(tmp_path, "t", path)
+        snap = snapshot(tmp_path, "t")
+        assert [a["name"] for a in snap["agents"]] == [
+            "AI-редактор документации 1", "AI-редактор документации 2"]   # no checker yet
+        engine.op_claim(tmp_path, "t", "a", "w1")
+        engine.op_claim(tmp_path, "t", "b", "w2")
+        snap = snapshot(tmp_path, "t")
+        said = {e["task"]: e["specialist"] for e in snap["events"] if e["type"] == "task_claimed"}
+        assert said == {TITLES["a"]: "AI-редактор документации 1",
+                        TITLES["b"]: "AI-редактор документации 2"}     # by number on their own tasks
+        assert snap["cost"]["by_role"] == {}       # and spend is still counted per role
+
+
 class TestWhatAStageSays:
     def view(self, snap, task_id):
         return next(t for t in snap["tasks"] if t["id"] == task_id)
@@ -479,6 +502,14 @@ class TestWhatAStageSays:
     ])
     def test_the_next_step_of_every_task_of_the_team(self, team, task_id, words):
         assert self.view(snapshot(team["root"], "t"), task_id)["next_step"] == words
+
+    def test_how_often_each_result_was_handed_over(self, team):
+        snap = snapshot(team["root"], "t")
+        result = {t["id"]: (t["result"]["handed_over_count"], t["result"]["ready"], t["result"]["files"])
+                  for t in snap["tasks"]}
+        assert result["a"] == (1, True, ["out/a.md"])
+        assert result["c"] == (2, False, ["out/c.md"])   # the stray README.md is a violation, not a result
+        assert result["b"] == (0, False, [])          # never handed over
 
     def test_a_machine_check_and_judgement_of_content_are_told_apart(self, team):
         criteria = json.dumps([

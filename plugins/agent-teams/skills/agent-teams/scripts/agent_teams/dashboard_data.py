@@ -9,18 +9,24 @@ Nothing here can change team state: the connection is opened with
 ``mode=ro`` and ``PRAGMA query_only``, and only a whitelist of columns
 leaves this module. Credential hashes never do, and free-text event
 metadata is reduced to the fields a reader needs (spec v2.1, 16.2, 16.3).
+The one file the board may show outside its own directory is a file of
+a task's result, read exactly as the engine pinned it (``result_file``).
 """
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import viewmodel
+from . import planview, viewmodel
 from .config import merge_config
+from .errors import EngineError
 from .storage import DB_FILENAME
+from .validation import normalize_path
 
 TEAMS_DIR = ".agent-teams"
 
@@ -37,6 +43,8 @@ _TASK_COLUMNS = (
     " created_at, updated_at, spec_json")
 _AGENT_COLUMNS = ("id, role, status, current_task, started_at, finished_at,"
                   " heartbeat_at, restarts")
+_SUBMISSION_COLUMNS = ("id, task_id, attempt, commit_sha, base_commit_sha, branch,"
+                       " created_at, changed_files_json, verification_status, verifier")
 # Keys of tasks.metadata_json safe to expose. The rest may hold free text
 # and is dropped.
 _META_KEYS = ("changed_files", "workspace_violations", "quarantine_dir",
@@ -46,6 +54,19 @@ _META_KEYS = ("changed_files", "workspace_violations", "quarantine_dir",
 _EVENT_META_KEYS = ("reason", "violations", "conflicts", "restarts",
                     "override", "override_reason", "applied", "applied_at",
                     "feedback", "failures", "attempt")
+
+# A file of a result the board shows as text, and one it shows as a
+# picture. Anything else is offered as a download, never rendered: a
+# result is the team's own content and may hold anything.
+RESULT_TEXT = frozenset(".md .txt .json .csv .tsv .log .py .js .css .html .htm .xml"
+                        " .yaml .yml .toml .ini .cfg .conf .sh .sql .rst .org .tex"
+                        " .svg".split())
+RESULT_IMAGE = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+                ".bmp": "image/bmp"}
+RESULT_MAX_TEXT = 256 * 1024
+RESULT_MAX_IMAGE = 5 * 1024 * 1024
+_SHA = re.compile(r"^[0-9a-f]{7,64}$")
 
 
 class DashboardDataError(Exception):
@@ -102,40 +123,19 @@ def team_dir(project_root: Path, team: str) -> Path:
     return Path(project_root).resolve() / TEAMS_DIR / team
 
 
-_SPECIALIST_ORDER = {"working": 0, "verifying": 1, "problem": 2, "waiting": 3,
-                     "recovering": 4, "free": 5, "done": 6}
-_SPECIALIST_STATE_INDEX = {label: key for key, state in viewmodel.AGENT_STATE.items()
-                           for label in [state["label"]]}
+def _event_metadata(raw, level: str) -> dict:
+    """Event metadata cut down to what a simple reader needs.
 
-
-def _specialist_order(specialist: dict) -> tuple:
-    """The busy first, then those in trouble, then the free, then the done."""
-    return (_SPECIALIST_ORDER.get(_SPECIALIST_STATE_INDEX.get(specialist["state"], "free"), 9),
-            specialist["name"])
-
-
-def with_last_event(task: dict, event: dict | None) -> dict:
-    """The newest line of the feed about this task, for its card (spec 4.3)."""
-    if event is not None:
-        task["last_event"] = {"title": event["title"], "detail": event.get("detail", ""),
-                              "ts": event.get("ts")}
-    return task
-
-
-def project_view(team_row: dict, project_root: Path, level: str) -> dict:
-    """The name and the goal the reader gave the team (spec 4.1).
-
-    Both are optional words of the spec. A team without a name is called
-    by the name of its project folder; the full path is for the
-    technical level only.
+    The advanced level gets everything: event metadata never holds a
+    credential (the engine keeps the lead token and the execution tokens
+    only as hashes in ``teams`` and ``tasks``), and the technical reader
+    needs the transitions.
     """
-    spec = team_row.get("spec") or {}
-    view = {"name": str(spec.get("title") or "").strip() or Path(project_root).name,
-            "goal": str(spec.get("goal") or "").strip(),
-            "started_at": team_row.get("created_at")}
+    if not isinstance(raw, dict):
+        return {}
     if level == "advanced":
-        view["root"] = str(project_root)
-    return view
+        return dict(raw)
+    return {k: v for k, v in raw.items() if k in _EVENT_META_KEYS}
 
 
 def _checks(attempts: list[dict] | None, manual_pass: bool) -> list[dict] | None:
@@ -156,36 +156,70 @@ def _checks(attempts: list[dict] | None, manual_pass: bool) -> list[dict] | None
     return marked
 
 
-def _event_metadata(raw, level: str) -> dict:
-    """Event metadata cut down to what a simple reader needs.
+# The busy first, then those in trouble, then the free, then the done.
+_SPECIALIST_ORDER = {"working": 0, "verifying": 1, "problem": 2, "waiting": 3,
+                     "recovering": 4, "free": 5, "done": 6}
+_SPECIALIST_STATE_INDEX = {state["label"]: key for key, state in viewmodel.AGENT_STATE.items()}
 
-    The advanced level gets everything: event metadata never holds a
-    credential (the engine keeps the lead token and the execution tokens
-    only as hashes in ``teams`` and ``tasks``), and the technical reader
-    needs the transitions.
+
+def _specialist_order(specialist: dict) -> tuple:
+    return (_SPECIALIST_ORDER.get(_SPECIALIST_STATE_INDEX.get(specialist["state"], "free"), 9),
+            specialist["name"])
+
+
+def project_view(team_row: dict, project_root: Path, level: str) -> dict:
+    """The name and the goal the reader gave the team (spec 4.1).
+
+    Both are optional words of the spec. A team without a name is called
+    by the name of its project folder; the full path is for the
+    technical level only.
     """
-    if not isinstance(raw, dict):
-        return {}
+    spec = team_row.get("spec") or {}
+    view = {"name": str(spec.get("title") or "").strip() or Path(project_root).name,
+            "goal": str(spec.get("goal") or "").strip(),
+            "started_at": team_row.get("created_at")}
     if level == "advanced":
-        return dict(raw)
-    return {k: v for k, v in raw.items() if k in _EVENT_META_KEYS}
+        view["root"] = str(project_root)
+    return view
+
+
+def _result(task: dict, submission: dict | None, level: str) -> dict:
+    """The files a task produced, as its latest handed-over result (spec 8.5).
+
+    A result is "ready" once the task is accepted. Before that the files
+    are the intermediate result of the last hand-over, if there was one.
+    """
+    files = list((submission or {}).get("changed_files")
+                 or (task.get("metadata") or {}).get("changed_files") or [])
+    if not files and task.get("submitted_at"):
+        # Shared mode keeps no diff of what changed: the files the task
+        # declared are what the engine knows the result consists of.
+        files = list(task.get("files_write") or [])
+    view = {"files": files, "ready": task["status"] == "completed",
+            "handed_over": bool(task.get("submitted_at")),
+            "handed_over_count": (submission or {}).get("count", 0)}
+    if level == "advanced":
+        view["version"] = (submission or {}).get("commit_sha")
+    return view
 
 
 def snapshot(project_root: Path, team: str, *, level: str = "simple",
              event_limit: int = 200, event_after: int | None = None,
-             parts: tuple[str, ...] = ()) -> dict:
+             event_before: int | None = None, parts: tuple[str, ...] = ()) -> dict:
     """Everything the dashboard needs, in one consistent read.
 
-    ``level`` is ``simple`` or ``advanced``; ``event_after`` returns only
-    events with a greater ``seq`` (cursor-based polling). ``parts`` asks
-    for what the whole board does not need on every poll: ``task_events``
-    (the history of each task, by task id) for the page of one task.
+    ``level`` is ``simple`` or ``advanced``. The feed is a window of the
+    journal: only events with a greater ``seq`` than ``event_after``
+    (cursor-based polling) and a smaller one than ``event_before``
+    (reading further back), the newest ``event_limit`` of them.
+    ``parts`` asks for what the whole board does not need on every
+    request: ``task_events`` (the history of each task, by task id).
     """
     if level not in ("simple", "advanced"):
         level = "simple"
+    project_root = Path(project_root).resolve()
     now = datetime.now(timezone.utc)
-    tdir = team_dir(project_root, team)
-    with _readonly(tdir) as conn:
+    with _readonly(team_dir(project_root, team)) as conn:
         team_row = _decode(conn.execute(
             "SELECT id, project_root, created_at, status, base_commit,"
             " config_json, spec_json FROM teams WHERE id = ?", (team,)).fetchone())
@@ -196,7 +230,7 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             " integration_base_commit, integration_commit_sha FROM runs"
             " WHERE team_id = ? ORDER BY number DESC LIMIT 1", (team,)).fetchone())
         tasks = [_decode(r) for r in conn.execute(
-            f"SELECT {_TASK_COLUMNS} FROM tasks WHERE team_id = ? ORDER BY id",
+            f"SELECT {_TASK_COLUMNS} FROM tasks WHERE team_id = ? ORDER BY rowid",
             (team,))]
         agents = [_decode(r) for r in conn.execute(
             f"SELECT {_AGENT_COLUMNS} FROM agents WHERE team_id = ? ORDER BY id",
@@ -208,47 +242,44 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             " source, recorded_at FROM token_usage WHERE team_id = ?"
             " ORDER BY recorded_at, id", (team,))]
         submissions = [_decode(r) for r in conn.execute(
-            "SELECT id, task_id, attempt, commit_sha, base_commit_sha, branch,"
-            " created_at, changed_files_json, verification_status, verifier"
-            " FROM submissions WHERE team_id = ? ORDER BY created_at, id",
-            (team,))]
+            f"SELECT {_SUBMISSION_COLUMNS} FROM submissions WHERE team_id = ?"
+            " ORDER BY created_at, rowid", (team,))]
         attempts = [_decode(r) for r in conn.execute(
             "SELECT task_id, attempt, verifier, actor, verdict, feedback,"
             " created_at FROM verification_attempts WHERE team_id = ?"
-            " ORDER BY task_id, attempt", (team,))]
-        cursor_sql = " AND seq > ?" if event_after is not None else ""
-        cursor_args: tuple = (team, event_after) if event_after is not None else (team,)
+            " ORDER BY task_id, rowid", (team,))]
         raw_events = conn.execute(
             "SELECT seq, event_id, run_id, task_id, actor_id, event_type,"
             " timestamp, metadata_json, hash FROM events WHERE team_id = ?"
-            f"{cursor_sql} ORDER BY seq DESC LIMIT ?", (*cursor_args, event_limit)
-        ).fetchall()
+            " ORDER BY seq", (team,)).fetchall()
 
     for t in tasks:
         meta = t.get("metadata")
         t["metadata"] = {k: meta[k] for k in _META_KEYS
                          if isinstance(meta, dict) and k in meta}
 
-    # Id to name: the simple level shows roles and titles, never ids.
     threshold = merge_config(team_row.get("config") or {})["heartbeat_timeout_s"]
     titles = {t["id"]: t["title"] for t in tasks}
     by_id = {t["id"]: t for t in tasks}
     first_task: dict[str, dict] = {}
     for t in tasks:
         first_task.setdefault(t.get("assignee"), t)
-    # Tasks whose result the lead accepted by decision: found once, read
-    # twice (the pairing of the journal events and the checker's count).
-    accepted_by_lead = {row["task_id"] for row in raw_events
-                        if row["event_type"] == "verification_passed"
-                        and isinstance(_decode(row).get("metadata"), dict)
-                        and (_decode(row).get("metadata") or {}).get("override")}
+    # Two executors can have one role (two "AI-аналитик" in a plan). They
+    # are told apart by a number, on their cards and on every line of
+    # the feed, so the reader never takes two people for one.
+    own = {a["id"]: viewmodel.role_name(first_task.get(a["id"])) for a in agents}
+    numbered = viewmodel.number_duplicates(own)
     # (agent, task) -> the role that agent wears on that task; (agent,
     # None) -> the specialist as a whole, named by its first task.
-    roles = {(a["id"], None): viewmodel.role_name(first_task.get(a["id"])) for a in agents}
-    roles.update({(t.get("assignee") or t.get("owner"), t["id"]): viewmodel.role_name(t)
-                  for t in tasks if t.get("assignee") or t.get("owner")})
-    role_by_agent = {agent_id: name for (agent_id, task_id), name in roles.items()
-                     if task_id is None}
+    roles = {(agent_id, None): name for agent_id, name in numbered.items()}
+    for t in tasks:
+        who = t.get("assignee") or t.get("owner")
+        if not who:
+            continue
+        role = viewmodel.role_name(t)
+        roles[(who, t["id"])] = numbered[who] if role == own.get(who) else role
+    # Spend is counted per role, with the specialists of one role summed.
+    role_by_agent = dict(own)
     quarantined = {t["id"] for t in tasks if t["metadata"].get("quarantine_dir")}
     checks_by_task: dict[str, list[dict]] = {}
     remarks: dict[str, str] = {}
@@ -256,12 +287,26 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         checks_by_task.setdefault(a["task_id"], []).append(a)
         if a.get("verdict") == "fail" and a.get("feedback"):
             remarks[a["task_id"]] = a["feedback"]
+    latest = {}
+    for s in submissions:
+        s["count"] = latest.get(s["task_id"], {}).get("count", 0) + 1
+        latest[s["task_id"]] = s            # the last one handed over, with their number
 
     # The checker is a specialist of the team too; the engine keeps no
     # agent row for one without tasks of its own.
     cards = [(a["id"], viewmodel.agent_view(a, tasks, level=level, now=now,
-                                            threshold_s=threshold)) for a in agents]
+                                            threshold_s=threshold, name=numbered[a["id"]]))
+             for a in agents]
     verifiers = tuple(sorted({a["verifier"] for a in attempts if a.get("verifier")}))
+    # Tasks whose result the lead accepted by decision: an attempt the
+    # engine records as passed, and not the checker's doing.
+    accepted_by_lead = set()
+    for row in raw_events:
+        if row["event_type"] != "verification_passed":
+            continue
+        meta = _decode(row).get("metadata")
+        if isinstance(meta, dict) and meta.get("override"):
+            accepted_by_lead.add(row["task_id"])
     if attempts or any(t["status"] == "awaiting_verification" for t in tasks):
         checker = viewmodel.verifier_view(tasks, attempts, accepted_by_lead)
         if level == "advanced":
@@ -272,17 +317,16 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     index_of = {agent_id: position for position, (ids, _view) in enumerate(cards)
                 for agent_id in (ids if isinstance(ids, tuple) else (ids,))}
 
-    events = []
-    last_by_task: dict[str, dict] = {}
-    task_events: dict[str, list[dict]] = {}
-    overridden: dict[str, str] = {}  # submission id -> task id, manual acceptance
-    for row in reversed(raw_events):  # oldest first, the order of a story
+    # One pass over the journal, oldest first: the feed, the history of
+    # every task and the timeline all come from this one list.
+    events, task_events, last_by_task = [], {}, {}
+    overridden: dict[str, str] = {}       # submission id -> task id, manual acceptance
+    for row in raw_events:
         e = _decode(row)
         raw_meta = e.get("metadata")
         e["metadata"] = _event_metadata(raw_meta, level)
         after_override = False
-        if (e.get("event_type") == "verification_passed"
-                and isinstance(raw_meta, dict)):
+        if e.get("event_type") == "verification_passed" and isinstance(raw_meta, dict):
             sid = raw_meta.get("submission_id")
             if raw_meta.get("override") and sid:
                 overridden[sid] = e.get("task_id")
@@ -298,15 +342,16 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             item["by"] = index_of.get(e.get("actor_id"))
             events.append(item)
             if e.get("task_id") is not None:
-                last_by_task[e["task_id"]] = item
                 task_events.setdefault(e["task_id"], []).append(item)
+                last_by_task[e["task_id"]] = item
     # The cursor follows the journal, not the filtered feed: the newest
     # events may all be hidden ones, and a cursor that stopped before
     # them would ask for the same empty page forever.
-    last_seq = raw_events[0]["seq"] if raw_events else (event_after or 0)
-
-    # A check history must not show a passed check for a manual acceptance.
-    manual_tasks = set(overridden.values())
+    last_seq = raw_events[-1]["seq"] if raw_events else (event_after or 0)
+    window = [item for item in events
+              if (event_after is None or item["seq"] > event_after)
+              and (event_before is None or item["seq"] < event_before)]
+    feed = window[-event_limit:] if event_limit > 0 else []
 
     run_view = None
     if run:
@@ -319,19 +364,31 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
                                 "integration_base_commit": run.get("integration_base_commit"),
                                 "integration_commit_sha": run.get("integration_commit_sha")}
 
-    specialists = [view for _ids, view in cards]
-
     # The clock of the team stops with its run; a finished team is not
     # "in work for three days".
     started = viewmodel.parse_time(team_row.get("created_at"))
     end = now
     if run and run.get("finished_at"):
         end = viewmodel.parse_time(run["finished_at"]) or now
+    now_iso = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    task_views = []
+    for t in tasks:
+        view = viewmodel.task_view(
+            t, level=level, now=now,
+            attempts=_checks(checks_by_task.get(t["id"]), t["id"] in accepted_by_lead),
+            titles=titles, threshold_s=threshold, by_id=by_id)
+        newest = last_by_task.get(t["id"])
+        if newest is not None:      # the newest line of the feed about it (spec 4.3)
+            view["last_event"] = {"title": newest["title"],
+                                  "detail": newest.get("detail", ""), "ts": newest.get("ts")}
+        view["result"] = _result(t, latest.get(t["id"]), level)
+        task_views.append(view)
 
     out = {
         "team": team,
         "created_at": team_row["created_at"],
-        "now": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "now": now_iso,
         # No readable start time: zero, which is at least not a lie.
         "elapsed_s": max(0, int((end - started).total_seconds())) if started else 0,
         "finished": bool(run and run.get("finished_at")),
@@ -339,21 +396,89 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         "level": level,
         "project": project_view(team_row, project_root, level),
         "progress": viewmodel.progress(tasks),
-        "tasks": [with_last_event(viewmodel.task_view(
-            t, level=level, now=now,
-            attempts=_checks(checks_by_task.get(t["id"]), t["id"] in manual_tasks),
-            titles=titles, threshold_s=threshold, by_id=by_id), last_by_task.get(t["id"]))
-            for t in tasks],
-        "agents": specialists,
+        "tasks": task_views,
+        "agents": [view for _ids, view in cards],
         "attention": viewmodel.attention_items(
             tasks, run, now=now, threshold_s=threshold, remarks=remarks),
-        "events": events,
+        "events": feed,
         "last_seq": last_seq,
         "cost": viewmodel.cost_view(usage, task_of=titles, role_of=role_by_agent),
+        # The plan as a graph (spec 6) and the time of every task (spec 7),
+        # both drawn only from what the engine recorded.
+        "plan": planview.plan_layout(tasks),
+        "timeline": planview.timeline(
+            task_views, task_events, team_row["created_at"],
+            end.isoformat(timespec="milliseconds").replace("+00:00", "Z")),
     }
     if level == "advanced":
-        out["tech"] = {"submissions": submissions, "attempts": attempts,
-                       "usage": usage}
+        out["tech"] = {"submissions": [{k: v for k, v in s.items() if k != "count"}
+                                       for s in submissions],
+                       "attempts": attempts, "usage": usage}
     if "task_events" in parts:
         out["task_events"] = task_events
     return out
+
+
+def result_file(project_root: Path, team: str, task_id: str, name: str
+                ) -> tuple[bytes, str] | None:
+    """One file of a task's result, as the engine pinned it (spec 8.5).
+
+    Only a file the task's latest hand-over consists of can be read, and
+    only as that hand-over pinned it: from its commit in a git project,
+    or from the project folder in shared mode. Nothing else on the disk
+    is reachable through the board. Returns the bytes and a content type,
+    or None when there is no such file.
+    """
+    root = Path(project_root).resolve()
+    with _readonly(team_dir(root, team)) as conn:
+        task = _decode(conn.execute(
+            "SELECT metadata_json, files_write_json FROM tasks"
+            " WHERE team_id = ? AND id = ?", (team, task_id)).fetchone())
+        if task is None:
+            return None
+        row = _decode(conn.execute(
+            "SELECT commit_sha, changed_files_json FROM submissions"
+            " WHERE team_id = ? AND task_id = ? ORDER BY created_at DESC, rowid DESC"
+            " LIMIT 1", (team, task_id)).fetchone()) or {}
+    files = (row.get("changed_files") or (task.get("metadata") or {}).get("changed_files")
+             or [])
+    if not files and not row.get("commit_sha"):
+        # Shared mode keeps neither a version nor a diff of what changed:
+        # the files the task declared are what the engine knows of.
+        files = task.get("files_write") or []
+    row = {"commit_sha": row.get("commit_sha"), "changed_files": files}
+    if name not in (row.get("changed_files") or []):
+        return None
+    try:
+        normalize_path(root, name, check_fs=False)
+    except EngineError:
+        return None
+    kind = ("image" if Path(name).suffix.lower() in RESULT_IMAGE
+            else "text" if Path(name).suffix.lower() in RESULT_TEXT else "other")
+    sha = row.get("commit_sha") or ""
+    try:
+        if _SHA.match(sha):
+            size = subprocess.run(["git", "-C", str(root), "cat-file", "-s", f"{sha}:{name}"],
+                                  capture_output=True, timeout=20, check=True).stdout
+            if int(size) > (RESULT_MAX_IMAGE if kind == "image" else RESULT_MAX_TEXT):
+                raise DashboardDataError(f"{name} is too large to show on the board")
+            data = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{name}"],
+                                  capture_output=True, timeout=20, check=True).stdout
+        else:
+            # Shared mode: no commit to pin. The file where the team works.
+            path = (root / name).resolve()
+            if root not in path.parents or not path.is_file():
+                return None
+            if path.stat().st_size > (RESULT_MAX_IMAGE if kind == "image" else RESULT_MAX_TEXT):
+                raise DashboardDataError(f"{name} is too large to show on the board")
+            data = path.read_bytes()
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise DashboardDataError(f"cannot read {name}: {exc}") from exc
+    if kind == "image":
+        return data, RESULT_IMAGE[Path(name).suffix.lower()]
+    # Text is shown as text, never as a page of its own: a result is the
+    # team's content, and the board does not run it. Anything else is a
+    # download.
+    if kind == "other":
+        return data, "application/octet-stream"
+    return data, "text/plain; charset=utf-8"

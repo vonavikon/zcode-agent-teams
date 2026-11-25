@@ -455,8 +455,8 @@ class TestSpecialistCards:
         assert view["does"] == "Собирает и сравнивает данные, делает выводы."
         assert view["worked_s"] == 500 and view["silent_s"] == 500   # silence is read from its tasks
         assert view["tasks"] == [
-            {"id": "t1", "title": "Собрать отчёт", "state": "В работе", "kind": "busy"},
-            {"id": "t1", "title": "Собрать отчёт", "state": "В очереди", "kind": "idle"}]
+            {"id": "t1", "title": "Собрать отчёт", "role": "AI-аналитик", "state": "В работе", "kind": "busy"},
+            {"id": "t1", "title": "Собрать отчёт", "role": "AI-аналитик", "state": "В очереди", "kind": "idle"}]
         assert view["checks"] is None
 
     def test_every_role_has_its_responsibility(self):
@@ -473,6 +473,17 @@ class TestSpecialistCards:
             ("Проверяет", "проверяет: Отчёт", 3, 2)
         idle = viewmodel.verifier_view([], attempts)
         assert (idle["state"], idle["doing"]) == ("Свободен", "ждёт результатов для проверки")
+
+    def test_specialists_of_one_role_are_told_apart_by_a_number(self):
+        same = viewmodel.number_duplicates({"w1": "AI-аналитик", "w2": "AI-редактор",
+                                            "w3": "AI-аналитик"})
+        assert same == {"w1": "AI-аналитик 1", "w2": "AI-редактор", "w3": "AI-аналитик 2"}
+        alone = viewmodel.number_duplicates({"w1": "AI-аналитик", "w2": "AI-инженер"})
+        assert alone == {"w1": "AI-аналитик", "w2": "AI-инженер"}
+        card = agent_view({"id": "w3", "role": "executor", "status": "idle",
+                           "heartbeat_at": None, "restarts": 0},
+                          [task(assignee="w3", lens="behavior")], now=NOW, name="AI-аналитик 2")
+        assert card["name"] == "AI-аналитик 2" and card["does"] == "Собирает и сравнивает данные, делает выводы."
 
     def test_the_actor_of_a_check_is_the_checker_under_any_id(self):
         passed = event_view(event("verification_passed", actor="v-9"), titles=TITLES, roles=ROLES)

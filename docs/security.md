@@ -39,8 +39,18 @@
   beacon, no inline script or style. Every value from the wire is
   escaped, or forced to a number, before it reaches the markup; this
   is pinned by tests that run the page script on a hostile snapshot.
+- `/api/results/<task>/<file>` answers only with a file that the
+  task's latest hand-over consists of (a list the engine recorded), read
+  as that hand-over pinned it (`git show <sha>:<path>`, a read-only
+  command) or, in shared mode, from the project folder; the name is
+  checked against path traversal. Text is served as `text/plain` under
+  `default-src 'none'; sandbox`, never as HTML: a result is the team's
+  own content and cannot act as a page of the board. Pictures are
+  served as pictures, everything else as an attachment; each kind has a
+  size limit.
 - Not a boundary: the board has no authentication. Whoever can reach
-  the address reads what the lead reads (titles, files, remarks).
+  the address reads what the lead reads (titles, files, results,
+  remarks).
 
 ## NOT a security boundary (documented limitation)
 
