@@ -9,6 +9,12 @@ Authority model (spec section 6): the lead token printed once by init
 authorizes lead-side verdicts and interventions; an execution token
 printed once by claim authorizes the executor's submit. Free-text --by
 values are recorded as actors, never trusted as authority.
+
+Versions of a task (v2.1 spec 3.2, 3.3), each bound to a SHA. The
+trusted base is what an attempt is checked against: the composition of
+the parents' accepted commits, or the run base. The draft checkpoint is
+what the last failed attempt left, kept to continue the work and never
+trusted. The accepted SHA is the result the gate accepted.
 """
 from __future__ import annotations
 
@@ -34,7 +40,8 @@ import agent_teams.workspaces as _ws
 def workspaces_ref():
     return _ws
 
-from .validation import NAME_RE, normalize_acceptance, validate_team_spec
+from .validation import (NAME_RE, normalize_acceptance, topological_order,
+                         validate_team_spec)
 
 TEAMS_DIR = ".agent-teams"
 
@@ -257,6 +264,15 @@ def _last_event(store: Store, team_id: str) -> dict:
 
 
 def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
+    """Claim a pending task for an executor: a new execution attempt.
+
+    Three versions tell the attempt where it stands (spec 3.2, 3.3). The
+    trusted base is what the attempt is checked against: the composition
+    of the parents' accepted commits, else the run base. The draft
+    checkpoint is what the last failed attempt left; the new attempt may
+    continue from it, but it never becomes the base. The accepted SHA is
+    set by the gate alone.
+    """
     store, d, team_row = _open_team(root, team)
     try:
         with StateLock(d, f"claim:{by}"):
@@ -264,29 +280,33 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
             task = store.get_task(team, task_id)
             if task is None:
                 raise NotFoundError(f"task not found: {task_id}")
-            checkpoint = None
-            last = store.latest_submission(team, task_id)
-            if last and last.get("verification_status") in ("passed",
-                                                            "failed"):
-                checkpoint = last["commit_sha"]
+            # A refused claim leaves nothing behind: who claims, what the
+            # task depends on and whether it may be claimed at all are
+            # settled before git is touched, so no worktree is made for a
+            # claim that fails.
+            agent = store.get_agent(team, by)
+            if agent and agent["role"] not in ("executor", "lead"):
+                raise StateRejected(
+                    f"agent {by!r} has role {agent['role']!r}: only executors "
+                    "can claim tasks")
+            project_root = Path(team_row["project_root"])
+            isolated = _isolated(project_root, config)
+            dep_base = _dependency_base(store, team, task, inherit=isolated)
+            statemachine.assert_transition(
+                task["status"], statemachine.TaskStatus.IN_PROGRESS,
+                task_id=task_id)
+            # The trusted base the attempt is measured against, and the
+            # commit its worktree grows from (spec 3.2, 3.3).
+            base = start = None
+            if isolated:
+                base = _trusted_base(store, project_root, d, team, task,
+                                     dep_base, team_row.get("base_commit"),
+                                     by=by)
+                start = _attempt_start(project_root, task, base)
             workspace = _prepare_workspace(root, d, team, task, config,
-                                           run_base=team_row.get("base_commit"),
-                                           checkpoint=checkpoint)
+                                           base=base, start=start)
             with store.transaction():
                 recorded = []
-                agent = store.get_agent(team, by)
-                if agent and agent["role"] not in ("executor", "lead"):
-                    raise StateRejected(
-                        f"agent {by!r} has role {agent['role']!r}: only executors "
-                        "can claim tasks")
-                for dep in task["deps"]:
-                    dep_row = store.get_task(team, dep)
-                    if dep_row is None:
-                        raise NotFoundError(f"dependency not found: {dep}")
-                    if dep_row["status"] != "completed":
-                        raise StateRejected(
-                            f"dependency {dep} is not completed "
-                            f"(status={dep_row['status']})")
                 token = secrets.token_hex(16)
                 ts = now_iso()
                 lease = (datetime.now(timezone.utc)
@@ -305,14 +325,21 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
                         timespec="milliseconds").replace("+00:00", "Z"),
                     "heartbeat_at": ts}
                 if workspace is not None:
+                    # Every version of the task is bound to a SHA: the base
+                    # the checks are made against, and what it is made of.
                     fields.update(workspace_path=workspace.path,
                                   branch=workspace.branch,
-                                  base_commit=workspace.base_commit)
+                                  base_commit=base,
+                                  trusted_base_commit=base,
+                                  dependency_base=dep_base)
                     recorded.append(eventlog.append_event(
                         store.conn, event_type="workspace_created", team_id=team,
                         run_id=_current_run(store, team)["id"], task_id=task_id,
-                        actor_id=by, metadata={"branch": workspace.branch,
-                                               "base": workspace.base_commit}))
+                        actor_id=by,
+                        metadata={"branch": workspace.branch, "base": base,
+                                  "start": start,
+                                  "dependency_base":
+                                      [entry["task"] for entry in dep_base]}))
                 store.update_task(team, task_id, **fields)
                 store.update_agent(team, by, status="running", current_task=task_id,
                                    heartbeat_at=ts)
@@ -332,30 +359,183 @@ def op_claim(root: Path, team: str, task_id: str, by: str) -> dict:
         store.close()
 
 
+def _isolated(project_root: Path, config: dict) -> bool:
+    """True when every attempt gets a worktree of its own: the team does
+    not work 'shared' and the project is a git repository."""
+    mode = config.get("workspace", "auto")
+    if mode == "shared":
+        return False
+    return mode == "worktree" or _ws.is_git_project(project_root)
+
+
+def _dependency_base(store: Store, team: str, task: dict, *,
+                     inherit: bool) -> list[dict]:
+    """What a task inherits from its parents (spec 3.3): one
+    ``{"task", "accepted_commit_sha"}`` per parent, in a deterministic
+    order (a parent that depends on another parent follows it).
+
+    Every parent must be completed. Nothing is inherited without
+    ``inherit`` (no worktree to grow: shared mode), so the list is empty.
+    """
+    rows = []
+    for dep in dict.fromkeys(task["deps"]):
+        row = store.get_task(team, dep)
+        if row is None:
+            raise NotFoundError(f"dependency not found: {dep}")
+        if row["status"] != "completed":
+            raise StateRejected(
+                f"dependency {dep} is not completed (status={row['status']})")
+        rows.append(row)
+    if not rows or not inherit:
+        return []
+    parents = {row["id"] for row in rows}
+    order = topological_order(
+        [{"id": row["id"], "deps": [dep for dep in row["deps"] if dep in parents]}
+         for row in rows]) or [row["id"] for row in rows]
+    by_id = {row["id"]: row for row in rows}
+    base = []
+    for parent in order:
+        sha = by_id[parent].get("accepted_commit_sha")
+        if not sha:
+            raise StateRejected(
+                f"dependency {parent} is completed but has no accepted commit, "
+                f"so task {task['id']} has nothing to inherit from it")
+        base.append({"task": parent, "accepted_commit_sha": sha})
+    return base
+
+
+def _trusted_base(store: Store, project_root: Path, d: Path, team: str,
+                  task: dict, dep_base: list[dict], run_base: str | None, *,
+                  by: str) -> str | None:
+    """The commit the changes of an attempt are measured against (spec
+    3.2, 3.3): everything in it is verified.
+
+    In this order: the accepted result of the task itself; for a task
+    with parents, the composition it was built on before while that still
+    contains every parent result, else a new composition of the parents'
+    accepted commits; else the run base. What a failed attempt left is
+    never part of it: that is the draft checkpoint, a place to continue
+    the work, not a base for the checks.
+    """
+    accepted = task.get("accepted_commit_sha")
+    if accepted:
+        return accepted
+    sources = [entry["accepted_commit_sha"] for entry in dep_base]
+    if not sources:
+        return run_base or task.get("base_commit")
+    previous = task.get("trusted_base_commit")
+    required = ([run_base] if run_base else []) + sources
+    if previous and all(_ws.is_ancestor(project_root, sha, previous)
+                        for sha in required):
+        # The same parents give the same base: a rebuild continues where
+        # the last attempt left off.
+        return previous
+    return _compose_dependency_base(store, project_root, d, team, task,
+                                    dep_base, by=by)
+
+
+def _compose_dependency_base(store: Store, project_root: Path, d: Path,
+                             team: str, task: dict, dep_base: list[dict], *,
+                             by: str) -> str:
+    """Merge the parents' accepted commits into the commit a dependent
+    task starts from. StateRejected when a commit is gone or the parents
+    conflict; nothing of a failed composition is kept."""
+    for entry in dep_base:
+        if not _commit_exists(project_root, entry["accepted_commit_sha"]):
+            raise StateRejected(
+                f"accepted commit {entry['accepted_commit_sha'][:12]} of task "
+                f"{entry['task']} is missing from the repository "
+                "(garbage collected?)")
+    parents = ", ".join(entry["task"] for entry in dep_base)
+    composed = _ws.compose_commits(
+        project_root, d, task["id"],
+        [entry["accepted_commit_sha"] for entry in dep_base],
+        message=(f"agent-teams: dependency base of {team}/{task['id']} "
+                 f"(parents: {parents})"))
+    if isinstance(composed, _ws.CompositionConflict):
+        raise _dependency_conflict(store, team, task, dep_base, composed,
+                                   by=by)
+    return composed
+
+
+def _commit_exists(project_root: Path, sha: str) -> bool:
+    proc = subprocess.run(["git", "cat-file", "-e", sha + "^{commit}"],
+                          cwd=str(project_root), capture_output=True, text=True)
+    return proc.returncode == 0
+
+
+def _dependency_conflict(store: Store, team: str, task: dict,
+                         dep_base: list[dict], conflict, *,
+                         by: str) -> StateRejected:
+    """The rejection of a claim whose parents conflict. It names the file
+    and both parents, and it is recorded as an event before it is raised
+    so that the lead finds it in the logs and in the report."""
+    shas = [entry["accepted_commit_sha"] for entry in dep_base]
+    incoming = dep_base[shas.index(conflict.incoming)]["task"]
+    merged = dep_base[:shas.index(conflict.incoming)]
+    files = list(conflict.files)
+    owners = [entry["task"] for entry in merged
+              if set(files) & _own_changes(store, team, entry)]
+    others = owners or [entry["task"] for entry in merged]
+    between = [incoming, *others]
+    rejected = StateRejected(
+        f"task {task['id']}: DEPENDENCY_CONFLICT: the accepted results of "
+        f"parents {incoming} and {', '.join(others)} conflict in "
+        f"{', '.join(files)}. The dependency base of {task['id']} cannot be "
+        "composed: the task stays pending and nothing of the parents was "
+        "changed.",
+        detail={"code": "DEPENDENCY_CONFLICT", "task": task["id"],
+                "files": files, "between": between})
+    with store.transaction():
+        eventlog.append_event(
+            store.conn, event_type="workspace_conflict", team_id=team,
+            run_id=_current_run(store, team)["id"], task_id=task["id"],
+            actor_id=by, metadata={"kind": "dependency_conflict",
+                                   "files": files, "between": between})
+        _recorded(store, team, [_last_event(store, team)])
+    return rejected
+
+
+def _own_changes(store: Store, team: str, entry: dict) -> set[str]:
+    """The paths the accepted submission of a parent changed against the
+    base of its own attempt."""
+    for record in store.list_submissions(team, entry["task"]):
+        if record.get("commit_sha") == entry["accepted_commit_sha"]:
+            return set(record.get("changed_files") or [])
+    return set()
+
+
+def _attempt_start(project_root: Path, task: dict, base: str | None) -> str | None:
+    """Where the worktree of an attempt grows from: the draft a failed
+    attempt left, when that descends from the trusted base, else the base
+    itself. The draft lets the work continue; it does not move the base
+    the checks are made against."""
+    draft = task.get("draft_checkpoint_commit")
+    if base and draft and _ws.is_ancestor(project_root, base, draft):
+        return draft
+    return base
+
+
 def _prepare_workspace(root: Path, d: Path, team: str, task: dict,
-                       config: dict, *, run_base: str | None = None,
-                       checkpoint: str | None = None):
+                       config: dict, *, base: str | None = None,
+                       start: str | None = None):
     """Create or reuse the task worktree when the team uses isolation.
 
     Runs under the state lock but outside the SQLite transaction: git is
-    slow and must not hold the database. An orphaned worktree (a claim
-    that failed later) is simply reused by the next claim.
+    slow and must not hold the database. ``base`` is the trusted base of
+    the attempt and ``start`` the commit its worktree grows from (the
+    base, or the draft of a failed attempt). An orphaned worktree (a
+    claim that stopped after git ran) is reused when it sits on
+    ``start``.
     """
-    from . import workspaces
-
-    mode = config.get("workspace", "auto")
-    if mode == "shared":
-        return None
     project_root = Path(root).resolve()
-    if mode == "auto" and not workspaces.is_git_project(project_root):
+    if not _isolated(project_root, config):
         return None
     # Every execution attempt gets a fresh workspace and branch
     # (hardening spec 3.3): a fenced-out old executor physically cannot
-    # touch the new attempt's directory. The base is the task's last
-    # submitted checkpoint (verified work carries over), else the run base.
-    base = checkpoint or run_base or task.get("base_commit")
-    return workspaces.create_workspace(project_root, d, team, task["id"],
-                                        base, attempt=task["attempt"] + 1)
+    # touch the new attempt's directory.
+    return _ws.create_workspace(project_root, d, team, task["id"],
+                                start or base, attempt=task["attempt"] + 1)
 
 
 # ---------------------------------------------------------------- submit
@@ -429,7 +609,11 @@ def _build_submission(store: Store, d: Path, team: str, task: dict) -> dict:
     from . import workspaces
 
     ws_path = task.get("workspace_path")
-    base = task.get("base_commit")
+    # The changes of an attempt are cumulative and are checked against
+    # the trusted base, never against the draft a failed attempt left
+    # (spec 3.2): a violation found in an earlier attempt cannot be hidden
+    # by a retry that only adds allowed work.
+    base = task.get("trusted_base_commit") or task.get("base_commit")
     common = {"team_id": team, "task_id": task["id"], "attempt": task["attempt"],
               "id": uuid.uuid4().hex}
     if not ws_path or not base or not Path(ws_path).exists():
@@ -456,16 +640,44 @@ def _build_submission(store: Store, d: Path, team: str, task: dict) -> dict:
             "work on top of the task base",
             detail={"code": "SUBMIT_REJECTED_DETACHED_HEAD", "head": head,
                     "base": base})
+    # The results of the parents are the inputs of the task: a copy of
+    # one of them is not a write outside files_write (spec 3.3).
+    inherited = _inherited_paths(project_root, store, team, task, base)
     diff = workspaces.capture_diff(ws, base)
-    violations = workspaces.write_set_violations(diff, task["files_write"])
+    violations = workspaces.write_set_violations(diff, task["files_write"],
+                                                 inherited)
     workspaces.pin_submission(project_root, team, task["id"], common["id"],
                               head)
     return {**common, "commit_sha": head, "base_commit_sha": base,
             "branch": task.get("branch"),
-            "changed_files": list(diff.changed), "violations": violations}
+            "changed_files": list(workspaces.judged_changes(diff, inherited)),
+            "violations": violations}
 
 
 # ---------------------------------------------------------------- verify
+
+
+def _inherited_paths(project_root: Path, store: Store, team: str,
+                     task: dict, base: str | None) -> tuple[str, ...]:
+    """The paths a task with parents received from them (spec 3.3): what
+    its trusted base holds on top of the run base."""
+    if not base or not task.get("dependency_base"):
+        return ()
+    run_base = (store.get_team(team) or {}).get("base_commit")
+    if not run_base or run_base == base:
+        return ()
+    return _ws.changed_paths(project_root, run_base, base)
+
+
+def _evidence_notes(report: dict) -> list[dict]:
+    """The citations of a validated report, one note per evidence item:
+    what was checked to exist in the snapshot of the submission."""
+    return [{"criterion_id": criterion.get("criterion_id"),
+             "path": item.get("path"),
+             "line_start": item.get("line_start"),
+             "line_end": item.get("line_end")}
+            for criterion in report.get("criteria", [])
+            for item in criterion.get("evidence") or []]
 
 
 def op_verify(root: Path, team: str, task_id: str, verdict: str,
@@ -509,34 +721,48 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                         project_root, d, task_id, submission["commit_sha"])
                     snapshot_task = {**task,
                                      "workspace_path": str(snapshot_dir)}
+                # What the evidence of a PASS was checked against: the
+                # snapshot of the submission ("verified"), or nothing
+                # ("not_checked": a lead override, or no snapshot to check
+                # against). It stays "pending" while the gate says FAIL.
+                evidence_status, evidence_notes = "pending", []
                 try:
                     forced, criteria_report = quality.forced_failures(
                         snapshot_task, project_root)
+                    # Verification enforcement (hardening spec 4.2): a PASS
+                    # needs a structured report bound to this submission, or
+                    # an explicit lead override with a reason (audited).
+                    override = False
+                    if verdict == "pass":
+                        if submission is None or not submission.get("commit_sha"):
+                            pass  # shared mode: no snapshot to bind a report to
+                        elif report is None:
+                            if override_reason.strip():
+                                override = True
+                            else:
+                                raise UsageError(
+                                    "VERIFICATION_REPORT_MISSING: a PASS "
+                                    "requires --report (the verifier's JSON) or "
+                                    "--override-reason with an explicit lead "
+                                    "decision",
+                                    detail={"code": "VERIFICATION_REPORT_MISSING"})
+                        else:
+                            from .verification import validate_report
+
+                            # The evidence is checked where it has to exist:
+                            # in the immutable snapshot of the submission,
+                            # never in the executor's live worktree (spec 3.4).
+                            validate_report(report, task=task,
+                                            submission=submission,
+                                            snapshot_root=snapshot_dir)
+                            evidence_status = ("verified"
+                                               if snapshot_dir is not None
+                                               else "not_checked")
+                            evidence_notes = _evidence_notes(report)
                 finally:
+                    # The snapshot lives exactly as long as the checks.
                     if snapshot_dir is not None:
                         workspaces.drop_snapshot(project_root, d, task_id)
-                # Verification enforcement (hardening spec 4.2): a PASS
-                # needs a structured report bound to this submission, or
-                # an explicit lead override with a reason (audited).
-                override = False
-                if verdict == "pass":
-                    if submission is None or not submission.get("commit_sha"):
-                        pass  # shared mode: no snapshot to bind a report to
-                    elif report is None:
-                        if override_reason.strip():
-                            override = True
-                        else:
-                            raise UsageError(
-                                "VERIFICATION_REPORT_MISSING: a PASS "
-                                "requires --report (the verifier's JSON) or "
-                                "--override-reason with an explicit lead "
-                                "decision",
-                                detail={"code": "VERIFICATION_REPORT_MISSING"})
-                    else:
-                        from .verification import validate_report
-
-                        validate_report(report, task=task,
-                                        submission=submission)
 
                 if verdict == "pass" and forced:
                     verdict = "fail"
@@ -550,11 +776,13 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                         submission["id"], verification_status="passed",
                         verifier=by,
                         report=report or {"override_reason": override_reason}
-                        if override else (report or {}))
+                        if override else (report or {}),
+                        evidence_status=evidence_status,
+                        evidence_notes=evidence_notes)
                 if override and submission is not None:
                     store.update_submission(
                         submission["id"], verification_status="overridden",
-                        verifier=by)
+                        verifier=by, evidence_status="not_checked")
 
                 if verdict == "pass":
                     store.add_attempt({
@@ -573,8 +801,13 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                                           (submission or {}).get("id")}))
                     accepted_sha = (submission or {}).get("commit_sha") or None
                     if accepted_sha:
+                        # From now on the accepted result is the trusted
+                        # base of the task; what its attempt grew out of
+                        # is no longer a draft.
                         store.update_task(team, task_id,
-                                          accepted_commit_sha=accepted_sha)
+                                          accepted_commit_sha=accepted_sha,
+                                          trusted_base_commit=accepted_sha,
+                                          draft_checkpoint_commit=None)
                     statemachine.apply_transition(
                         store.conn, task, statemachine.TaskStatus.COMPLETED,
                         event_type="verification_passed", run_id=run_id,
@@ -604,7 +837,14 @@ def op_verify(root: Path, team: str, task_id: str, verdict: str,
                         "task_id": task_id, "attempt": attempt_no, "verifier": by,
                         "actor": "lead", "verdict": "fail",
                         "report": report or {}, "feedback": feedback})
-                    store.update_task(team, task_id, verification_failures=failures)
+                    draft = {}
+                    if submission is not None and submission.get("commit_sha"):
+                        # What the attempt left is kept as a draft: the
+                        # next attempt may continue from it, but it is
+                        # never a trusted base (spec 3.2).
+                        draft["draft_checkpoint_commit"] = submission["commit_sha"]
+                    store.update_task(team, task_id,
+                                      verification_failures=failures, **draft)
                     extra = {"attempt": attempt_no, "failures": failures,
                              "feedback": feedback}
                     if failures >= config["max_verification_failures"]:
@@ -1340,6 +1580,19 @@ def op_inspect(root: Path, team: str, task_id: str) -> dict:
         task_events = eventlog.list_events(store.conn, team, task_id=task_id)
         task.pop("execution_token_hash", None)  # never leak hashes
         return {"task": task,
+                # Every version the task submitted, each with the trusted
+                # base its attempt was checked against (spec 3.2).
+                "submissions": [
+                    {"submission_id": record["id"],
+                     "attempt": record["attempt"],
+                     "commit_sha": record["commit_sha"],
+                     "base_commit_sha": record["base_commit_sha"],
+                     "changed_files": record["changed_files"],
+                     "verification_status": record["verification_status"],
+                     "evidence_status": record["evidence_status"],
+                     "verifier": record["verifier"],
+                     "created_at": record["created_at"]}
+                    for record in store.list_submissions(team, task_id)],
                 "attempts": [{k: a[k] for k in ("attempt", "verdict", "verifier",
                                                 "feedback", "created_at")}
                              for a in attempts],
