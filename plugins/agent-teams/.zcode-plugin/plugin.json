@@ -1,6 +1,6 @@
 {
   "name": "agent-teams",
-  "version": "2.1.0a1",
+  "version": "2.1.0a2",
   "description": "Subagent teams for ZCode: isolated git worktrees per task, machine-checked acceptance criteria, an integration gate, run metrics and Langfuse export",
   "description_i18n": {
     "en": "Subagent teams for ZCode: isolated git worktrees per task, machine-checked acceptance criteria, an integration gate, run metrics and Langfuse export",

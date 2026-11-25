@@ -26,8 +26,13 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 4. **Gate**: on every `VERIFICATION REQUEST` spawn a verifier
    (`references/prompt-verifier.md`, read-only). The engine itself runs
    the command-backed criteria; your verdict still needs the lead token:
-   - PASS -> `team.py verify --task <tid> --verdict pass --lead-token <tok>`
-   - FAIL -> `... --verdict fail --feedback "<what exactly>" ...`
+   - PASS -> the verifier's answer is one JSON object. Save it to a file
+     and pass it: `team.py verify --task <tid> --verdict pass --report report.json --lead-token <tok>`
+   - PASS by your own decision, without a report, only with the reason:
+     `... --verdict pass --override-reason "<why>" --lead-token <tok>`.
+     It is audited, and the board shows it as a manual acceptance,
+     never as a passed check.
+   - FAIL -> `... --verdict fail --feedback "<what exactly>" --lead-token <tok>`
    A failed required machine criterion or a write outside `files_write`
    overrides PASS into FAIL automatically. The second failed round (by
    default) blocks the task: `release` it or handle it yourself.
@@ -37,17 +42,26 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 6. **Finish**: `team.py status` (all completed), `report --out run.html`,
    `metrics`, optionally `langfuse --name "<run name>"`. Give the owner
    the summary and the report path.
+7. **Board** (any time after init): `python <skill>/scripts/team.py ui --team <id> --project-root <root>`
+   prints an address and serves a read-only board in the browser: the
+   plan, what each specialist is doing, what waits for the owner's
+   decision and why, in plain words. Offer it when the owner wants to
+   watch or is not technical. `--open` opens the browser; it stops
+   with Ctrl-C. Nothing on the board can change the run.
 
 ## Task schema
 
 ```json
 {
+  "title": "Security review of the billing service",
+  "goal": "Find what an attacker could reach in billing and say what to fix first",
   "config": {"workspace": "auto", "max_verification_failures": 2},
   "agents": [{"id": "sec-lens", "role": "executor"}],
   "tasks": [
     {
       "id": "lens-security",
       "title": "security lens review",
+      "description": "Read the auth and payment paths, list findings with file:line",
       "assignee": "sec-lens",
       "lens": "security",
       "files_read": ["src/auth.py"],
@@ -64,6 +78,10 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 }
 ```
 
+`title`, `goal` and a task's `description` are optional words for people:
+the board shows them to the owner as they are, so write them for the
+owner, not for the engine.
+
 Acceptance types: `test`, `file_check`, `security_check` (each requires a
 `verification` shell command the engine runs in the task workspace),
 `code_review`, `documentation`, `manual` (human or verifier judgement).
@@ -78,7 +96,8 @@ Inspection: `status`, `inspect`, `graph`, `agents`, `logs`, `diff`,
 Economics: `tokens`, `usage --notification FILE`, `cost`, `metrics`,
 `report --out FILE`, `langfuse`.
 Integration: `integrate [--check CMD] [--apply]`.
-Mailbox: `message`, `read`. All commands take `--project-root`.
+Mailbox: `message`, `read`. Board: `ui [--host] [--port] [--open]`.
+All commands take `--project-root` and `--json`.
 
 ## Rules for the lead
 

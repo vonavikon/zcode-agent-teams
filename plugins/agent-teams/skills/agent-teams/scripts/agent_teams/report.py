@@ -10,7 +10,7 @@ import html
 from pathlib import Path
 
 from . import events as eventlog
-from .observability import collect_metrics, compute_cost
+from .observability import collect_metrics, cost_of
 from .storage import Store
 
 
@@ -51,7 +51,7 @@ def _task_sections(store: Store, team: str, tasks: list[dict]) -> list[str]:
         violations = task.get("metadata", {}).get("workspace_violations", [])
         usage = store.list_usage(team, task_id=task["id"])
         tokens = sum(u.get("total_tokens") or 0 for u in usage)
-        cost = sum(filter(None, (compute_cost(u)[0] for u in usage)))
+        cost = sum(filter(None, (cost_of(u)[0] for u in usage)))
         attempts_body = "".join(rows) if rows else \
             '<tr><td colspan="5">no verification attempts yet</td></tr>'
         violations_html = ""

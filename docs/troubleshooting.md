@@ -27,6 +27,14 @@
 - Integration conflicts: the conflicting files are listed; resolve them
   in a task branch (or rework the overlap) and integrate again. Task
   branches and the project branch are never touched by a failed gate.
+- `team.py ui`: `port ... is already in use` - another board (or another
+  program) holds the port: pass `--port`, or `--port 0` for any free
+  one. `team ... has no state ...; run init first` - the board needs a
+  team that exists.
+- The board says the connection is lost - the `team.py ui` process is
+  not running any more: restart it; the page keeps the last state it
+  saw and says so. `unknown Host` - open the address exactly as it was
+  printed (`127.0.0.1`), not through another name.
 - `database ... newer engine version` - the team was created by a newer
   engine; upgrade the plugin.
 - `no git repository` with workspace `worktree` - switch the config to

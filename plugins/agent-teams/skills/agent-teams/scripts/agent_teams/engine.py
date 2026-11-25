@@ -1109,10 +1109,16 @@ def op_tokens(root: Path, team: str, task_id: str, add: int, by: str = "lead",
                 raise NotFoundError(f"task not found: {task_id}")
             run = _current_run(store, team)
             if add:
+                from .observability import compute_cost
+
+                # The cost is stored with the record, as for a notification:
+                # it is the price of the day the work was done.
+                cost, cost_quality = compute_cost({"model": model, "total_tokens": add})
                 store.add_usage({
                     "team_id": team, "run_id": run["id"] if run else "",
                     "task_id": task_id, "agent_id": by, "model": model,
-                    "total_tokens": add, "source": source,
+                    "total_tokens": add, "cost_usd": cost,
+                    "cost_quality": cost_quality, "source": source,
                     "dedup_key": dedup_key})
                 store.update_task(team, task_id, tokens=task["tokens"] + add)
                 eventlog.append_event(
@@ -1469,7 +1475,7 @@ def op_diff(root: Path, team: str, task_id: str) -> dict:
 
 
 def op_cost(root: Path, team: str) -> dict:
-    from .observability import compute_cost
+    from .observability import cost_of
 
     store, d, _team = _open_team(root, team)
     try:
@@ -1480,7 +1486,7 @@ def op_cost(root: Path, team: str) -> dict:
             slot = by_task.setdefault(record["task_id"] or "-",
                                       {"tokens": 0, "cost_usd": 0.0})
             slot["tokens"] += record.get("total_tokens") or 0
-            cost, _quality = compute_cost(record)
+            cost, _quality = cost_of(record)
             slot["cost_usd"] += cost or 0.0
         total = round(sum(v["cost_usd"] for v in by_task.values()), 6)
         return {"per_task": {k: {"tokens": v["tokens"],

@@ -13,4 +13,16 @@ Every cost carries a quality flag:
   guessed number.
 
 `cost` breaks the run down per task; `metrics` adds cost per task and
-per successful task; the Langfuse trace carries the total.
+per successful task; the Langfuse trace carries the total; the board
+shows the total and says "not less than" when some records are unknown.
+
+The cost is computed once, when the record is written (from a
+notification or by the `tokens` command), and stored with it as
+`cost_usd` and `cost_quality`. It is the price of the day the work was
+done: a later change of the table does not rewrite the history, and
+every reader reports the stored value. A record from before costs were
+stored has none and is estimated from the current table.
+
+Of the table's names, the longest one that matches the model wins:
+`glm-5.3-flash` is priced as itself, not as `glm-5.3` (whose name is a
+substring of it).

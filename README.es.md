@@ -16,6 +16,7 @@ Una adaptación del enfoque de [Claude Code Agent Teams](https://code.claude.com
 - **Puerta de integración y apply**: los SHA aceptados se fusionan en orden DAG en una rama de integración con comprobación opcional; apply es un paso aparte de fast-forward que rechaza un proyecto sucio o una base movida
 - **Recuperación y fencing**: timeouts de lease, heartbeat y del intento completo; los intentos perdidos se aislan (token muerto, worktree en cuarentena conservado) y vuelven a la cola dentro de los límites
 - **Observabilidad**: tokens desde las notificaciones de los subagentes, coste con indicadores de calidad explícitos, métricas de la ejecución incluida la comparación equipo frente a un solo agente, un informe HTML autosuficiente y una exportación idempotente a Langfuse
+- **Tablero en vivo para un responsable no técnico**: `team.py ui` abre en el navegador una página de solo lectura con el plan, qué hace ahora cada especialista, qué espera la decisión del responsable y por qué, en palabras claras; nada en ella puede cambiar la ejecución
 
 Roles: el lead es la sesión principal de ZCode; los teammates y verificadores son subagentes (los perfiles de rol están en `agents/`).
 
@@ -34,11 +35,12 @@ lead: tasks.json (validated: DAG, paths, write overlaps)
        └─ teammate: claim (execution token, worktree) → work → submit
             └─ lead spawns a verifier (read-only) on each VERIFICATION REQUEST
                  ├─ engine runs command-backed criteria itself
-                 ├─ PASS → team.py verify --verdict pass --lead-token ...
+                 ├─ PASS → verify --verdict pass --report report.json --lead-token ...
                  └─ FAIL → verify --verdict fail --feedback "..." → executor fixes
                       (2nd FAIL by default → blocked → release or handle)
   └─ team.py integrate --lead-token ... [--check CMD] [--apply]
   └─ team.py status → all completed; report --out run.html; metrics; langfuse
+  └─ team.py ui → live read-only board in the browser for the owner
 
 ```
 
@@ -66,6 +68,7 @@ plugins/agent-teams/
     agent_teams/                     the package (engine, storage, locks,
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
+                                     + dashboard/ (the board page)
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

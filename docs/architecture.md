@@ -1,6 +1,6 @@
 # Architecture
 
-Six logical components (spec section 2), one package
+Seven logical components (spec section 2), one package
 `plugins/agent-teams/skills/agent-teams/scripts/agent_teams/`:
 
 | Component | Module | Responsibility |
@@ -11,6 +11,7 @@ Six logical components (spec section 2), one package
 | Quality gate | `quality.py` | machine-checked criteria, forced FAIL, integration gate |
 | Observability | `observability.py`, `langfuse.py`, `report.py` | usage, cost, metrics, export, HTML report |
 | Recovery | `engine.py` (recover/heartbeat) | expired leases, restart limits, worktree reuse |
+| Board | `viewmodel.py`, `dashboard_data.py`, `dashboard_server.py`, `dashboard/` | the engine's state in the reader's words, one read-only snapshot per request, a local page (spec 16) |
 
 Team directory: `<project_root>/.agent-teams/<team>/`
 
@@ -29,6 +30,12 @@ apply, and a run state machine (active, integration_running,
 integration_failed, apply_pending, finished). Entry points:
 `team.py` (the engine CLI), `team_v02.py` (the legacy
 single-file engine for teams created before v0.3).
+
+The board is the only reader that does not go through `engine.op_*`:
+those open the database read-write (they may migrate and checkpoint),
+so `dashboard_data` opens it strictly read-only and returns one
+consistent snapshot; `viewmodel` is the single place that turns tasks,
+events and runs into words.
 
 ## Design rules
 
