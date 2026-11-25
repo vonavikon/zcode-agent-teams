@@ -156,3 +156,70 @@ class TestUiCommand:
         with pytest.raises(SystemExit) as stopped:
             cli.build_parser().parse_args(["ui"])
         assert stopped.value.code == 2   # argparse usage error, before anything runs
+
+
+class TestATokenThatStartsWithADash:
+    """A lead token may begin with a dash (one team in 64 before 2.1.0a3).
+    On a command line that value read as the next option, and the command
+    refused its own token: a test failed at random for as long as the
+    engine exists."""
+
+    @pytest.mark.parametrize("argv, expected", [
+        (["verify", "--team", "t", "--task", "a", "--verdict", "pass",
+          "--lead-token", "-abc_DEF-123"], "-abc_DEF-123"),
+        (["submit", "--team", "t", "--task", "a", "--by", "w1", "--token", "-x9"],
+         "-x9"),
+    ])
+    def test_it_reaches_the_engine_whole(self, monkeypatch, capsys, argv, expected):
+        seen = []
+
+        def op_verify(_root, _team, _task, _verdict, _feedback, lead_token, **_kw):
+            seen.append(lead_token)
+            return {"task": "a", "status": "completed"}
+
+        def op_submit(_root, _team, _task, _by, token):
+            seen.append(token)
+            return {"task": "a"}
+
+        monkeypatch.setattr(cli.engine, "op_verify", op_verify)
+        monkeypatch.setattr(cli.engine, "op_submit", op_submit)
+        assert cli.main(argv) == 0, capsys.readouterr().err
+        assert seen == [expected]
+
+    def test_an_option_left_after_a_token_that_was_left_out_stays_a_usage_error(self):
+        parser = cli.build_parser()
+        argv = ["verify", "--team", "t", "--task", "a", "--verdict", "pass", "--lead-token", "--by"]
+        assert cli.carry_values(argv, cli._known_options(parser)) == argv
+        assert cli.carry_values(["claim", "--by", "w1"], set()) == ["claim", "--by", "w1"]
+
+    def test_a_new_lead_token_never_starts_with_a_dash(self):
+        from agent_teams import engine
+
+        tokens = {engine._new_token() for _ in range(600)}
+        assert len(tokens) == len(set(tokens)) >= 590       # they differ
+        assert all(not token.startswith("-") for token in tokens)
+        assert all(len(token) == 32 for token in tokens)
+
+    def test_a_team_of_the_old_kind_can_still_be_led(self, tmp_path, capsys):
+        """A team made before the fix holds a hash of a dash-leading token."""
+        import sqlite3
+
+        from agent_teams import engine
+
+        (tmp_path / "out").mkdir()
+        spec = tmp_path / "spec.json"
+        spec.write_text(json.dumps({"tasks": [
+            {"id": "a", "title": "demo", "assignee": "w1", "files_write": ["out/a.md"],
+             "acceptance": ["done"], "deps": []}]}), encoding="utf-8")
+        created = engine.op_init(tmp_path, "t", spec)
+        assert created["lead_token"][0].isalnum()
+        token = "-oldKindOfToken_that_starts_with_a_dash"
+        with sqlite3.connect(tmp_path / ".agent-teams" / "t" / "state.db") as conn:
+            conn.execute("UPDATE teams SET lead_token_hash = ?", (engine._sha256(token),))
+        claim = engine.op_claim(tmp_path, "t", "a", "w1")
+        engine.op_submit(tmp_path, "t", "a", "w1", claim["execution_token"])
+        capsys.readouterr()
+        code = cli.main(["verify", "--team", "t", "--task", "a", "--verdict", "pass",
+                         "--lead-token", token, "--project-root", str(tmp_path)])
+        assert code == 0, capsys.readouterr().err
+        assert engine.op_status(tmp_path, "t")["tasks"][0]["status"] == "completed"

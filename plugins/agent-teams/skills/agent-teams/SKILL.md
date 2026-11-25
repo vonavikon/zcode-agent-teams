@@ -122,6 +122,8 @@ All commands take `--project-root` and `--json`.
 
 ## Pitfalls
 
+- A token that starts with a dash (teams made before 2.1.0a3): write it
+  glued to its option, `--lead-token=<tok>` or `--token=<tok>`.
 - Windows / Git Bash: absolute paths in `--project-root`.
 - Non-git projects fall back to `shared` workspaces: no isolation, warned
   at init.

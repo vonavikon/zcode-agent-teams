@@ -72,6 +72,15 @@ Found on the way:
 - On Python 3.10 the status "413 Content Too Large" carries another
   name in the standard library; the board's server used the 3.11 name
   and crashed there. Caught by running the new suites on a real 3.10.
+- A lead token could start with a dash: `secrets.token_urlsafe` draws
+  its first character from an alphabet where that happens once in 64.
+  On a command line `--lead-token -abc` reads as a missing value, and
+  the engine refused its own token with `expected one argument`. So one
+  team in 64 could not be led by the playbook, and in CI it looked like
+  a test failing at random (it did, on `main`, right after a release
+  that had passed 17 of 17 on its branch). New tokens start with a
+  letter or a digit, and the command line now carries a dash-leading
+  value to the engine for the teams that already exist.
 
 ## Open, found while building the board (2026-11-25)
 

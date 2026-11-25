@@ -391,9 +391,44 @@ def _cmd_ui(args):
                                   out=sys.stdout)
 
 
+def _known_options(parser: argparse.ArgumentParser) -> set[str]:
+    found = set(parser._option_string_actions)
+    for action in parser._actions:
+        if isinstance(getattr(action, "choices", None), dict):   # the subcommands
+            for sub in action.choices.values():
+                found |= _known_options(sub)
+    return found
+
+
+def carry_values(argv: list[str], options: set[str]) -> list[str]:
+    """Join a token that starts with a dash to its option with ``=``.
+
+    A lead token of a team created before 2.1.0a3 may start with a dash.
+    On a command line such a value reads as the next option and the
+    command refuses its own token (``expected one argument``);
+    ``--lead-token=-abc`` is unambiguous. A real option that follows a
+    token left out is left alone, so its usage error stays.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        following = argv[index + 1] if index + 1 < len(argv) else None
+        if item in ("--lead-token", "--token") and following is not None \
+                and following.startswith("-") and following != "-" and following not in options:
+            out.append(item + "=" + following)
+            index += 2
+            continue
+        out.append(item)
+        index += 1
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
+    args = parser.parse_args(carry_values(argv, _known_options(parser)))
     json_mode = getattr(args, "json", False)
     try:
         result = args.fn(args)
