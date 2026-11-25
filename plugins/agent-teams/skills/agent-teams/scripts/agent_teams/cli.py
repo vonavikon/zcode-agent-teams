@@ -1,7 +1,11 @@
 """Command-line interface of the v0.3 engine (spec section 10.1, core set).
 
 Every command exits 0 on success and with the error class code on failure
-(see errors.py). ``--json`` switches status/read/recover output to JSON.
+(see errors.py). ``--json`` prints the result of any command as JSON.
+
+The output is pure ASCII in every mode, JSON included: a non-ASCII
+character written into a pipe on Windows with the system code page
+raises and kills the command (findings-robust R-11).
 """
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import engine
+from . import dashboard_server, engine
 from .errors import EngineError
 
 
@@ -22,7 +26,7 @@ def _add_common(sp, *, team=True):
 
 def _print_result(result, *, json_mode=False) -> None:
     if json_mode:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(result, indent=2))
         return
     if isinstance(result, dict):
         if "lead_token" in result:
@@ -40,10 +44,16 @@ def _print_result(result, *, json_mode=False) -> None:
             if result.get("workspace"):
                 print(f"workspace={result['workspace']}")
             return
-        print("OK " + " ".join(f"{k}={v}" for k, v in result.items()
-                               if not isinstance(v, (dict, list))))
+        if any(isinstance(v, (dict, list)) for v in result.values()):
+            # A result that carries a diff, a cost breakdown or a graph is
+            # a document, not a status line. It is printed whole: a text
+            # line with the nested part left out would read as success
+            # and show nothing.
+            print(json.dumps(result, indent=2))
+            return
+        print("OK " + " ".join(f"{k}={v}" for k, v in result.items()))
     else:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(result, indent=2))
 
 
 def _status_text(status: dict) -> None:
@@ -64,20 +74,23 @@ def build_parser() -> argparse.ArgumentParser:
         description="agent-teams engine v0.3: shared state in SQLite, "
                     "acceptance gate, lead and execution tokens")
     sub = p.add_subparsers(dest="cmd", required=True)
+    json_flag = argparse.ArgumentParser(add_help=False)
+    json_flag.add_argument("--json", action="store_true",
+                           help="print the result as JSON")
 
-    sp = sub.add_parser("init", help="create a team from a tasks file")
+    sp = sub.add_parser("init", parents=[json_flag], help="create a team from a tasks file")
     sp.add_argument("--team", required=True)
     sp.add_argument("--tasks", required=True)
     sp.add_argument("--project-root", default=".")
     sp.set_defaults(fn=_cmd_init)
 
-    sp = sub.add_parser("claim", help="executor claims a pending task")
+    sp = sub.add_parser("claim", parents=[json_flag], help="executor claims a pending task")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", required=True)
     sp.set_defaults(fn=_cmd_claim)
 
-    sp = sub.add_parser("submit", help="executor sends the task to the gate")
+    sp = sub.add_parser("submit", parents=[json_flag], help="executor sends the task to the gate")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", required=True)
@@ -85,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="execution token printed by claim")
     sp.set_defaults(fn=_cmd_submit)
 
-    sp = sub.add_parser("verify", help="lead applies the gate verdict")
+    sp = sub.add_parser("verify", parents=[json_flag], help="lead applies the gate verdict")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--verdict", choices=["pass", "fail"], required=True)
@@ -100,34 +113,33 @@ def build_parser() -> argparse.ArgumentParser:
                          "audited reason")
     sp.set_defaults(fn=_cmd_verify)
 
-    sp = sub.add_parser("release", help="lead returns a blocked task to pending")
+    sp = sub.add_parser("release", parents=[json_flag], help="lead returns a blocked task to pending")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--lead-token", required=True)
     sp.add_argument("--reason", default="")
     sp.set_defaults(fn=_cmd_release)
 
-    sp = sub.add_parser("cancel", help="lead cancels a pending task")
+    sp = sub.add_parser("cancel", parents=[json_flag], help="lead cancels a pending task")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--lead-token", required=True)
     sp.add_argument("--reason", default="")
     sp.set_defaults(fn=_cmd_cancel)
 
-    sp = sub.add_parser("recover", help="requeue tasks whose lease expired")
+    sp = sub.add_parser("recover", parents=[json_flag], help="requeue tasks whose lease expired")
     _add_common(sp)
     sp.add_argument("--lead-token", required=True)
     sp.add_argument("--task", default="")
-    sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=_cmd_recover)
 
-    sp = sub.add_parser("heartbeat", help="executor refreshes its lease")
+    sp = sub.add_parser("heartbeat", parents=[json_flag], help="executor refreshes its lease")
     _add_common(sp)
     sp.add_argument("--by", required=True)
     sp.add_argument("--token", required=True)
     sp.set_defaults(fn=_cmd_heartbeat)
 
-    sp = sub.add_parser("tokens", help="record token usage for a task")
+    sp = sub.add_parser("tokens", parents=[json_flag], help="record token usage for a task")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--add", type=int, default=0)
@@ -136,30 +148,28 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dedup-key", default="")
     sp.set_defaults(fn=_cmd_tokens)
 
-    sp = sub.add_parser("message", help="send a mailbox message")
+    sp = sub.add_parser("message", parents=[json_flag], help="send a mailbox message")
     _add_common(sp)
     sp.add_argument("--to", required=True)
     sp.add_argument("--by", required=True)
     sp.add_argument("--text", required=True)
     sp.set_defaults(fn=_cmd_message)
 
-    sp = sub.add_parser("read", help="read your unread messages")
+    sp = sub.add_parser("read", parents=[json_flag], help="read your unread messages")
     _add_common(sp)
     sp.add_argument("--for", dest="for_", required=True)
     sp.set_defaults(fn=_cmd_read)
 
-    sp = sub.add_parser("status", help="task statuses and unread counters")
+    sp = sub.add_parser("status", parents=[json_flag], help="task statuses and unread counters")
     _add_common(sp)
-    sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=_cmd_status)
 
-    sp = sub.add_parser("inspect", help="one task with attempts and events")
+    sp = sub.add_parser("inspect", parents=[json_flag], help="one task with attempts and events")
     _add_common(sp)
     sp.add_argument("--task", required=True)
-    sp.add_argument("--json", action="store_true", default=True)
     sp.set_defaults(fn=_cmd_inspect)
 
-    sp = sub.add_parser("integrate", help="merge accepted task branches, "
+    sp = sub.add_parser("integrate", parents=[json_flag], help="merge accepted task branches, "
                                          "run the integration gate")
     _add_common(sp)
     sp.add_argument("--lead-token", required=True)
@@ -169,66 +179,75 @@ def build_parser() -> argparse.ArgumentParser:
                     help="merge the integration branch into the project branch")
     sp.set_defaults(fn=_cmd_integrate)
 
-    sp = sub.add_parser("metrics", help="run metrics and cost")
+    sp = sub.add_parser("metrics", parents=[json_flag], help="run metrics and cost")
     _add_common(sp)
-    sp.add_argument("--json", action="store_true", default=True)
     sp.set_defaults(fn=_cmd_metrics)
 
-    sp = sub.add_parser("usage", help="record usage from a notification file")
+    sp = sub.add_parser("usage", parents=[json_flag], help="record usage from a notification file")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.add_argument("--agent", required=True)
     sp.add_argument("--notification", required=True)
     sp.set_defaults(fn=_cmd_usage)
 
-    sp = sub.add_parser("plan", help="validate a spec and show the DAG")
+    sp = sub.add_parser("plan", parents=[json_flag], help="validate a spec and show the DAG")
     sp.add_argument("--tasks", required=True)
     sp.add_argument("--project-root", default=".")
     sp.set_defaults(fn=_cmd_plan)
 
-    sp = sub.add_parser("graph", help="ASCII graph of task statuses")
+    sp = sub.add_parser("graph", parents=[json_flag], help="ASCII graph of task statuses")
     _add_common(sp)
     sp.set_defaults(fn=_cmd_graph)
 
-    sp = sub.add_parser("agents", help="agents with roles and states")
+    sp = sub.add_parser("agents", parents=[json_flag], help="agents with roles and states")
     _add_common(sp)
     sp.set_defaults(fn=_cmd_agents)
 
-    sp = sub.add_parser("logs", help="recent events")
+    sp = sub.add_parser("logs", parents=[json_flag], help="recent events")
     _add_common(sp)
     sp.add_argument("--task", default="")
     sp.add_argument("--limit", type=int, default=40)
     sp.set_defaults(fn=_cmd_logs)
 
-    sp = sub.add_parser("diff", help="changed files of a submitted task")
+    sp = sub.add_parser("diff", parents=[json_flag], help="changed files of a submitted task")
     _add_common(sp)
     sp.add_argument("--task", required=True)
     sp.set_defaults(fn=_cmd_diff)
 
-    sp = sub.add_parser("cost", help="cost breakdown per task")
+    sp = sub.add_parser("cost", parents=[json_flag], help="cost breakdown per task")
     _add_common(sp)
     sp.set_defaults(fn=_cmd_cost)
 
-    sp = sub.add_parser("workspace", help="list worktrees or clean one")
+    sp = sub.add_parser("workspace", parents=[json_flag], help="list worktrees or clean one")
     _add_common(sp)
     sp.add_argument("--clean", default="", help="task id to clean")
     sp.set_defaults(fn=_cmd_workspace)
 
-    sp = sub.add_parser("report", help="write the HTML run report")
+    sp = sub.add_parser("report", parents=[json_flag], help="write the HTML run report")
     _add_common(sp)
     sp.add_argument("--out", required=True)
     sp.set_defaults(fn=_cmd_report)
 
-    sp = sub.add_parser("apply", help="apply the validated integration "
+    sp = sub.add_parser("apply", parents=[json_flag], help="apply the validated integration "
                                       "branch to the project (fast-forward)")
     _add_common(sp)
     sp.add_argument("--lead-token", required=True)
     sp.set_defaults(fn=_cmd_apply)
 
-    sp = sub.add_parser("langfuse", help="export the run to Langfuse")
+    sp = sub.add_parser("langfuse", parents=[json_flag], help="export the run to Langfuse")
     _add_common(sp)
     sp.add_argument("--name", default="")
     sp.set_defaults(fn=_cmd_langfuse)
+
+    sp = sub.add_parser("ui", parents=[json_flag],
+                        help="open the read-only web dashboard of a team")
+    _add_common(sp)
+    sp.add_argument("--host", default=dashboard_server.DEFAULT_HOST,
+                    help="address to bind (default: this machine only)")
+    sp.add_argument("--port", type=int, default=dashboard_server.DEFAULT_PORT)
+    sp.add_argument("--open", action="store_true",
+                    help="open the dashboard in the default browser")
+    sp.set_defaults(fn=_cmd_ui)
 
     return p
 
@@ -365,6 +384,13 @@ def _cmd_langfuse(args):
     return op_langfuse(Path(args.project_root), args.team, args.name)
 
 
+def _cmd_ui(args):
+    return dashboard_server.op_ui(Path(args.project_root), args.team,
+                                  host=args.host, port=args.port,
+                                  open_browser=args.open, json_mode=args.json,
+                                  out=sys.stdout)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -374,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     except EngineError as exc:
         print(f"error: {exc.message}", file=sys.stderr)
         if exc.detail:
-            print(json.dumps(exc.detail, ensure_ascii=False), file=sys.stderr)
+            print(json.dumps(exc.detail), file=sys.stderr)
         return exc.code
     except BrokenPipeError:
         return 0

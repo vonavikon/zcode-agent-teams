@@ -8,8 +8,8 @@ the mechanism details; when they disagree with this file, this file wins.
 
 | Artifact | Where | Current |
 |---|---|---|
-| Plugin | plugin.json, marketplace.json | 2.1.0a1 |
-| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a1 |
+| Plugin | plugin.json, marketplace.json | 2.1.0a2 |
+| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a2 |
 | Task specification format | agent_teams/version.py SPEC_VERSION | 1.0 |
 | SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 4 |
 | Verification report | verification.REPORT_SCHEMA_VERSION | 1.0 |
@@ -31,8 +31,10 @@ Package `agent_teams/`: cli (entry team.py), engine (operations),
 statemachine + storage (state), locking (OS file lock), validation
 (spec checks), workspaces (git worktrees, snapshots), quality (machine
 gate, integration merge), verification (report validation),
-observability (usage, cost, metrics), report (HTML), langfuse (export).
-The v0.2 single-file engine remains as team_v02.py for legacy teams.
+observability (usage, cost, metrics), report (HTML), langfuse (export),
+viewmodel (the reader's words), dashboard_data + dashboard_server and
+dashboard/ (the read-only board, section 16). The v0.2 single-file
+engine remains as team_v02.py for legacy teams.
 
 Team directory `.agent-teams/<team>/`: state.db (SQLite, WAL), locks/
 (OS lock), backups/, tasks/<task>/attempts/<n>/workspace (per-attempt
@@ -143,6 +145,12 @@ file:line for content criteria, verdict consistency. A lead override
 still cannot bypass the machine gate. The engine validates reports; it
 cannot prove the author was independent.
 
+The engine writes a manual acceptance as two journal events: the
+decision of the lead, then the state change it caused. The second has
+the type and the shape of a passed check. Whatever reads the journal
+for a person (the board does) must show the decision once and never
+"check passed" for it.
+
 ## 10. Recovery and heartbeat
 
 heartbeat_timeout_s bounds the silence between heartbeats;
@@ -171,11 +179,28 @@ edit local data; the mechanisms make the workflow reliable against
 mistakes, races and stale executors, not against an attacker on the
 machine.
 
+The board (`team.py ui`, section 16) is read-only by construction: it
+opens state.db with `mode=ro` and `PRAGMA query_only`, answers GET
+only, and selects a whitelist of columns (a token hash is never read).
+The project root is fixed by the command that started the server; a
+request can name a team inside it, never a path. While bound to
+loopback, a `Host` header that names another machine is refused (DNS
+rebinding). The page carries a CSP without any inline or remote
+source, and every value from the wire is escaped or forced to a number
+before it reaches the markup. It is still a local page without
+authentication: whoever sits at the machine reads what the lead reads.
+
 ## 13. Observability
 
 Usage from subagent notifications (both telemetry formats) or manual
-entry, idempotent by dedup key; absent numbers stay absent. Cost from a
-price table with quality flags (actual/estimated/unknown). Metrics
+entry, idempotent by dedup key; absent numbers stay absent. Cost with
+quality flags (actual/estimated/unknown) is computed once, when the
+record is written, and stored with it: it is the price of the day the
+work was done, and a later change of the price table never rewrites
+the history. Every reader (`cost`, `metrics`, the report, the board)
+reports the stored value. Of the price table's names the longest one
+that matches the model wins (`glm-5.3-flash` has its own price, though
+`glm-5.3` is a substring of it). Metrics
 cover execution (attempts, submissions, first-submit lag, fix time),
 verification (first-pass rate, required criteria, violations,
 overrides), recovery (timeouts, blocks, quarantine) and integration
@@ -201,6 +226,44 @@ Unit (every module), security (path rules, authority battery),
 concurrency (real multi-process contention, crash release, killed
 transactions), integration (spec scenarios A-F, immutable execution,
 recovery and fencing, verification reports, workspace lifecycle, CLI
-subprocess smoke with exit codes). CI: ubuntu, macos, windows x Python
-3.10-3.14 plus vermin, schema validation and manifest checks; 300+
-tests, no LLM or network in the suite.
+subprocess smoke with exit codes). The board is tested at four layers:
+the reader's words (viewmodel), the read-only snapshot over a real
+git-backed team, the HTTP server (raw requests, wrong Host, write
+methods, traversal), and the page script itself, run under Node on a
+fake document with a hostile snapshot. CI: ubuntu, macos, windows x
+Python 3.10-3.14 plus vermin, schema validation and manifest checks;
+670+ tests, no LLM or network in the suite.
+
+## 16. Dashboard (the board)
+
+`team.py ui --team <id> [--host] [--port] [--open]` serves a read-only
+board for a reader who does not know the engine's vocabulary. It binds
+to 127.0.0.1, prints its address, and runs until interrupted.
+
+It shows overall progress in whole tasks (equal weight: the engine has
+no size estimate), what is happening now, what needs the owner's
+decision (each item says what happened, why it matters, what the system
+tried, what is needed and what happens otherwise), the plan, and the
+activity feed. The clock of a team stops with its run.
+
+Two levels are built from one snapshot: `simple` (roles and titles, no
+identifier longer than a display name, bookkeeping events left out) and
+`advanced` (the technical fields beside every human one). Switching the
+level reads the same state and changes nothing.
+
+The words are the engine's facts, never a guess:
+
+- A task is "in work" only while its executor answers. One silent for
+  longer than the team's own `heartbeat_timeout_s` is shown as not
+  answering, in the task and in its specialist alike.
+- A manual acceptance is shown as one decision (section 9).
+- The remark of the checker travels with the failed check and with the
+  stop it caused, into the feed and into the attention card.
+- Counts in the texts come from the task (`verification_failures`,
+  `restarts`), not from a sentence written in advance.
+- A block that recovery writes and releases in one step is not shown as
+  a stop: nothing is waited from the reader.
+- A cost that is not known is said to be not known.
+
+The texts of the board are Russian today; localization is an open
+decision (BACKLOG).

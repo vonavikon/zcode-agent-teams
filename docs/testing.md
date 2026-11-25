@@ -8,7 +8,12 @@ Layers:
 
 - `tests/unit/`: every module in isolation (locking, validation, DAG,
   storage and migrations, events and the hash chain, state machine,
-  observability, extras).
+  observability, cost pricing (the right model, the cost stored once),
+  the board's words (viewmodel), CLI output (nothing lost in text mode,
+  pure ASCII in every mode). The board's page script is run under Node
+  on a fake document (`page_harness.js`): a hostile snapshot, escaping,
+  refresh without redraw, outage states, the mode and theme switches.
+  These tests are skipped where Node is absent.
 - `tests/security/`: path rules (absolute, traversal, reserved
   directories, symlink escapes, case collisions) and the authority
   battery (forged lead token, executor self-verify, stale execution
@@ -19,7 +24,10 @@ Layers:
 - `tests/integration/`: spec scenarios A-F end to end, workspace
   isolation on real git repositories, the machine quality gate, the
   integration gate (including a real merge conflict), CLI subprocess
-  smoke tests with exit codes.
+  smoke tests with exit codes. The board: the read-only snapshot over a
+  real git-backed team, the HTTP server through raw requests (wrong
+  `Host`, write methods, traversal, bounds), and `team.py ui` as a real
+  process that announces its address and stops on Ctrl-C.
 
 CI (`.github/workflows/ci.yml`): ubuntu, macos and windows times Python
 3.10-3.14, plus a vermin check that the engine stays 3.10-compatible.

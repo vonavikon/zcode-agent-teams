@@ -16,6 +16,7 @@
 - **Интеграционный гейт и apply**: принятые SHA мержатся по DAG в интеграционную ветку с опциональной проверкой; apply отдельным шагом быстрого слияния, отказ при грязном проекте или сдвинутой базе
 - **Восстановление и fencing**: таймауты lease, heartbeat и всей попытки; потерянные попытки изолируются (мёртвый токен, worktree уходит в quarantine и сохраняется) и возвращаются в очередь в рамках лимитов
 - **Наблюдаемость**: токены из нотификаций субагентов, стоимость с явным флагом достоверности, метрики прогона включая сравнение «команда против одного агента», самодостаточный HTML-отчёт и идемпотентный экспорт в Langfuse
+- **Живая доска для нетехнического владельца**: `team.py ui` открывает в браузере страницу только для чтения: план, что сейчас делает каждый специалист, что ждёт решения владельца и почему, простыми словами; со страницы нельзя изменить ход работы
 
 Роли: лид это основная сессия ZCode; тиммейты и верификаторы это субагенты (профили ролей лежат в `agents/`).
 
@@ -34,11 +35,12 @@ lead: tasks.json (validated: DAG, paths, write overlaps)
        └─ teammate: claim (execution token, worktree) → work → submit
             └─ lead spawns a verifier (read-only) on each VERIFICATION REQUEST
                  ├─ engine runs command-backed criteria itself
-                 ├─ PASS → team.py verify --verdict pass --lead-token ...
+                 ├─ PASS → verify --verdict pass --report report.json --lead-token ...
                  └─ FAIL → verify --verdict fail --feedback "..." → executor fixes
                       (2nd FAIL by default → blocked → release or handle)
   └─ team.py integrate --lead-token ... [--check CMD] [--apply]
   └─ team.py status → all completed; report --out run.html; metrics; langfuse
+  └─ team.py ui → live read-only board in the browser for the owner
 
 ```
 
@@ -66,6 +68,7 @@ plugins/agent-teams/
     agent_teams/                     the package (engine, storage, locks,
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
+                                     + dashboard/ (the board page)
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

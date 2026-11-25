@@ -16,6 +16,7 @@
 - **集成门禁与 apply**：被接受的 SHA 按 DAG 顺序合并进集成分支并可选检查；apply 是独立的快进步骤，脏项目或基线移动会拒绝
 - **恢复与隔离**：租约、心跳和整次尝试的超时；丢失的尝试被隔离（令牌作废、worktree 进入隔离区并保留），在限额内重新入队
 - **可观测性**：来自子智能体通知的 token 用量、带可信度标记的成本、包含「团队对比单智能体」的运行指标、自包含的 HTML 报告和幂等的 Langfuse 导出
+- **给非技术负责人的实时看板**：`team.py ui` 在浏览器中打开一个只读页面，用通俗的话展示计划、每位专家当前在做什么、哪些事在等负责人决定以及原因；页面无法改变运行状态
 
 角色：lead 是 ZCode 主会话；teammate 和 verifier 是子智能体（角色档案在 `agents/`）。
 
@@ -34,11 +35,12 @@ lead: tasks.json (validated: DAG, paths, write overlaps)
        └─ teammate: claim (execution token, worktree) → work → submit
             └─ lead spawns a verifier (read-only) on each VERIFICATION REQUEST
                  ├─ engine runs command-backed criteria itself
-                 ├─ PASS → team.py verify --verdict pass --lead-token ...
+                 ├─ PASS → verify --verdict pass --report report.json --lead-token ...
                  └─ FAIL → verify --verdict fail --feedback "..." → executor fixes
                       (2nd FAIL by default → blocked → release or handle)
   └─ team.py integrate --lead-token ... [--check CMD] [--apply]
   └─ team.py status → all completed; report --out run.html; metrics; langfuse
+  └─ team.py ui → live read-only board in the browser for the owner
 
 ```
 
@@ -66,6 +68,7 @@ plugins/agent-teams/
     agent_teams/                     the package (engine, storage, locks,
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
+                                     + dashboard/ (the board page)
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

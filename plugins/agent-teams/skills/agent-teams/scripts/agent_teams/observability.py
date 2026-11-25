@@ -59,7 +59,13 @@ def parse_notification(text: str) -> dict | None:
 
 def record_usage(store: Store, team: str, run_id: str, task_id: str,
                  agent_id: str, record: dict) -> int | None:
-    """Persist one normalized usage record (idempotent via dedup_key)."""
+    """Persist one normalized usage record (idempotent via dedup_key).
+
+    The cost is computed here and stored with the record: it is the price
+    of the day the work was done, and a later change of the price table
+    must not rewrite the history.
+    """
+    cost, quality = compute_cost(record)
     entry = {
         "team_id": team, "run_id": run_id, "task_id": task_id,
         "agent_id": agent_id, "model": record.get("model"),
@@ -71,6 +77,7 @@ def record_usage(store: Store, team: str, run_id: str, task_id: str,
         "total_tokens": record.get("total_tokens"),
         "tool_uses": record.get("tool_uses"),
         "duration_ms": record.get("duration_ms"),
+        "cost_usd": cost, "cost_quality": quality,
         "source": record.get("source", "manual"),
         "dedup_key": record.get("dedup_key"),
         "recorded_at": now_iso(),
@@ -79,22 +86,34 @@ def record_usage(store: Store, team: str, run_id: str, task_id: str,
     return store.add_usage(entry)
 
 
+def cost_of(record: dict) -> tuple[float | None, str]:
+    """Cost of a stored usage record.
+
+    The cost stored with the record is the price of the day the work
+    was done and is used as is: a later change of the price table must
+    not rewrite the history. A record written before costs were stored
+    has none, and is estimated here.
+    """
+    if record.get("cost_usd") is not None:
+        return record["cost_usd"], record.get("cost_quality") or "estimated"
+    return compute_cost(record)
+
+
 def compute_cost(record: dict) -> tuple[float | None, str]:
-    """Cost in USD and its quality flag for one usage record."""
+    """Cost in USD and its quality flag for one usage record, from the
+    current price table."""
     model = (record.get("model") or "").lower()
     total = record.get("total_tokens")
     has_split = record.get("input_tokens") is not None \
         and record.get("output_tokens") is not None
     if not model or (total in (None, 0) and not has_split):
         return None, "unknown"
-    price = None
-    for name, rates in PRICE_TABLE_USD_1M.items():
-        if name in model:
-            price = rates
-            break
-    if price is None:
+    # The longest matching name wins: "glm-5.3-flash" is also "glm-5.3"
+    # as a substring, and it has its own price.
+    matching = [name for name in PRICE_TABLE_USD_1M if name in model]
+    if not matching:
         return None, "unknown"
-    inp = price[0]
+    price = PRICE_TABLE_USD_1M[max(matching, key=len)]
     if record.get("input_tokens") is not None \
             and record.get("output_tokens") is not None:
         cost = (record["input_tokens"] * price[0]
@@ -143,7 +162,7 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
         tokens_by_task[record["task_id"] or ""] = \
             tokens_by_task.get(record["task_id"] or "", 0) \
             + (record.get("total_tokens") or 0)
-        cost, quality = compute_cost(record)
+        cost, quality = cost_of(record)
         if cost is not None:
             cost_total += cost
             cost_quality = "estimated"

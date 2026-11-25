@@ -1,0 +1,234 @@
+/* Design tokens. Light is the default; dark is zinc-graphite, not black.
+   Every state carries text and an icon; color never carries meaning alone. */
+:root {
+  --canvas: #F2F2F0;
+  --surface: #FFFFFF;
+  --surface-2: #F7F7F5;
+  --shell: rgba(0, 0, 0, 0.06);
+  --hairline: rgba(0, 0, 0, 0.08);
+  --text: #1D1D1F;
+  --text-2: #6E6E73;
+  --text-3: #86868B;
+  --accent: #007AFF;
+  --accent-ink: #FFFFFF;
+  --blue: #007AFF;      /* in progress */
+  --blue-soft: rgba(0, 122, 255, 0.12);
+  --yellow: #9A4A00;    /* needs attention: text-safe amber */
+  --yellow-soft: rgba(255, 149, 0, 0.16);
+  --green: #1D7A34;     /* done */
+  --green-soft: rgba(52, 199, 89, 0.16);
+  --red: #C51E14;       /* problem */
+  --red-soft: rgba(255, 59, 48, 0.12);
+  --gray: #86868B;      /* not started */
+  --gray-soft: rgba(0, 0, 0, 0.05);
+  --shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --r-lg: 24px; --r-md: 16px; --r-sm: 12px;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --t: 600ms;
+}
+[data-theme="dark"] {
+  --canvas: #1C1C1E;
+  --surface: #2C2C2E;
+  --surface-2: #232325;
+  --shell: rgba(255, 255, 255, 0.08);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --text: #F5F5F7;
+  --text-2: #A1A1A6;
+  --text-3: #8E8E93;
+  --accent: #0A84FF;
+  --blue: #0A84FF; --blue-soft: rgba(10, 132, 255, 0.2);
+  --yellow: #FFB340; --yellow-soft: rgba(255, 159, 10, 0.2);
+  --green: #30D158; --green-soft: rgba(48, 209, 88, 0.18);
+  --red: #FF453A; --red-soft: rgba(255, 69, 58, 0.18);
+  --gray: #98989D; --gray-soft: rgba(255, 255, 255, 0.08);
+  --shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--canvas); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  padding: 0 20px 72px;
+  transition: background-color var(--t) var(--ease), color var(--t) var(--ease);
+}
+button { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: 17px; font-weight: 600; }
+.muted { color: var(--text-2); }
+.small { font-size: 13px; }
+.nowrap { white-space: nowrap; }
+
+/* Floating glass pill header */
+.topbar {
+  position: sticky; top: 12px; z-index: 20;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 12px auto 0; max-width: 1180px;
+  padding: 10px 12px 10px 20px;
+  border-radius: 999px; border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: var(--shadow);
+}
+.topbar .title { display: flex; flex-direction: column; min-width: 0; }
+.topbar .title b { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .title span { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .spacer { flex: 1; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hairline);
+  background: var(--surface-2); font-size: 13px; font-weight: 500; white-space: nowrap;
+}
+.seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); }
+.seg button {
+  border: 0; background: transparent; padding: 6px 14px; border-radius: 999px;
+  font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-2);
+  transition: background-color var(--t) var(--ease), color var(--t) var(--ease), transform var(--t) var(--ease);
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.seg button:active { transform: scale(0.97); }
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--hairline);
+  background: var(--surface-2); cursor: pointer;
+  transition: transform var(--t) var(--ease), background-color var(--t) var(--ease);
+}
+.iconbtn:active { transform: scale(0.94); }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
+/* A masonry-like two-column layout: rows size to their content, so a tall
+   attention card no longer leaves a hole under its shorter neighbour. */
+/* Equal columns: the cards move between them (see layoutColumns in
+   app.js), so neither column can be "the narrow one". */
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.columns > .col { display: grid; gap: 20px; min-width: 0; }
+@media (max-width: 900px) { .columns { grid-template-columns: 1fr; } }
+
+/* Double bezel card: shell + concentric core */
+.card { border-radius: var(--r-lg); padding: 6px; border: 1px solid var(--shell); background: var(--surface-2); box-shadow: var(--shadow); }
+.card > .core { border-radius: calc(var(--r-lg) - 6px); background: var(--surface); padding: 20px 22px; }
+.card.attention { border-color: color-mix(in srgb, var(--yellow) 35%, transparent); }
+.cardhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.cardhead h2 { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Progress ring: the one big number */
+.progress { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.ring { position: relative; width: 132px; height: 132px; flex: none; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring .track { stroke: var(--gray-soft); fill: none; stroke-width: 10; }
+.ring .bar { stroke: var(--green); fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dashoffset 700ms var(--ease); }
+.ring .num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ring .num b { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
+.ring .num span { font-size: 12px; color: var(--text-2); }
+.progress .story { display: flex; flex-direction: column; gap: 10px; min-width: 220px; flex: 1; }
+.progress .story .big { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+.counters { display: flex; gap: 10px; flex-wrap: wrap; }
+.counter { display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); font-size: 13px; font-weight: 500; }
+.counter b { font-weight: 700; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.busy { background: var(--blue); } .dot.done { background: var(--green); }
+.dot.attention { background: var(--yellow); } .dot.idle { background: var(--gray); }
+.dot.problem { background: var(--red); }
+
+/* Attention block. Amber is "waiting for you, nothing is broken"; red is
+   reserved for work that cannot continue without a decision. */
+.attention-list { display: flex; flex-direction: column; gap: 12px; }
+.attention-item { padding: 16px 18px; border-radius: var(--r-md); background: var(--yellow-soft); border: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent); }
+.attention-item.blocked, .attention-item.integration { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+.attention-item h3 { font-size: 15px; display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.attention-item h3 svg.i { margin-top: 3px; }
+.attention-item dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; font-size: 13.5px; }
+.attention-item dt { color: var(--text-2); } .attention-item dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.remarks { margin: 0 0 12px 24px; padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--surface) 72%, transparent); border: 1px solid var(--hairline); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.remarks b { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
+.empty { padding: 22px; text-align: center; color: var(--text-2); border-radius: var(--r-md); border: 1px dashed var(--hairline); font-size: 14px; }
+
+/* Now happening: activity cards */
+.now-list { display: grid; gap: 12px; container-type: inline-size; }
+.now-card { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
+.avatar { width: 38px; height: 38px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; color: var(--accent-ink); background: var(--accent); flex: none; }
+.now-card h3 { font-size: 15px; margin-bottom: 2px; }
+.now-card .role { font-size: 12.5px; color: var(--text-2); }
+.now-card .doing { font-size: 14px; margin-top: 4px; }
+.now-card .meta { text-align: right; font-size: 12.5px; color: var(--text-2); }
+.now-card .meta .since { margin-top: 6px; }
+/* The card follows its own width, not the window's: the same card sits in
+   a half of the page and on a phone. Narrow, the state moves under the
+   title and the title keeps the room to stay in two lines. */
+@container (max-width: 560px) {
+  .now-card { grid-template-columns: auto 1fr; }
+  .now-card .meta { grid-column: 2; text-align: left; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .now-card .meta .since { margin-top: 0; }
+}
+.state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.state.busy { background: var(--blue-soft); color: var(--blue); }
+.state.attention { background: var(--yellow-soft); color: var(--yellow); }
+.state.done { background: var(--green-soft); color: var(--green); }
+.state.problem { background: var(--red-soft); color: var(--red); }
+.state.idle { background: var(--gray-soft); color: var(--text-2); }
+.cost { margin-top: 12px; }
+
+/* Plan: plain-language stages */
+.plan { display: grid; gap: 8px; }
+.stage { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); }
+.stage .mark { width: 26px; height: 26px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--gray-soft); color: var(--text-2); }
+.stage.busy .mark { background: var(--blue-soft); color: var(--blue); }
+.stage.done .mark { background: var(--green-soft); color: var(--green); }
+.stage.attention .mark { background: var(--yellow-soft); color: var(--yellow); }
+.stage.problem .mark { background: var(--red-soft); color: var(--red); }
+.stage .t { font-size: 14px; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.stage .s { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.stage .who { font-size: 12.5px; color: var(--text-2); text-align: right; overflow-wrap: anywhere; }
+/* A technical block is a full-width row of its own. Left to auto-placement
+   it lands in the 26px icon column and stretches for thousands of pixels. */
+.stage > .tech { grid-column: 2 / -1; }
+.stage .files { grid-column: 2 / -1; font-size: 12.5px; color: var(--text-2); display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.now-card .files { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; font-size: 12.5px; min-width: 0; }
+/* A file name breaks inside itself only when it cannot fit a line of its
+   own; otherwise it moves to the next line whole. */
+.file { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; background: var(--surface); border: 1px solid var(--hairline); font-size: 12px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.file.bad { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: var(--red-soft); font-weight: 600; }
+
+/* Feed: a story told oldest to newest, the newest line at the bottom */
+.feed { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; scrollbar-width: thin; }
+.feed-item { display: grid; grid-template-columns: 40px 22px minmax(0, 1fr); gap: 8px; padding: 9px 10px; border-radius: var(--r-sm); align-items: start; }
+.feed-item:hover { background: var(--surface-2); }
+.feed-item time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; padding-top: 3px; }
+.feed-item .mark { width: 22px; height: 22px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--gray-soft); color: var(--text-2); }
+.feed-item .mark svg.i { width: 13px; height: 13px; }
+.feed-item.busy .mark { background: var(--blue-soft); color: var(--blue); }
+.feed-item.done .mark { background: var(--green-soft); color: var(--green); }
+.feed-item.problem .mark { background: var(--red-soft); color: var(--red); }
+.feed-item.manual .mark { background: var(--yellow-soft); color: var(--yellow); }
+.feed-item .tt { font-size: 14px; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.feed-item .sub { font-size: 12.5px; color: var(--text-2); margin-top: 1px; overflow-wrap: anywhere; }
+.feed-item .dd { font-size: 12.5px; color: var(--text-2); margin-top: 3px; overflow-wrap: anywhere; }
+.feed-item.is-new { animation: rise 500ms var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* Connection banner */
+.conn { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: none; align-items: center; gap: 8px; max-width: calc(100% - 32px); padding: 9px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--hairline); box-shadow: var(--shadow); font-size: 13px; font-weight: 500; }
+.conn.show { display: inline-flex; }
+.conn.stale { border-color: color-mix(in srgb, var(--yellow) 50%, transparent); }
+.conn.lost { border-color: color-mix(in srgb, var(--red) 50%, transparent); color: var(--red); }
+
+/* Advanced tech block */
+.tech { margin-top: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+.hidden { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@media (max-width: 640px) {
+  body { padding: 0 12px 80px; }
+  .topbar { padding: 8px 10px 8px 16px; gap: 8px; }
+  .card > .core { padding: 16px; }
+  /* A plan row keeps its icon, but the role moves under the title: three
+     columns cannot hold a sentence at this width. */
+  .stage { grid-template-columns: 26px minmax(0, 1fr); }
+  .stage .who { grid-column: 2; text-align: left; }
+  .stage .files, .stage > .tech { grid-column: 2; }
+  .attention-item { padding: 14px; }
+  .attention-item dl { grid-template-columns: 1fr; gap: 2px; }
+  .attention-item dd { margin-bottom: 8px; }
+  .remarks { margin-left: 0; }
+}

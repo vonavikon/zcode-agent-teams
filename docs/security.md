@@ -18,6 +18,30 @@
 - Audit: hash-chained event log, `verify_chain` detects any later row
   edit; verification attempts store the full criterion report.
 
+## The board (`team.py ui`)
+
+- Binds to 127.0.0.1 unless `--host` says otherwise (a warning is
+  printed when the board becomes reachable from other machines).
+- Read-only by construction: `state.db` is opened with `mode=ro` and
+  `PRAGMA query_only`; only GET and HEAD are answered; the state files
+  are not written. SQLite itself may create its empty `-shm` and `-wal`
+  sidecars next to the database: bookkeeping, not team state.
+- The project root is fixed by the command that started the server. A
+  request names a team inside it (validated by the name rule); a
+  `project_root` in the address is ignored.
+- A `Host` header that names another machine is refused (403) while
+  the server is bound to loopback: that is what a DNS rebinding attack
+  looks like.
+- The payload comes from a whitelist of columns; the lead token hash
+  and the execution token hashes are never read. In the `simple` level
+  no agent id leaves the server, only role names.
+- The page's CSP allows nothing inline and nothing remote: no CDN, no
+  beacon, no inline script or style. Every value from the wire is
+  escaped, or forced to a number, before it reaches the markup; this
+  is pinned by tests that run the page script on a hostile snapshot.
+- Not a boundary: the board has no authentication. Whoever can reach
+  the address reads what the lead reads (titles, files, remarks).
+
 ## NOT a security boundary (documented limitation)
 
 The engine is a local CLI. An agent with arbitrary shell and filesystem

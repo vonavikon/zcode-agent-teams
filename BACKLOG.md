@@ -1,5 +1,56 @@
 # Backlog
 
+## Done in v2.1.0a2: the board for a non-technical owner (2026-11-25)
+
+`team.py ui` (spec 16): a read-only local page with the plan, what is
+happening, what needs the owner's decision and why, and the activity
+feed, in plain words; two levels from one snapshot. Tested at four
+layers: the words, the read-only snapshot over a git-backed team, the
+HTTP server, and the page script under Node.
+
+Defects found and fixed on the way:
+
+- A flash model was priced as its parent. The price table was searched
+  by substring in dictionary order, and "glm-5.3" comes before
+  "glm-5.3-flash": on input a flash model cost 6 times too much. The
+  longest matching name wins now.
+- No cost was ever stored. `cost_usd` stayed NULL, every reader
+  recomputed from the current price table, and the manual `tokens`
+  command bypassed the only writer there was. The cost is stored when
+  the record is written and reported from there by `cost`, `metrics`,
+  the report and the board.
+- The CLI dropped nested data in text mode: `diff`, `cost`, `graph`
+  and `workspace` printed `OK task=a` and nothing else. A nested result
+  is printed whole now, and every command accepts `--json`.
+- A trap worth knowing: a `--json` flag shared by all subcommands is
+  one argparse action object, and `set_defaults(json=True)` on two
+  commands switched JSON on for all of them. Caught by a test before
+  the release; text stays the default everywhere.
+- SKILL.md told the lead to PASS without the verifier's report, which
+  a git project rejects (the first finding of the docs audit).
+
+## Open, found while building the board (2026-11-25)
+
+- The snapshot's `metrics` were always empty: `collect_metrics` needs
+  a store with a live connection, and the adapter's failure was
+  swallowed into `{}`. The board does not show metrics yet (M4); build
+  them on the snapshot's own data, with a test, instead of reviving
+  the adapter.
+- The texts of the board are Russian, in a repository whose rule is
+  technical English with READMEs in five languages. For the alpha that
+  is the language of its first users; before a stable 2.1.0 the strings
+  should move out of the code into a dictionary with English as the
+  base. The owner decides.
+- The board has no authentication and binds to loopback by design. An
+  owner who is not at the machine needs a proxy with authentication in
+  front of it; not built.
+- Two quirks of the journal that every human-facing reader has to
+  know. A schema change could remove the need:
+  - a manual acceptance is two `verification_passed` events, the
+    decision (with `override`) and then the transition (without);
+  - recovery of a lost executor writes `task_blocked` and releases the
+    task in the same step.
+
 ## Engine defects found while running a real team (2026-11-25)
 
 Found by driving the engine as a lead during the v2.1 Milestone 1 run.
