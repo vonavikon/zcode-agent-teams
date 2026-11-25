@@ -36,6 +36,8 @@ EVENT_TYPES = frozenset({
     "workspace_integrated", "workspace_conflict", "token_usage_recorded",
     "team_completed", "run_started", "run_finished", "lead_token_rotated",
     "message_sent",
+    # v2.1: the lead changed the agreed budget
+    "budget_changed",
     # v0.2 names kept so old logs stay valid
     "task_tokens", "verify_pass", "verify_fail", "round_limit",
 })

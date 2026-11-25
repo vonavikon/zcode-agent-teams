@@ -21,7 +21,19 @@
         "max_agent_restarts": { "type": "integer", "minimum": 0 },
         "execution_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
         "heartbeat_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
-        "lock_timeout_s": { "type": "number", "exclusiveMinimum": 0 }
+        "lock_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
+        "budget_usd": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "budget_per_task_usd": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "budget_warn_ratio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "benchmark": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["name", "executors"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "executors": { "type": "integer", "minimum": 1 }
+          }
+        }
       }
     },
     "agents": {

@@ -37,6 +37,16 @@ class StateRejected(EngineError):
     label = "state_rejected"
 
 
+class BudgetExceeded(StateRejected):
+    """The agreed budget is spent: no new work starts (v2.1 spec 11.2).
+
+    Running executors are never stopped by it; the lead decides.
+    """
+
+    code = 2
+    label = "budget_exceeded"
+
+
 class LockTimeoutError(EngineError):
     """The state lock could not be acquired within the wait limit."""
 

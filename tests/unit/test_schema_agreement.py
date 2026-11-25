@@ -44,7 +44,8 @@ def engine_structural_ok(spec, root) -> bool:
                     "workspace", "allow_write_overlaps", "allow_write_overlaps_reason",
                     "max_verification_failures", "max_execution_retries",
                     "max_agent_restarts", "execution_timeout_s", "heartbeat_timeout_s",
-                    "lock_timeout_s"}:
+                    "lock_timeout_s", "budget_usd", "budget_per_task_usd",
+                    "budget_warn_ratio", "benchmark"}:
                 return False
             int_limits = {"max_verification_failures": 1,
                           "max_execution_retries": 0, "max_agent_restarts": 0}
@@ -58,6 +59,26 @@ def engine_structural_ok(spec, root) -> bool:
                 if key in config and (isinstance(value, bool)
                                       or not isinstance(value, (int, float)) or value <= 0):
                     return False
+            for key in ("budget_usd", "budget_per_task_usd"):
+                value = config.get(key)
+                if key in config and value is not None and (
+                        isinstance(value, bool) or not isinstance(value, (int, float))
+                        or value <= 0):
+                    return False
+            ratio = config.get("budget_warn_ratio")
+            if "budget_warn_ratio" in config and (
+                    isinstance(ratio, bool) or not isinstance(ratio, (int, float))
+                    or not 0 < ratio <= 1):
+                return False
+            benchmark = config.get("benchmark")
+            if "benchmark" in config and benchmark is not None and (
+                    not isinstance(benchmark, dict)
+                    or set(benchmark) != {"name", "executors"}
+                    or not isinstance(benchmark["name"], str) or not benchmark["name"]
+                    or isinstance(benchmark["executors"], bool)
+                    or not isinstance(benchmark["executors"], int)
+                    or benchmark["executors"] < 1):
+                return False
             if "workspace" in config and config["workspace"] not in (
                     "auto", "worktree", "shared"):
                 return False
@@ -137,6 +158,22 @@ SPECS = {
                                          "assignee": "w1", "acceptance": ["x"]}]},
     "list-goal": {"goal": ["compare"], "tasks": [{"id": "t1", "title": "d",
                                                   "assignee": "w1", "acceptance": ["x"]}]},
+    "with-budget": {"config": {"budget_usd": 10, "budget_per_task_usd": 2,
+                               "budget_warn_ratio": 0.9,
+                               "benchmark": {"name": "billing", "executors": 3}},
+                    "tasks": [{"id": "t1", "title": "d", "assignee": "w1", "acceptance": ["x"]}]},
+    "no-budget": {"config": {"budget_usd": None}, "tasks": [{"id": "t1", "title": "d",
+                                                              "assignee": "w1", "acceptance": ["x"]}]},
+    "budget-free": {"config": {"budget_usd": 0}, "tasks": [{"id": "t1", "title": "d",
+                                                            "assignee": "w1", "acceptance": ["x"]}]},
+    "budget-negative": {"config": {"budget_usd": -1}, "tasks": [{"id": "t1", "title": "d",
+                                                                 "assignee": "w1", "acceptance": ["x"]}]},
+    "budget-ratio-out": {"config": {"budget_warn_ratio": 1.5}, "tasks": [{"id": "t1", "title": "d",
+                                                                          "assignee": "w1", "acceptance": ["x"]}]},
+    "benchmark-bad": {"config": {"benchmark": {"name": "x"}}, "tasks": [{"id": "t1", "title": "d",
+                                                                        "assignee": "w1", "acceptance": ["x"]}]},
+    "benchmark-zero": {"config": {"benchmark": {"name": "x", "executors": 0}}, "tasks": [{"id": "t1", "title": "d",
+                                                                                       "assignee": "w1", "acceptance": ["x"]}]},
     "empty-tasks": {"tasks": []},
     "missing-tasks": {"config": {}},
     "not-object": ["nope"],

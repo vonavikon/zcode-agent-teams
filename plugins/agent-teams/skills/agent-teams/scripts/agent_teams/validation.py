@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from .config import BUDGET_KEYS, merge_config
 from .errors import UsageError
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -35,7 +36,7 @@ CONFIG_KEYS = frozenset({
     "workspace", "allow_write_overlaps", "allow_write_overlaps_reason",
     "max_verification_failures", "max_execution_retries", "max_agent_restarts",
     "execution_timeout_s", "heartbeat_timeout_s", "lock_timeout_s",
-})
+}) | BUDGET_KEYS
 TASK_KEYS = frozenset({
     "id", "title", "assignee", "lens", "files_read", "files_write",
     "acceptance", "deps", "description",
@@ -365,6 +366,12 @@ def _check_config(spec: dict, errors: list, warnings: list) -> dict:
     if unknown:
         errors.append(Issue("E_CONFIG_INVALID",
                             f"config has unknown keys: {', '.join(unknown)}"))
+    # The money limits and the declared benchmark are checked where they
+    # are defined, so the rule cannot differ between a spec and the engine.
+    try:
+        merge_config({key: value for key, value in config.items() if key in BUDGET_KEYS})
+    except UsageError as exc:
+        errors.append(Issue("E_CONFIG_INVALID", str(exc)))
     limits = {
         "max_verification_failures": (int, 1),
         "max_execution_retries": (int, 0),
