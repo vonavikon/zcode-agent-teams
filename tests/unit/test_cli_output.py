@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 import pytest
 
@@ -135,7 +136,7 @@ class TestUiCommand:
         code = cli.main(["ui", "--team", "t", "--project-root", "/p", "--host",
                          "127.0.0.1", "--port", "9000", "--open", "--json"])
         assert code == 0
-        assert seen["team"] == "t" and seen["root"] == "/p"
+        assert seen["team"] == "t" and Path(seen["root"]) == Path("/p")
         assert (seen["host"], seen["port"], seen["open_browser"], seen["json_mode"]) == \
             ("127.0.0.1", 9000, True, True)
         assert json.loads(capsys.readouterr().out) == {"url": "http://x"}

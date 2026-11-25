@@ -27,6 +27,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import socketserver
 import sys
 import threading
 import urllib.parse
@@ -213,6 +214,14 @@ class DashboardServer(ThreadingHTTPServer):
         self.project_root = project_root
         self.team = team
 
+    def server_bind(self):
+        # HTTPServer resolves the bind address into a domain name here.
+        # That is a network lookup: slow where the resolver does not
+        # answer, and the board works offline and answers by address.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
+
     def handle_error(self, request, client_address):
         # A browser that gave up on a request (a closed tab, an aborted
         # poll) closes the connection; that is not a server error.
@@ -249,8 +258,11 @@ def serve(project_root: Path, team: str, *, host: str = DEFAULT_HOST,
     server = _bind(Path(project_root).resolve(), team, host, port)
     if server is None:
         return None
-    thread = threading.Thread(target=server.serve_forever, name="agent-teams-ui",
-                              daemon=True)
+    # A short poll keeps shutdown() quick for whoever embeds the server;
+    # the blocking ui command waits with its own interval.
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05},
+        name="agent-teams-ui", daemon=True)
     thread.start()
     return server
 

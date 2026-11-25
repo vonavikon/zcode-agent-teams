@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -102,15 +103,37 @@ def stream(*fields: str) -> str:
     return "".join(field + "\0" for field in fields)
 
 
+def holdable(root: Path, name: str) -> bool:
+    """Whether this file system accepts the name at all.
+
+    Windows refuses a double quote in a file name: the case cannot be
+    built there and is skipped, not reported as a failure of the engine.
+    """
+    try:
+        write(root, f".probe/{name}", "probe")
+    except OSError:
+        return False
+    return True
+
+
 @pytest.fixture
 def repo(tmp_path):
     """``out/`` is the allowed directory; ``src/``, ``docs/`` and the root
     of the repository are not. The awkward names exist in both zones, so
     each of them can be moved either way."""
+    awkward = [name for name in AWKWARD_NAMES if holdable(tmp_path, name)]
+    shutil.rmtree(tmp_path / ".probe")
     names = list(BASE_FILES)
-    names += [f"{zone}/{name}" for name in AWKWARD_NAMES for zone in ("out", "src")]
+    names += [f"{zone}/{name}" for name in awkward for zone in ("out", "src")]
     files = {name: content(number) for number, name in enumerate(names)}
-    return Repo(tmp_path, git_repo(tmp_path, files))
+    repo = Repo(tmp_path, git_repo(tmp_path, files))
+    repo.awkward = awkward
+    return repo
+
+
+def only_if_holdable(repo: Repo, name: str) -> None:
+    if name not in repo.awkward:
+        pytest.skip(f"this file system refuses the name {name!r}")
 
 
 class TestMoveInsideAllowedDirectory:
@@ -215,6 +238,7 @@ class TestCopies:
 class TestAwkwardNames:
     @pytest.mark.parametrize("name", AWKWARD_NAMES, ids=AWKWARD_IDS)
     def test_move_inside_allowed_directory_is_clean(self, repo, name):
+        only_if_holdable(repo, name)
         move(repo.root, f"out/{name}", f"out/moved {name}")
         commit(repo.root, "move")
         assert diff_of(repo).renames == ((f"out/{name}", f"out/moved {name}"),)
@@ -222,6 +246,7 @@ class TestAwkwardNames:
 
     @pytest.mark.parametrize("name", AWKWARD_NAMES, ids=AWKWARD_IDS)
     def test_move_from_forbidden_zone_reports_the_whole_name(self, repo, name):
+        only_if_holdable(repo, name)
         move(repo.root, f"src/{name}", f"out/arrived {name}")
         commit(repo.root, "move")
         assert diff_of(repo).renames == ((f"src/{name}", f"out/arrived {name}"),)

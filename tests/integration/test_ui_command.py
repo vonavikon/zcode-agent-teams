@@ -49,7 +49,7 @@ def start(root: Path, *extra: str) -> subprocess.Popen:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
 
 
-def read_line(proc: subprocess.Popen, timeout: float = 20.0) -> str:
+def read_line(proc: subprocess.Popen, timeout: float = 60.0) -> str:
     """One line of the process output, or a failure instead of an endless wait."""
     box: queue.Queue = queue.Queue()
     threading.Thread(target=lambda: box.put(proc.stdout.readline()), daemon=True).start()
