@@ -92,6 +92,7 @@ EVENT_TEXT = {
     "token_usage_recorded": "Учтён объём использования AI",
     "task_tokens": "Учтён объём использования AI",
     "message_sent": "Отправлено сообщение",
+    "budget_changed": "Руководитель команды изменил бюджет",
     "lead_token_rotated": "Ключ руководителя команды заменён",
     "team_completed": "Работа команды завершена",
 }
@@ -122,6 +123,7 @@ _EVENT_MARKS = {
     "workspace_conflict": ("problem", "alert"),
     "token_usage_recorded": ("normal", "circle"), "task_tokens": ("normal", "circle"),
     "message_sent": ("normal", "circle"),
+    "budget_changed": ("manual", "refresh"),
     "lead_token_rotated": ("manual", "refresh"),
     "team_completed": ("done", "check"),
 }
@@ -655,7 +657,8 @@ def _blocked_explanation(reason: str, *, failures: int | None = None,
 
 def attention_items(tasks: list[dict], run: dict | None, *,
                     now: datetime | None = None, threshold_s: float = 900.0,
-                    remarks: dict | None = None) -> list[dict]:
+                    remarks: dict | None = None,
+                    budget: dict | None = None) -> list[dict]:
     """Everything that genuinely waits for a human decision.
 
     Each item answers the five questions of spec 4.5: what happened, why
@@ -706,6 +709,19 @@ def attention_items(tasks: list[dict], run: dict | None, *,
             "if_nothing": "Результат останется сохранённым и готовым к применению в любой момент.",
             "since": run.get("finished_at"),
         })
+    if budget and budget.get("state") == "limit":
+        money = budget.get("spent_text", "не определена")
+        items.append({
+            "kind": "budget", "task": None, "title": "Бюджет израсходован",
+            "icon": "alert",
+            "what": f"Потрачено {money} из согласованного бюджета.",
+            "why": "Новые задачи не запускаются: команда не закончит работу без новых расходов.",
+            "tried": "Система не останавливала исполнителей, которые уже работали: их результаты будут доведены до конца.",
+            "action": "Увеличьте бюджет, если работа должна продолжиться, либо завершите её с тем, что сделано.",
+            "remarks": "",
+            "if_nothing": "Оставшиеся задачи останутся в очереди, и команда не сможет объединить результаты.",
+            "since": None,
+        })
     for t in tasks:
         silent = _silent_s(t, now)
         if t["status"] == "in_progress" and silent is not None and silent > threshold_s:
@@ -755,14 +771,22 @@ def cost_view(usage: list[dict], *, task_of: dict | None = None,
     unknown = 0
     by_task: dict[str, float] = {}
     by_role: dict[str, float] = {}
+    # Every sum carries its own reliability: how many of its records had
+    # no price (spec 11.1), so a sum is never read as the whole truth.
+    unknown_task: dict[str, int] = {}
+    unknown_role: dict[str, int] = {}
     for u in usage:
         cost, quality = cost_of(u)
-        if cost is None:
-            unknown += 1
-            continue
-        known += cost
         task = (task_of or {}).get(u.get("task_id"))
         role = (role_of or {}).get(u.get("agent_id"))
+        if cost is None:
+            unknown += 1
+            if task:
+                unknown_task[task] = unknown_task.get(task, 0) + 1
+            if role:
+                unknown_role[role] = unknown_role.get(role, 0) + 1
+            continue
+        known += cost
         if task:
             by_task[task] = by_task.get(task, 0.0) + cost
         if role:
@@ -772,4 +796,6 @@ def cost_view(usage: list[dict], *, task_of: dict | None = None,
     if task_of is not None or role_of is not None:
         out["by_task"] = {k: round(v, 6) for k, v in sorted(by_task.items())}
         out["by_role"] = {k: round(v, 6) for k, v in sorted(by_role.items())}
+        out["unknown_by_task"] = unknown_task
+        out["unknown_by_role"] = unknown_role
     return out

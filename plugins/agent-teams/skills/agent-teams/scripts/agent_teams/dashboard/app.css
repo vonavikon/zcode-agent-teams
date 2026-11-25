@@ -314,6 +314,40 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 22px; height: 10px; border-radius: 999px; display: inline-block; }
+/* How the results got accepted: one bar, a share per result, and the
+   legend that says each share in words (spec 10.2). */
+.dist { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--gray-soft); margin-bottom: 10px; }
+.dist i { display: block; height: 100%; width: 0; transition: width 500ms var(--ease); }
+.dist i:first-child { border-radius: 999px 0 0 999px; }
+.swatch.cap { width: 12px; height: 12px; vertical-align: -1px; }
+.dist i.first { background: var(--green); }
+.dist i.reworked { background: var(--yellow); }
+.dist i.decision { background: var(--blue); }
+.dist i.awaiting { background: var(--gray); }
+.legend { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 14px; font-size: 12.5px; }
+.legend li { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.legend li.zero { opacity: 0.55; }
+.legend .swatch { flex: none; margin-top: 5px; background: var(--gray); }
+.legend .swatch.reworked { background: var(--yellow); }
+.legend .swatch.decision { background: var(--blue); }
+.legend .swatch.awaiting { background: var(--gray); }
+.legend small { display: block; font-size: 11.5px; color: var(--text-3); }
+.legend .num { color: var(--text-2); }
+/* The checks in the order they came back: one mark per check. */
+.strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.strip i { width: 14px; height: 14px; border-radius: 4px; }
+.swatch.ok, .strip i.ok { background: var(--green); }
+.swatch.bad, .strip i.bad { background: var(--red); }
+h3 .count { color: var(--text-2); font-weight: 500; }
+/* A block per model (the technical level) or per team (the comparison):
+   every measure stays visible at any width. */
+.records { display: grid; gap: 8px; }
+.record { padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font-size: 12.5px; min-width: 0; }
+.record .tt { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.record dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; }
+.record dt { color: var(--text-3); }
+.record dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.record.unfinished .tt > span:first-child { color: var(--text-3); font-weight: 400; }
 .swatch.work { background: var(--blue); } .swatch.check, .swatch.fix { background: var(--yellow); }
 .swatch.wait { background: var(--gray); } .swatch.recovery { background: var(--blue-soft); border: 1px dashed var(--blue); }
 .swatch.done { background: var(--green); } .swatch.stopped { background: var(--red); }
@@ -374,6 +408,8 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: baseline; font-size: 12.5px; }
 .bars .name { min-width: 0; overflow-wrap: anywhere; }
 .bars .bar { grid-column: 1 / -1; }
+/* What a sum of the list does not include (a record with no price). */
+.bars .note { grid-column: 1 / -1; margin-top: -2px; font-size: 11.5px; color: var(--text-3); }
 .bars .bar { display: block; height: 8px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; }
 .bars .bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width 500ms var(--ease); }
 .bars .value { font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }

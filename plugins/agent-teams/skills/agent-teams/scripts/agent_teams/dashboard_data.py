@@ -22,9 +22,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import planview, viewmodel
+from . import analytics, planview, viewmodel
 from .config import merge_config
 from .errors import EngineError
+from .quality import integration_branch_name
 from .storage import DB_FILENAME
 from .validation import normalize_path
 
@@ -44,7 +45,8 @@ _TASK_COLUMNS = (
 _AGENT_COLUMNS = ("id, role, status, current_task, started_at, finished_at,"
                   " heartbeat_at, restarts")
 _SUBMISSION_COLUMNS = ("id, task_id, attempt, commit_sha, base_commit_sha, branch,"
-                       " created_at, changed_files_json, verification_status, verifier")
+                       " created_at, changed_files_json, verification_status, verifier,"
+                       " evidence_status")
 # Keys of tasks.metadata_json safe to expose. The rest may hold free text
 # and is dropped.
 _META_KEYS = ("changed_files", "workspace_violations", "quarantine_dir",
@@ -225,6 +227,7 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             " config_json, spec_json FROM teams WHERE id = ?", (team,)).fetchone())
         if team_row is None:
             raise DashboardDataError(f"team {team!r} not found")
+        config = merge_config(team_row.get("config") or {})
         run = _decode(conn.execute(
             "SELECT id, number, started_at, finished_at, status,"
             " integration_base_commit, integration_commit_sha FROM runs"
@@ -246,8 +249,8 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             " ORDER BY created_at, rowid", (team,))]
         attempts = [_decode(r) for r in conn.execute(
             "SELECT task_id, attempt, verifier, actor, verdict, feedback,"
-            " created_at FROM verification_attempts WHERE team_id = ?"
-            " ORDER BY task_id, rowid", (team,))]
+            " created_at, report_json FROM verification_attempts WHERE team_id = ?"
+            " ORDER BY created_at, rowid", (team,))]
         raw_events = conn.execute(
             "SELECT seq, event_id, run_id, task_id, actor_id, event_type,"
             " timestamp, metadata_json, hash FROM events WHERE team_id = ?"
@@ -258,7 +261,7 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         t["metadata"] = {k: meta[k] for k in _META_KEYS
                          if isinstance(meta, dict) and k in meta}
 
-    threshold = merge_config(team_row.get("config") or {})["heartbeat_timeout_s"]
+    threshold = config["heartbeat_timeout_s"]
     titles = {t["id"]: t["title"] for t in tasks}
     by_id = {t["id"]: t for t in tasks}
     first_task: dict[str, dict] = {}
@@ -321,9 +324,16 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     # every task and the timeline all come from this one list.
     events, task_events, last_by_task = [], {}, {}
     overridden: dict[str, str] = {}       # submission id -> task id, manual acceptance
+    conflict_meta = None                  # the latest clash of the integration, as the engine wrote it
+    merged = None                         # the commits the integration merged
     for row in raw_events:
         e = _decode(row)
         raw_meta = e.get("metadata")
+        if isinstance(raw_meta, dict):
+            if e.get("event_type") == "workspace_conflict" and raw_meta.get("conflicts"):
+                conflict_meta = raw_meta
+            elif e.get("event_type") == "workspace_integrated":
+                merged = raw_meta.get("merged")
         e["metadata"] = _event_metadata(raw_meta, level)
         after_override = False
         if e.get("event_type") == "verification_passed" and isinstance(raw_meta, dict):
@@ -385,6 +395,26 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         view["result"] = _result(t, latest.get(t["id"]), level)
         task_views.append(view)
 
+    cost = viewmodel.cost_view(usage, task_of=titles, role_of=role_by_agent)
+    cost["series"] = analytics.spend_series(usage)
+    quality = analytics.quality_view(tasks, attempts, accepted_by_lead, titles)
+    budget = analytics.budget_view(cost, config, tasks)
+    budget["series"] = cost["series"]
+    if level == "advanced":
+        # Tokens and the price per model (spec 11.3), from the records as stored.
+        cost["models"] = analytics.model_rows(usage)
+    integration = analytics.integration_view(tasks, run, events)
+    if level == "advanced":
+        # The exact versions for the technical reader (spec 13): where
+        # the integration started, what it merged, what it made, and the
+        # clash itself as the engine recorded it.
+        integration["tech"] = {"run_id": run["id"] if run else None,
+                               "status": run["status"] if run else None,
+                               "branch": integration_branch_name(team),
+                               "base_commit": run.get("integration_base_commit") if run else None,
+                               "commit_sha": run.get("integration_commit_sha") if run else None,
+                               "merged": merged, "conflict": conflict_meta}
+
     out = {
         "team": team,
         "created_at": team_row["created_at"],
@@ -399,10 +429,16 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         "tasks": task_views,
         "agents": [view for _ids, view in cards],
         "attention": viewmodel.attention_items(
-            tasks, run, now=now, threshold_s=threshold, remarks=remarks),
+            tasks, run, now=now, threshold_s=threshold, remarks=remarks,
+            budget=budget),
         "events": feed,
         "last_seq": last_seq,
-        "cost": viewmodel.cost_view(usage, task_of=titles, role_of=role_by_agent),
+        "cost": cost,
+        # What the numbers mean (v2.1 spec 10 to 13).
+        "quality": quality,
+        "budget": budget,
+        "recovery": analytics.recovery_view(tasks, task_events, budget),
+        "integration": integration,
         # The plan as a graph (spec 6) and the time of every task (spec 7),
         # both drawn only from what the engine recorded.
         "plan": planview.plan_layout(tasks),
@@ -410,10 +446,13 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
             task_views, task_events, team_row["created_at"],
             end.isoformat(timespec="milliseconds").replace("+00:00", "Z")),
     }
+    comparison = benchmark_view(project_root, team, config)
+    if comparison is not None:
+        out["benchmark"] = comparison
     if level == "advanced":
         out["tech"] = {"submissions": [{k: v for k, v in s.items() if k != "count"}
                                        for s in submissions],
-                       "attempts": attempts, "usage": usage}
+                       "attempts": attempts, "usage": usage, "config": config}
     if "task_events" in parts:
         out["task_events"] = task_events
     return out
@@ -482,3 +521,72 @@ def result_file(project_root: Path, team: str, task_id: str, name: str
     if kind == "other":
         return data, "application/octet-stream"
     return data, "text/plain; charset=utf-8"
+
+
+def benchmark_view(project_root: Path, team: str, config: dict) -> dict | None:
+    """The teams of this project that ran one declared set of tasks
+    (v2.1 spec 19), or None when this team declares no benchmark.
+
+    Every team of the project is read the same read-only way this one
+    was. Only teams that declare the same benchmark name are compared.
+    """
+    declared = config.get("benchmark")
+    if not declared:
+        return None
+    root = Path(project_root).resolve()
+    rows = []
+    for path in sorted((root / TEAMS_DIR).glob(f"*/{DB_FILENAME}")):
+        try:
+            with _readonly(path.parent) as conn:
+                row = _decode(conn.execute(
+                    "SELECT id, created_at, config_json FROM teams LIMIT 1").fetchone())
+                if row is None or ((row.get("config") or {}).get("benchmark") or {}).get("name") \
+                        != declared["name"]:
+                    continue
+                tasks = [_decode(r) for r in conn.execute(
+                    "SELECT id, title, status, claimed_at, completed_at, submitted_at"
+                    " FROM tasks WHERE team_id = ?", (row["id"],))]
+                usage = [_decode(r) for r in conn.execute(
+                    "SELECT task_id, agent_id, total_tokens, cost_usd, cost_quality"
+                    " FROM token_usage WHERE team_id = ?", (row["id"],))]
+                attempts = [_decode(r) for r in conn.execute(
+                    "SELECT task_id, verdict, feedback, created_at FROM verification_attempts"
+                    " WHERE team_id = ? ORDER BY created_at, rowid", (row["id"],))]
+                manual, problems, conflicts = set(), 0, 0
+                for event in conn.execute(
+                        "SELECT event_type, task_id, metadata_json FROM events WHERE team_id = ?",
+                        (row["id"],)):
+                    meta = json.loads(event["metadata_json"]) \
+                        if isinstance(event["metadata_json"], str) else event["metadata_json"]
+                    meta = meta if isinstance(meta, dict) else {}
+                    if event["event_type"] == "verification_passed" and meta.get("override"):
+                        manual.add(event["task_id"])
+                    elif event["event_type"] == "workspace_conflict":
+                        conflicts += 1
+                    elif event["event_type"] in analytics.PROBLEM_EVENTS:
+                        problems += 1
+        except (DashboardDataError, sqlite3.Error, KeyError, TypeError, ValueError):
+            continue                    # a team that cannot be read is not compared
+        live = [t for t in tasks if t["status"] != "cancelled"]
+        starts = [p for p in (viewmodel.parse_time(t.get("claimed_at")) for t in tasks) if p]
+        ends = [p for p in (viewmodel.parse_time(t.get("completed_at")) for t in tasks) if p]
+        # Finished for a comparison: every task that counts was accepted.
+        # Whether the result was then applied to the project is a step of
+        # its own and not part of the measured work.
+        finished = bool(live and all(t["status"] == "completed" for t in live))
+        duration = round((max(ends) - min(starts)).total_seconds(), 3) if starts and ends else 0
+        cost = viewmodel.cost_view(usage)
+        quality = analytics.quality_view(tasks, attempts, manual)
+        rows.append({
+            "team": row["id"], "executors": ((row.get("config") or {}).get("benchmark") or {}).get("executors"),
+            "finished": finished, "duration_s": duration if finished else None,
+            "spent_usd": cost["usd"], "cost_complete": cost["complete"],
+            "accepted": len([t for t in live if t["status"] == "completed"]), "total": len(live),
+            "first_time": quality["first_time"], "judged": quality["judged"],
+            # Attempts and problems (spec 19): checks by the checker (a
+            # manual acceptance is not an attempt), the problems the
+            # recovery centre counts, and clashes between results.
+            "attempts": len(attempts) - len(manual), "problems": problems,
+            "conflicts": conflicts, "reworked": quality["reworked"],
+        })
+    return analytics.benchmark_compare(str(declared["name"]), rows, team)

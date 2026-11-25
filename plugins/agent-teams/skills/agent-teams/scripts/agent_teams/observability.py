@@ -99,6 +99,20 @@ def cost_of(record: dict) -> tuple[float | None, str]:
     return compute_cost(record)
 
 
+def price_per_1m(model: str | None) -> dict | None:
+    """The row of the price table a model is priced by: USD per 1M tokens
+    for input, output and cache read, or None for a model the table does
+    not know."""
+    name = (model or "").lower()
+    # The longest matching name wins: "glm-5.3-flash" is also "glm-5.3"
+    # as a substring, and it has its own price.
+    matching = [candidate for candidate in PRICE_TABLE_USD_1M if candidate in name]
+    if not matching:
+        return None
+    row = PRICE_TABLE_USD_1M[max(matching, key=len)]
+    return {"input": row[0], "output": row[1], "cache_read": row[2]}
+
+
 def compute_cost(record: dict) -> tuple[float | None, str]:
     """Cost in USD and its quality flag for one usage record, from the
     current price table."""
@@ -108,21 +122,18 @@ def compute_cost(record: dict) -> tuple[float | None, str]:
         and record.get("output_tokens") is not None
     if not model or (total in (None, 0) and not has_split):
         return None, "unknown"
-    # The longest matching name wins: "glm-5.3-flash" is also "glm-5.3"
-    # as a substring, and it has its own price.
-    matching = [name for name in PRICE_TABLE_USD_1M if name in model]
-    if not matching:
+    price = price_per_1m(model)
+    if price is None:
         return None, "unknown"
-    price = PRICE_TABLE_USD_1M[max(matching, key=len)]
     if record.get("input_tokens") is not None \
             and record.get("output_tokens") is not None:
-        cost = (record["input_tokens"] * price[0]
-                + record["output_tokens"] * price[1]
-                + (record.get("cache_read_tokens") or 0) * price[2]) / 1_000_000
+        cost = (record["input_tokens"] * price["input"]
+                + record["output_tokens"] * price["output"]
+                + (record.get("cache_read_tokens") or 0) * price["cache_read"]) / 1_000_000
         quality = "estimated"
     else:
         # Split unknown: assume 1:3 input/output as an explicit estimate.
-        cost = (total * 0.25 * price[0] + total * 0.75 * price[1]) / 1_000_000
+        cost = (total * 0.25 * price["input"] + total * 0.75 * price["output"]) / 1_000_000
         quality = "estimated"
     return round(cost, 6), quality
 

@@ -478,6 +478,28 @@ class TestSwitches:
         assert "task_id: a" in out["advancedPlan"] and "branch: x/y" in out["advancedPlan"]
         assert out["simpleAgainFetch"].endswith("level=simple")
         assert "hash" not in out["simpleFeed"]
+
+    def test_the_models_table_is_for_the_technical_reader(self):
+        models = [{"provider": "bothub", "model": EVIL + "-flash", "records": 2, "input_tokens": 2000,
+                   "output_tokens": 1000, "cache_read_tokens": 400, "cache_write_tokens": 100,
+                   "usd": 0.0006, "unknown": 1, "quality": ["estimated"],
+                   "price_per_1m": {"input": 0.1, "output": 0.4, "cache_read": 0.02}},
+                  {"provider": None, "model": "mystery-9", "records": 1, "input_tokens": 0, "output_tokens": 0,
+                   "cache_read_tokens": 0, "cache_write_tokens": 0, "usd": 0.0, "unknown": 1,
+                   "quality": [], "price_per_1m": None}]
+        snapped = snapshot(cost={"tokens": 3000, "usd": 0.0006, "unknown_records": 1, "complete": False,
+                                 "models": models})
+        out = run("modes", [snapped, snapped, snapped, snapped])
+        assert "По моделям" not in out["simpleMoney"]
+        table = out["advancedMoney"]
+        assert "<h3>По моделям</h3>" in table and EVIL_ESCAPED in table and EVIL not in table
+        assert "<dt>Токены: вход / выход</dt><dd>2 000 / 1 000</dd>" in table
+        assert "<dt>Кеш: чтение / запись</dt><dd>400 / 100</dd>" in table
+        assert "<dt>Цена за 1 млн: вход / выход / кеш</dt><dd>$0.10 / $0.40 / $0.02</dd>" in table
+        assert "<dt>Расход</dt><dd>$0.000600 <span class=\"muted\">(1 запись без цены)</span>" in table
+        assert "оценка по таблице цен" in table and "модели нет в таблице цен" in table
+        assert "<dt>Расход</dt><dd>не определена <span class=\"muted\">(1 запись без цены)</span>" in table
+        assert "неизвестно" in table and "<table" not in table      # fits any width, no scroll of its own
         assert out["prefs"]["at.mode"] == "simple"
 
     def test_the_theme_is_remembered(self):
@@ -812,6 +834,30 @@ class TestTheQualityCard:
         body = run("render", [snapshot()])["dom"]["qualityBody"]["html"]
         assert "Машинных проверок не было" in body and "Проверок ещё не было" in body
         assert "Результаты ещё не передавались на проверку." in body
+        assert 'class="dist"' not in body and 'class="strip"' not in body
+
+    def test_the_distribution_of_results_and_the_order_of_the_checks(self):
+        quality = {"handed_over": 4, "checks": 3, "passed": 1, "failed": 2, "accepted_by_check": 1,
+                   "accepted_by_decision": 1, "first_time": 1, "reworked": 1, "judged": 2,
+                   "machine": {"run": 0, "passed": 0, "failed": 0, "forced": 0},
+                   "split": {"first": 1, "reworked": 1, "decision": 1, "awaiting": 1},
+                   "timeline": [{"ts": "2026-11-25T09:01:00.000Z", "verdict": "pass", "task": "Обзор", "attempt": 1},
+                                {"ts": "2026-11-25T09:02:00.000Z", "verdict": "fail", "task": EVIL, "attempt": 1},
+                                {"ts": "2026-11-25T09:03:00.000Z", "verdict": "fail", "task": EVIL, "attempt": 2}],
+                   "awaited": [], "problems": [{"task": EVIL, "remark": "нет оценок", "when": "x", "attempt": 1},
+                                               {"task": EVIL, "remark": "всё ещё нет", "when": "x", "attempt": 2}],
+                   "story": "s"}
+        body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
+        # One share per result, each named in the legend.
+        assert '<i class="first" data-w="25.00"' in body and '<i class="reworked" data-w="25.00"' in body
+        assert '<i class="decision" data-w="25.00"' in body and '<i class="awaiting" data-w="25.00"' in body
+        assert "С первого раза" in body and "После доработки" in body
+        assert "Решением руководителя" in body and "Ещё на проверке" in body
+        # The checks in their order: a result sent back twice is seen, and said.
+        assert body.count('<i class="ok"') == 1 and body.count('<i class="bad"') == 2
+        assert "1 результат возвращался на доработку больше одного раза." in body
+        assert "Найденные недостатки <span class='count'>2</span>" in body
+        assert EVIL_ESCAPED in body and EVIL not in body
 
 
 class TestTheMoneyCard:
@@ -844,6 +890,18 @@ class TestTheMoneyCard:
     def test_no_budget_no_bar(self):
         body = run("render", [snapshot()])["dom"]["moneyBody"]["html"]
         assert "gauge" not in body and "не согласован" in body and "<b>не определена</b>" in body
+
+    def test_every_sum_says_what_it_leaves_out(self):
+        body = run("render", [with_money(
+            unknown_by_task={"Проверить": 2, "Ничего не оценено": 1},
+            unknown_by_role={"AI-аналитик": 1})])["dom"]["moneyBody"]["html"]
+        assert '<span class="name">Собрать отчёт</span><span class="value">$5.00</span><span class="bar"><i data-w="100"></i></span></li>' in body
+        assert '<span class="note">и ещё цена 2 записей неизвестна</span>' in body
+        # A stage with no priced record at all is "not defined", never a zero.
+        assert '<span class="name">Ничего не оценено</span><span class="value">не определена</span><span class="bar"><i data-w="0"></i></span>' in body
+        assert '<span class="name">AI-аналитик</span><span class="value">$7.50</span><span class="bar"><i data-w="100"></i></span>' + \
+            '<span class="note">и ещё цена 1 записи неизвестна</span>' in body
+        assert "По моделям" not in body          # the simple level carries no tariffs
 
 
 class TestTheProblemsCard:
@@ -880,6 +938,22 @@ class TestTheProblemsCard:
     def test_no_problems(self):
         body = run("render", [snapshot()])["dom"]["problemBody"]["html"]
         assert "Проблем не было." in body and "incidents" not in body
+
+    def test_when_it_happened_and_what_cannot_be_lost(self):
+        data = self.incidents()
+        data["incidents"][0]["saved"] = "вся сделанная работа сохранена"
+        data["incidents"].append({"task": None, "kind": "budget", "title": "Бюджет исчерпан", "when": None,
+                                  "detail": "Новые задачи не запускаются.", "affected": "запуск новых задач",
+                                  "did": ["остановила запуск новых задач"],
+                                  "saved": "все сделанные результаты сохранены",
+                                  "risk_of_loss": False, "human_needed": True,
+                                  "action": "Увеличьте бюджет", "outcome": "нужна помощь"})
+        body = run("render", [snapshot(recovery=data)])["dom"]["problemBody"]["html"]
+        assert "<time class='muted small'>" in body                 # when it happened
+        assert "Сохранено: вся сделанная работа сохранена." in body
+        # The spent budget names no stage and carries no time.
+        assert "Бюджет исчерпан</div>" in body and "<b>Увеличьте бюджет</b>" in body
+        assert "Сохранено: все сделанные результаты сохранены." in body
 
 
 class TestTheBuildCard:
@@ -939,7 +1013,23 @@ class TestTheComparisonCard:
     def test_without_two_finished_teams_it_says_so_and_shows_the_rows(self):
         body = run("render", [snapshot(benchmark=self.benchmark())])["dom"]["benchBody"]["html"]
         assert "Сопоставимых измерений пока нет" in body and "<b>" not in body.split("</p>")[0]
-        assert "<tr class='finished'><td>solo</td><td>1</td><td>1 ч 6 мин</td><td>$10.00</td><td>3 из 4</td>" in body
+        # One block per team, every measure in words at any width.
+        assert '<div class="record finished"><div class="tt">solo <span class="muted">· 1 специалист</span> ' \
+            '<span class="state done">завершена</span></div><dl><dt>Время</dt><dd>1 ч 6 мин</dd>' \
+            '<dt>Затраты</dt><dd>$10.00</dd><dt>С первого раза</dt><dd>3 из 4</dd>' in body
+        assert '<div class="record unfinished"><div class="tt">' + EVIL_ESCAPED + \
+            ' <span class="muted">· 3 специалиста</span> <span class="state idle">не завершена</span></div>' in body
+        assert "<table" not in body
+        # Attempts, problems and clashes (spec 19); an engine that sends
+        # none of them is not read as zero.
+        assert "<dt>Проверок</dt><dd>нет данных</dd><dt>Проблем</dt><dd>нет данных</dd>" \
+            "<dt>Конфликтов объединения</dt><dd>нет данных</dd>" in body
+        view = self.benchmark()
+        view["rows"][0].update(attempts=5, problems=2, conflicts=1)
+        view["rows"][1]["executors"] = None
+        body = run("render", [snapshot(benchmark=view)])["dom"]["benchBody"]["html"]
+        assert "<dt>Проверок</dt><dd>5</dd><dt>Проблем</dt><dd>2</dd><dt>Конфликтов объединения</dt><dd>1</dd>" in body
+        assert "· специалистов: ?</span>" in body
         assert "не завершена" in body and "не определены" in body and "нет проверок" in body
         assert EVIL_ESCAPED in body and EVIL not in body
 

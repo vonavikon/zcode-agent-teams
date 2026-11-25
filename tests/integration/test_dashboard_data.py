@@ -331,7 +331,10 @@ class TestCost:
         cost = snapshot(fresh_team["root"], "t")["cost"]
         assert cost == {"tokens": 1234, "usd": 0.0, "unknown_records": 1,
                         "complete": False, "quality": "unknown",
-                        "by_task": {}, "by_role": {}}   # nothing known to break down
+                        "by_task": {}, "by_role": {}, "series": [],
+                        # the unpriced record belongs to task b and to its executor's role
+                        "unknown_by_task": {"Проверить отчёт": 1},
+                        "unknown_by_role": {"AI-аналитик": 1}}
         with sqlite3.connect(fresh_team["db"]) as conn:
             stored = conn.execute("SELECT cost_usd, cost_quality FROM token_usage").fetchone()
         assert stored == (None, "unknown")
@@ -345,6 +348,31 @@ class TestCost:
         # "analyst" is nobody's id here: its spend is counted, named by nobody.
         assert cost["by_role"] == {"AI-аналитик": one}
         assert cost["usd"] == pytest.approx(3.6)
+        assert cost["unknown_by_task"] == {} and cost["unknown_by_role"] == {}
+
+    def test_a_sum_with_an_unpriced_record_says_so(self, fresh_team):
+        engine.op_tokens(fresh_team["root"], "t", "b", 1_000_000, "w2", "glm-5.3")
+        engine.op_usage(fresh_team["root"], "t", "a", "w2", _notification(fresh_team["root"]))
+        cost = snapshot(fresh_team["root"], "t")["cost"]
+        assert cost["unknown_records"] == 1
+        # The stage with the unpriced record is named; the priced one is whole.
+        assert cost["unknown_by_task"] == {"Собрать отчёт": 1}
+        assert cost["unknown_by_role"] == {"AI-аналитик": 1}        # w2 wears that role
+        budget = snapshot(fresh_team["root"], "t")["budget"]
+        assert budget["unknown_by_task"] == {"Собрать отчёт": 1}
+
+    def test_the_models_table_is_for_the_advanced_level_only(self, fresh_team):
+        engine.op_tokens(fresh_team["root"], "t", "b", 1_000_000, "w2", "glm-5.3")
+        assert "models" not in snapshot(fresh_team["root"], "t")["cost"]
+        [row] = snapshot(fresh_team["root"], "t", level="advanced")["cost"]["models"]
+        assert row["model"] == "glm-5.3" and row["price_per_1m"]["input"] == 0.60
+        assert row["usd"] == pytest.approx(1.8) and row["records"] == 1
+        # The technical reader gets the exact versions of the integration too (spec 13).
+        tech = snapshot(fresh_team["root"], "t", level="advanced")["integration"]["tech"]
+        assert tech["branch"] == "agent-teams/t/integration"
+        assert set(tech) == {"run_id", "status", "branch", "base_commit", "commit_sha",
+                             "merged", "conflict"}
+        assert "tech" not in snapshot(fresh_team["root"], "t")["integration"]
 
 
 class TestReadingCannotWrite:
@@ -521,6 +549,142 @@ class TestWhatAStageSays:
         how = [c["how"] for c in self.view(snapshot(team["root"], "t"), "a")["criteria"]]
         assert how == ["автоматическая проверка: запускается команда",
                        "оценка содержания проверяющим", "решение человека"]
+
+
+class TestWhatTheNumbersMean:
+    def test_the_four_views_of_a_real_team(self, team):
+        snap = snapshot(team["root"], "t")
+        quality, budget, recovery, integration = (
+            snap["quality"], snap["budget"], snap["recovery"], snap["integration"])
+        # a: accepted by decision; b: silent, in work; c: two failed checks, blocked.
+        assert (quality["handed_over"], quality["judged"], quality["accepted_by_decision"]) == (2, 1, 1)
+        assert (quality["checks"], quality["failed"], quality["reworked"]) == (2, 2, 1)
+        assert "1 результат принят решением руководителя команды, без проверки." in quality["story"]
+        assert quality["awaited"] == [TITLES["b"]]
+        # A problem names the stage by its title, never by an identifier.
+        assert quality["problems"][0]["task"] == TITLES["c"] and quality["problems"][0]["remark"]
+        assert budget["state"] == "none" and budget["spent_usd"] == 0.0
+        assert "Бюджет не согласован" in budget["story"]
+        # The journal holds one failed check and the block that the second
+        # failure became; the first was answered by a rework.
+        assert recovery["total"] == 2 and recovery["open"] == 1
+        assert recovery["by_kind"] == {"check": 1, "blocked": 1}
+        assert "Сейчас нужна ваша помощь по 1 задаче" in recovery["story"]
+        assert integration["state"] == "collecting"
+        assert integration["story"] == ("Принято 1 из 3 результатов. "
+                                        "Объединение начнётся, когда будут приняты все.")
+
+    def test_the_budget_limit_lands_in_the_attention_list(self, tmp_path):
+        spec_file(tmp_path)
+        lead = engine.op_init(tmp_path, "t", spec_file(tmp_path))["lead_token"]
+        engine.op_budget(tmp_path, "t", lead, usd=0.0005)
+        engine.op_tokens(tmp_path, "t", "a", 2000, "w1", "glm-5.3-flash")   # 0.00065: past it
+        snap = snapshot(tmp_path, "t")
+        assert snap["budget"]["state"] == "limit"
+        assert "Бюджет израсходован" in snap["budget"]["story"]
+        assert "не останавливаются" in snap["budget"]["story"]
+        [notice] = [a for a in snap["attention"] if a["kind"] == "budget"]
+        for key in ("what", "why", "tried", "action", "if_nothing"):
+            assert notice[key].strip(), key
+        assert "$0.000650" in notice["what"]
+
+    def test_a_change_of_budget_is_in_the_feed_in_words(self, tmp_path):
+        spec_file(tmp_path)
+        lead = engine.op_init(tmp_path, "t", spec_file(tmp_path))["lead_token"]
+        engine.op_budget(tmp_path, "t", lead, usd=12)
+        snap = snapshot(tmp_path, "t")
+        [line] = [e for e in snap["events"] if e["type"] == "budget_changed"]
+        assert line["title"] == "Руководитель команды изменил бюджет"
+        assert line["specialist"] == "Руководитель команды" and line["kind"] == "manual"
+        assert snap["budget"]["budget_usd"] == 12 and snap["budget"]["state"] == "ok"
+
+
+class TestComparingTeams:
+    def two_teams(self, root: Path) -> tuple[str, str]:
+        (root / "out").mkdir(exist_ok=True)
+        for name, executors in (("solo", 1), ("trio", 3)):
+            spec = root / f"{name}.json"
+            spec.write_text(json.dumps({
+                "config": {"benchmark": {"name": "billing", "executors": executors}},
+                "tasks": [{"id": "a", "title": "Отчёт", "assignee": "w1",
+                           "files_write": ["out/a.md"], "acceptance": ["готово"], "deps": []}]}),
+                encoding="utf-8")
+            lead = engine.op_init(root, name, spec)["lead_token"]
+            claim = engine.op_claim(root, name, "a", "w1")
+            engine.op_submit(root, name, "a", "w1", claim["execution_token"])
+            engine.op_verify(root, name, "a", "pass", "", lead)
+        return "solo", "trio"
+
+    def test_a_team_without_a_declared_benchmark_is_compared_with_nobody(self, team):
+        assert "benchmark" not in snapshot(team["root"], "t")
+
+    def test_two_teams_of_one_set_are_compared_only_when_both_finished(self, tmp_path):
+        solo, trio = self.two_teams(tmp_path)
+        # Trio is re-opened by hand: its task is not accepted any more.
+        with sqlite3.connect(tmp_path / ".agent-teams" / trio / "state.db") as conn:
+            conn.execute("UPDATE tasks SET status = 'in_progress'")
+        view = snapshot(tmp_path, solo)["benchmark"]
+        assert view["statement"] is None and "не меньше двух команд" in view["note"]
+        assert [r["team"] for r in view["rows"]] == ["solo", "trio"]
+        assert [r["finished"] for r in view["rows"]] == [True, False]
+
+    def test_two_finished_teams_give_a_sentence_and_the_spend_grows_in_a_series(self, tmp_path):
+        solo, trio = self.two_teams(tmp_path)
+        view = snapshot(tmp_path, trio)["benchmark"]
+        assert view["name"] == "billing"
+        assert view["statement"].startswith(
+            "Команда из 3 специалистов выполнила набор задач")
+        assert "чем команда из 1 исполнителя" in view["statement"]
+        assert "затраты не сравнить" in view["statement"]      # no usage was recorded at all
+        assert [r["executors"] for r in view["rows"]] == [1, 3]
+        assert all(r["duration_s"] >= 0 for r in view["rows"])    # from the claim to the acceptance
+        assert all((r["attempts"], r["problems"], r["conflicts"]) == (1, 0, 0) for r in view["rows"])
+
+    def test_a_decision_of_the_lead_is_neither_a_check_nor_an_attempt(self, tmp_path):
+        init_git(tmp_path)
+        spec = tmp_path / "duo.json"
+        spec.write_text(json.dumps({
+            "config": {"benchmark": {"name": "billing", "executors": 2}},
+            "tasks": [{"id": task_id, "title": f"Отчёт {task_id}", "assignee": "w1",
+                       "files_write": [f"out/{task_id}.md"], "acceptance": ["готово"], "deps": []}
+                      for task_id in ("a", "b")]}), encoding="utf-8")
+        lead = engine.op_init(tmp_path, "duo", spec)["lead_token"]
+        claims = {task_id: engine.op_claim(tmp_path, "duo", task_id, "w1") for task_id in ("a", "b")}
+
+        def deliver(task_id, text):
+            workspace = Path(claims[task_id]["workspace"])
+            (workspace / "out" / f"{task_id}.md").write_text(text, encoding="utf-8")
+            git(workspace, "add", "-A")
+            git(workspace, "commit", "-qm", "work")
+            engine.op_submit(tmp_path, "duo", task_id, "w1", claims[task_id]["execution_token"])
+
+        deliver("a", "отчёт без оценок\n")
+        deliver("b", "отчёт\n")
+        engine.op_verify(tmp_path, "duo", "a", "fail", "нет оценок", lead)     # the one real check
+        deliver("a", "отчёт с оценками\n")
+        engine.op_verify(tmp_path, "duo", "a", "pass", "", lead, override_reason="demo")
+        engine.op_verify(tmp_path, "duo", "b", "pass", "", lead, override_reason="demo")
+        [row] = snapshot(tmp_path, "duo")["benchmark"]["rows"]
+        assert (row["attempts"], row["judged"], row["first_time"]) == (1, 0, 0)
+        assert (row["problems"], row["conflicts"]) == (1, 0)
+        assert row["finished"] and row["accepted"] == 2
+
+    def test_a_team_of_another_set_is_left_out(self, tmp_path):
+        solo, trio = self.two_teams(tmp_path)
+        spec = tmp_path / "other.json"
+        spec.write_text(json.dumps({
+            "config": {"benchmark": {"name": "something-else", "executors": 5}},
+            "tasks": [{"id": "a", "title": "x", "assignee": "w1", "files_write": ["out/a.md"],
+                       "acceptance": ["готово"], "deps": []}]}), encoding="utf-8")
+        engine.op_init(tmp_path, "other", spec)
+        assert [r["team"] for r in snapshot(tmp_path, solo)["benchmark"]["rows"]] == ["solo", "trio"]
+
+    def test_the_spend_series_grows_record_by_record(self, fresh_team):
+        engine.op_tokens(fresh_team["root"], "t", "b", 1000, "w2", "glm-5.3-flash")
+        engine.op_tokens(fresh_team["root"], "t", "a", 2000, "w1", "glm-5.3-flash")
+        engine.op_tokens(fresh_team["root"], "t", "a", 500, "w1", "mystery-9")     # no price: not plotted
+        series = snapshot(fresh_team["root"], "t")["cost"]["series"]
+        assert [round(point["usd"], 6) for point in series] == [0.000325, 0.000975]
 
 
 class TestTheClock:

@@ -582,6 +582,26 @@
         (it.note ? '<small>' + esc(it.note) + "</small>" : "") + "</div>";
     }).join("") + "</div>";
   }
+  function moneyText(usd) {
+    usd = Number(usd) || 0;
+    return "$" + (usd >= 0.01 || usd === 0 ? usd.toFixed(2) : usd.toFixed(6));
+  }
+  /* The lines of one bar list of the money card. A stage or a specialist
+     some of whose records have no price keeps its known sum and says so;
+     one with no priced record at all is "not defined", never a zero. */
+  function moneyRows(sums, unknown) {
+    sums = sums || {};
+    unknown = unknown || {};
+    var names = {};
+    Object.keys(sums).forEach(function (k) { names[k] = true; });
+    Object.keys(unknown).forEach(function (k) { names[k] = true; });
+    return Object.keys(names).map(function (name) {
+      var value = Number(sums[name]) || 0, missing = Number(unknown[name]) || 0;
+      return {name: name, value: value, text: value ? moneyText(value) : "не определена",
+              note: missing ? "и ещё цена " + missing + " " + (missing === 1 ? "записи" : "записей") +
+                " неизвестна" : ""};
+    });
+  }
   function bars(rows) {
     if (!rows.length) return '<p class="muted small">Данных пока нет.</p>';
     var top = Math.max.apply(null, rows.map(function (r) { return Number(r.value) || 0; })) || 1;
@@ -589,7 +609,7 @@
       var share = Math.round(100 * (Number(r.value) || 0) / top);
       return '<li><span class="name">' + esc(r.name) + '</span><span class="value">' + esc(r.text) +
         '</span><span class="bar"><i data-w="' + (share < 2 && Number(r.value) > 0 ? 2 : share) +
-        '"></i></span></li>';
+        '"></i></span>' + (r.note ? '<span class="note">' + esc(r.note) + "</span>" : "") + "</li>";
     }).join("") + "</ul>";
   }
   function fitBars(scope) {
@@ -617,6 +637,54 @@
     return items.length ? '<ul class="plain">' + items.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>" : "";
   };
 
+  /* How the handed-over results got as far as they did: one bar, every
+     result takes a share (spec 10.2). The legend says each share in
+     words: colour never carries the meaning alone. */
+  function distribution(split) {
+    split = split || {};
+    var parts = [
+      {key: "first", label: "С первого раза", note: "проверка пройдена без доработки"},
+      {key: "reworked", label: "После доработки", note: "сначала проверку не прошли, результат переделывался"},
+      {key: "decision", label: "Решением руководителя", note: "принято без проверки"},
+      {key: "awaiting", label: "Ещё на проверке", note: "ответ проверяющего не пришёл"}
+    ];
+    var count = function (p) { return Number(split[p.key]) || 0; };
+    var total = parts.reduce(function (sum, p) { return sum + count(p); }, 0);
+    if (!total) return "";
+    return '<div class="dist" role="img" aria-label="Как результаты дошли до принятия: ' +
+      esc(parts.map(function (p) { return p.label + " " + count(p); }).join(", ")) + '">' +
+      parts.map(function (p) {
+        return count(p) ? '<i class="' + p.key + '" data-w="' + (100 * count(p) / total).toFixed(2) +
+          '" title="' + esc(p.label + ": " + count(p)) + '"></i>' : "";
+      }).join("") + "</div>" +
+      '<ul class="legend">' + parts.map(function (p) {
+        return '<li class="' + (count(p) ? "" : "zero") + '"><span class="swatch ' + p.key +
+          '"></span><span><b>' + esc(p.label) + "</b> <span class='num'>" + count(p) + "</span><small>" +
+          esc(p.note) + "</small></span></li>";
+      }).join("") + "</ul>";
+  }
+  /* Every check in the order the answers came back, one mark each: a
+     result that came back more than once is seen at a glance. */
+  function strip(timeline) {
+    var marks = list(timeline);
+    if (!marks.length) return "";
+    var fails = {};
+    marks.forEach(function (m) { if (m.verdict !== "pass") fails[m.task] = (fails[m.task] || 0) + 1; });
+    var again = Object.keys(fails).filter(function (t) { return fails[t] > 1; }).length;
+    return "<h3>Проверки по порядку</h3>" +
+      '<div class="strip" role="img" aria-label="Проверки по порядку: ' + marks.length + " " +
+      plural(marks.length, "проверка", "проверки", "проверок") + '">' +
+      marks.map(function (m) {
+        var ok = m.verdict === "pass";
+        return '<i class="' + (ok ? "ok" : "bad") + '" title="' +
+          esc(fmtClock(m.ts) + " · " + m.task + ": " + (ok ? "пройдена" : "не пройдена")) + '"></i>';
+      }).join("") + "</div>" +
+      '<p class="small muted">Слева раньше: <span class="swatch ok cap"></span> пройдена, ' +
+      '<span class="swatch bad cap"></span> вернула результат на доработку.' +
+      (again ? " " + again + " " + plural(again, "результат возвращался", "результата возвращались",
+                                          "результатов возвращались") + " на доработку больше одного раза." : "") +
+      "</p>";
+  }
   function renderQuality(q) {
     if (!q) return;
     var machine = q.machine || {};
@@ -639,8 +707,11 @@
              {n: q.reworked, label: noun(q.reworked, "доработка", "доработки", "доработок"),
               note: "результатов пришлось переделывать"},
              {n: q.accepted_by_decision, label: "принято решением", note: "руководитель команды принял без проверки"}]) +
+      distribution(q.split) +
       duo("Что проверила машина", machineBody, "Что оценил проверяющий", judgedBody) +
-      (problems.length ? "<h3>Найденные недостатки</h3><ul class='plain'>" + problems.map(function (p) {
+      strip(q.timeline) +
+      (problems.length ? "<h3>Найденные недостатки <span class='count'>" + problems.length +
+       "</span></h3><ul class='plain'>" + problems.map(function (p) {
         return "<li><b>" + esc(p.task) + ".</b> " + esc(p.remark || "замечаний не записано") + "</li>";
       }).join("") + "</ul>" : "") +
       (list(q.awaited).length ? "<h3>Ещё ждут проверки</h3>" + linesOf(list(q.awaited)) : "") +
@@ -674,14 +745,12 @@
       html += "<p class='bad-text'>Лимит одной задачи (" + esc("$" + Number(b.per_task_usd).toFixed(2)) + ") исчерпан: " +
         esc(b.over_limit.join(", ")) + "</p>";
     }
-    html += duo("По этапам", bars(Object.keys(b.by_task || {}).map(function (name) {
-      return {name: name, value: b.by_task[name], text: "$" + Number(b.by_task[name]).toFixed(2)};
-    })), "По специалистам", bars(Object.keys(b.by_role || {}).map(function (name) {
-      return {name: name, value: b.by_role[name], text: "$" + Number(b.by_role[name]).toFixed(2)};
-    })));
+    html += duo("По этапам", bars(moneyRows(b.by_task, b.unknown_by_task)),
+                "По специалистам", bars(moneyRows(b.by_role, b.unknown_by_role)));
     if (list(b.series).length >= 2) {
       html += "<h3>Как росли расходы</h3>" + spark(b.series);
     }
+    html += modelsList(cost && cost.models);
     html += techBlock(b);
     $("moneyBody").innerHTML = html;
     fitBars($("moneyBody"));
@@ -690,6 +759,32 @@
     });
   }
 
+  /* Tokens and the price per model (spec 11.3), for the technical
+     reader only: the simple level is not loaded with tariffs. A block
+     per model, so it fits any width without a scroll of its own. */
+  var QUALITY_TEXT = {estimated: "оценка по таблице цен", stored: "цена на момент работы",
+                      unknown: "неизвестно"};
+  function modelsList(rows) {
+    rows = list(rows);
+    if (store.mode !== "advanced" || !rows.length) return "";
+    // Grouped with an ordinary space, the same on every platform.
+    function num(v) { return String(Math.round(Number(v) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " "); }
+    return "<h3>По моделям</h3>" + '<div class="records">' + rows.map(function (r) {
+      var price = r.price_per_1m;
+      var quality = list(r.quality).map(function (q) { return QUALITY_TEXT[q] || q; }).join(", ");
+      return '<div class="record"><div class="tt">' + esc(r.model) + ' <span class="muted">· ' + esc(r.provider) +
+        " · " + r.records + " " + plural(r.records, "запись", "записи", "записей") + "</span></div>" +
+        "<dl><dt>Токены: вход / выход</dt><dd>" + num(r.input_tokens) + " / " + num(r.output_tokens) + "</dd>" +
+        "<dt>Кеш: чтение / запись</dt><dd>" + num(r.cache_read_tokens) + " / " + num(r.cache_write_tokens) + "</dd>" +
+        "<dt>Цена за 1 млн: вход / выход / кеш</dt><dd>" +
+        esc(price ? moneyText(price.input) + " / " + moneyText(price.output) + " / " + moneyText(price.cache_read)
+                   : "модели нет в таблице цен") + "</dd>" +
+        "<dt>Расход</dt><dd>" + (r.usd ? moneyText(r.usd) : "не определена") +
+        (r.unknown ? ' <span class="muted">(' + r.unknown + " " +
+          plural(r.unknown, "запись", "записи", "записей") + " без цены)</span>" : "") +
+        ' <span class="muted">' + esc(quality || "неизвестно") + "</span></dd></dl></div>";
+    }).join("") + "</div>";
+  }
   function renderProblems(r) {
     if (!r) return;
     var incidents = list(r.incidents);
@@ -700,9 +795,12 @@
       }).join("") + "</div>";
       html += '<ul class="incidents">' + incidents.slice(0, 8).map(function (i) {
         return '<li class="' + (i.human_needed ? "open" : "closed") + '">' + icon(i.human_needed ? "alert" : "check") +
-          "<div><div class='tt'>" + esc(i.title) + " <span class='muted'>· " + esc(i.task) + "</span></div>" +
+          "<div><div class='tt'>" + esc(i.title) +
+          (i.task ? " <span class='muted'>· " + esc(i.task) + "</span>" : "") +
+          (i.when ? " <time class='muted small'>" + esc(fmtClock(i.when)) + "</time>" : "") + "</div>" +
           (i.detail ? '<div class="dd">' + esc(i.detail) + "</div>" : "") +
           '<div class="dd">Система ' + esc(i.did.join(", ")) + ".</div>" +
+          (i.saved ? '<div class="dd">Сохранено: ' + esc(i.saved) + ".</div>" : "") +
           '<div class="dd outcome">Итог: ' + esc(i.outcome) + (i.risk_of_loss ? ". Есть риск потери результата." : ".") + "</div>" +
           (i.human_needed ? '<div class="dd"><b>' + esc(i.action) + "</b></div>" : "") +
           "</div></li>";
@@ -737,18 +835,26 @@
     var card = $("benchCard");
     if (!b) { card.classList.add("hidden"); return; }
     card.classList.remove("hidden");
+    // A block per team: every measure is visible at any width, where a
+    // table of eight columns would hide its last three behind an edge.
     var rows = list(b.rows);
-    var table = rows.length ? '<div class="table-wrap"><table class="table"><thead><tr>' +
-      "<th>Команда</th><th>Специалистов</th><th>Время</th><th>Затраты</th><th>С первого раза</th></tr></thead><tbody>" +
-      rows.map(function (r) {
-        return "<tr class='" + (r.finished ? "finished" : "unfinished") + "'><td>" + esc(r.team) + "</td><td>" +
-          esc(r.executors == null ? "?" : r.executors) + "</td><td>" +
-          esc(r.finished ? fmtDur(Number(r.duration_s) || 0) : "не завершена") + "</td><td>" +
-          esc(r.cost_complete ? "$" + (Number(r.spent_usd) || 0).toFixed(2) : "не определены") + "</td><td>" +
-          esc(r.judged ? r.first_time + " из " + r.judged : "нет проверок") + "</td></tr>";
-      }).join("") + "</tbody></table></div>" : "";
+    var measured = function (v) { return v == null ? "нет данных" : String(v); };
+    var blocks = rows.length ? '<div class="records">' + rows.map(function (r) {
+      var people = r.executors == null ? "специалистов: ?"
+        : r.executors + " " + plural(Number(r.executors) || 0, "специалист", "специалиста", "специалистов");
+      return '<div class="record ' + (r.finished ? "finished" : "unfinished") + '">' +
+        '<div class="tt">' + esc(r.team) + ' <span class="muted">· ' + esc(people) + "</span> " +
+        '<span class="state ' + (r.finished ? "done" : "idle") + '">' +
+        (r.finished ? "завершена" : "не завершена") + "</span></div>" +
+        "<dl><dt>Время</dt><dd>" + esc(r.finished ? fmtDur(Number(r.duration_s) || 0) : "не завершена") + "</dd>" +
+        "<dt>Затраты</dt><dd>" + esc(r.cost_complete ? moneyText(r.spent_usd) : "не определены") + "</dd>" +
+        "<dt>С первого раза</dt><dd>" + esc(r.judged ? r.first_time + " из " + r.judged : "нет проверок") + "</dd>" +
+        "<dt>Проверок</dt><dd>" + esc(measured(r.attempts)) + "</dd>" +
+        "<dt>Проблем</dt><dd>" + esc(measured(r.problems)) + "</dd>" +
+        "<dt>Конфликтов объединения</dt><dd>" + esc(measured(r.conflicts)) + "</dd></dl></div>";
+    }).join("") + "</div>" : "";
     $("benchBody").innerHTML = (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
-      '<p class="story-text">' + esc(b.note || "") + "</p>") + table + techBlock(b);
+      '<p class="story-text">' + esc(b.note || "") + "</p>") + blocks + techBlock(b);
   }
 
   /* ---- the detail sheet: a specialist or a task (spec 5.1, 8) ---- */

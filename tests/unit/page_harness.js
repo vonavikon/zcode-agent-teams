@@ -56,6 +56,8 @@ function makeElement(id) {
     setAttribute(k, v) { (state.attrs[id] = state.attrs[id] || {})[k] = String(v); },
     getAttribute(k) { return (state.attrs[id] || {})[k]; },
     addEventListener(type, fn) { (state.listeners[id] = state.listeners[id] || {})[type] = fn; },
+    // The page searches inside a card for its bars; the fake page finds none.
+    querySelectorAll() { return []; },
     appendChild(child) {
       // Like the real DOM: a node that already has a parent is moved to the end.
       if (child.parent) child.parent.children = child.parent.children.filter((c) => c !== child);
@@ -229,8 +231,10 @@ async function main() {
     out.console = state.errors.map((line) => line.split("\n").slice(0, 3).join(" | "));
   } else if (scenario === "modes") {
     out.simpleTech = state.tech.filter(([, hidden]) => hidden === false).length;
+    out.simpleMoney = state.html.moneyBody;
     await click("modeAdvanced");
     out.advancedFetch = state.fetches.at(-1);
+    out.advancedMoney = state.html.moneyBody;
     out.advancedFeed = feed();
     out.advancedTechShown = state.tech.filter(([, hidden]) => hidden === false).length;
     out.advancedPlan = state.html.planList;
