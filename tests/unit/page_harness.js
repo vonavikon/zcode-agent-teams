@@ -236,6 +236,7 @@ const poll = async () => {   // the world moves on, then the page asks
 const click = async (id) => { state.listeners[id].click(); await settle(); };
 const dom = () => Object.fromEntries(ids.map((id) => [id, {
   html: state.html[id] || "", text: state.text[id] || "", cls: (state.classes[id] || []).join(" "),
+  attrs: state.attrs[id] || {}, style: elements[id].style,
 }]));
 const feed = () => state.html.feed || "";
 const card = (attribute, value) => ({ target: { closest: (selector) => (selector === "[" + attribute + "]" ? { getAttribute: () => value } : null) } });

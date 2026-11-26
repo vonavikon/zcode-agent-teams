@@ -608,6 +608,35 @@ class TestThePlanGraph:
         assert place(steps[2]) == moved           # not reset by the refresh
         assert steps[2]["nodes"] == 4
 
+    def test_the_plan_is_drawn_at_its_own_scale_and_never_fitted_a_second_time(self):
+        # With a viewBox the browser fitted the drawing to its box a second
+        # time, and a plan of a hundred stages came out with its words at a
+        # third of their size. Now a unit is a pixel and the box is the room.
+        graph = run("render", [graphed()])["dom"]["graph"]
+        assert "viewBox" not in graph["attrs"]
+        assert graph["attrs"]["width"] == "596"                 # the room the wrap gives
+        # Two rows of 64 and three gaps of 22 (194) at the whole-plan scale.
+        assert graph["attrs"]["height"] == "158"
+
+    def test_a_plan_narrower_than_the_room_stands_in_the_middle_at_full_size(self):
+        narrow = snapshot(tasks=[task("a"), task("b", title="Сравнить предложения")],
+                          plan={"nodes": [{"id": "a", "col": 0, "row": 0}, {"id": "b", "col": 1, "row": 0}],
+                                "edges": [{"from": "a", "to": "b"}], "columns": 2, "rows": 1})
+        graph = run("render", [narrow])["dom"]["graph"]
+        # One row of 64 and two gaps of 22 is 108: the box keeps 120 as its least height.
+        assert graph["attrs"] == {"width": "596", "height": "120"}
+        assert place(acted([], [narrow])[0]) == (48, 0, 1)           # (596 - 500) / 2 from the left
+
+    def test_a_wide_plan_is_never_drawn_under_three_quarters(self):
+        # Ten columns of 196 and eleven gaps of 36 make 2356: far wider than
+        # the room. The reader pans; the words keep three quarters of size.
+        wide = snapshot(tasks=[task(f"t{n}") for n in range(10)],
+                        plan={"nodes": [{"id": f"t{n}", "col": n, "row": 0} for n in range(10)],
+                              "edges": [], "columns": 10, "rows": 1})
+        graph = run("render", [wide])["dom"]["graph"]
+        assert place(acted([], [wide])[0]) == (0, 0, 0.75)
+        assert graph["attrs"]["height"] == "120"                # never less than the least height of the box
+
 
     def test_the_search_hides_what_does_not_match_and_keeps_the_shape(self):
         steps = acted([["set", "graphSearch", "риски"], ["input", "graphSearch"], ["poll"]],
@@ -657,6 +686,9 @@ class TestTheTimeline:
         # What a span and a mark say when asked: the zone of the clock is
         # the reader's, so the words are checked without the hour.
         assert "доработка: с " in tl and "· Проверка не пройдена: нет оценок" in tl
+        # The whole row is one target: a plate the size of the row answers
+        # the pointer between its letters and its bars.
+        assert len(re.findall(r'<rect class="hit" x="0" y="\d+" width="\d+" height="46"/>', tl)) == 2
         for word in ("работа", "проверка качества", "доработка", "завершено", "событие"):
             assert word in legend, word
         assert "ожидание" not in legend                  # only what really happened
@@ -670,6 +702,17 @@ class TestTheTimeline:
     def test_a_row_opens_its_stage(self):
         steps = acted([["trow", "a"]], [self.timed(), self.timed()])
         assert steps[1]["sheetTitle"] == "Собрать отчёт" and "История этапа" in steps[1]["sheet"]
+
+
+class TestWhatNeedsTheOwner:
+    def test_the_line_to_act_on_is_the_one_that_stands_out(self):
+        item = {"kind": "attention", "task": "a", "title": "Ожидается проверка", "icon": "search",
+                "what": "Результат передан на проверку.", "why": "Без проверки результат не принять.",
+                "tried": "Проверяющий получил результат.", "action": "Подождите ответа проверяющего.",
+                "remarks": "", "if_nothing": "Этап останется на проверке.", "since": None}
+        html = run("render", [snapshot(attention=[item])])["dom"]["attList"]["html"]
+        assert '<dt>Что нужно от вас</dt><dd class="ask">Подождите ответа проверяющего.</dd>' in html
+        assert html.count('class="ask"') == 1                 # one line of the five, not all of them
 
 
 def fed(more: bool = False) -> dict:
@@ -955,7 +998,9 @@ class TestTheProblemsCard:
     def test_each_incident_says_what_happened_what_the_system_did_and_how_it_ended(self):
         body = run("render", [snapshot(recovery=self.incidents())])["dom"]["problemBody"]["html"]
         assert "Было проблем: 3. Сейчас нужна ваша помощь по 1 задаче." in body
-        assert '<span class="chip on">Результат не прошёл проверку · 2</span>' in body
+        # The kinds are labels and never look like a switch that is pressed on.
+        assert '<span class="tag">Результат не прошёл проверку · 2</span>' in body
+        assert 'class="chip on">Результат' not in body
         assert '<li class="open">' in body and '<li class="closed">' in body
         assert "Система остановила задачу и сохранила всю сделанную работу." in body
         assert "Итог: нужна помощь: задача остановлена. Есть риск потери результата." in body
@@ -1017,6 +1062,31 @@ class TestTheMarkupOfThePage:
         assert "style=" not in written
         assert not re.search(r"<\w+[^>]*\son[a-z]+\s*=", written)
         assert "<script" not in written
+
+    def test_the_zoom_buttons_wear_drawn_icons_and_no_sign_of_the_font(self):
+        page = (DASH / "index.html").read_text(encoding="utf-8")
+        for button in ("graphZoomOut", "graphZoomIn", "graphReset"):
+            tag = re.search(r'<button[^>]*id="' + button + r'"[^>]*>(.*?)</button>', page, re.S).group(1)
+            assert '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="' in tag
+            assert re.sub(r"<[^>]+>", "", tag).strip() == ""
+
+    def test_the_loading_bars_make_room_for_the_first_picture(self):
+        page = (DASH / "index.html").read_text(encoding="utf-8")
+        assert page.count('<div class="skeleton" aria-hidden="true">') == 9
+        assert "skeleton" not in markup(run("render", [snapshot()]))
+
+    def test_the_ring_draws_nothing_until_the_first_answer(self):
+        # Before the first answer the page says 0%: a full green circle
+        # beside it would be a lie.
+        css = (DASH / "app.css").read_text(encoding="utf-8")
+        assert re.search(r"\.ring \.bar \{[^}]*opacity: 0;", css)
+        assert run("render", [snapshot()])["dom"]["ringBar"]["style"]["opacity"] == "1"
+
+    def test_every_part_that_can_be_disabled_shares_one_look(self):
+        css = (DASH / "app.css").read_text(encoding="utf-8")
+        shared = re.search(r":is\(\.action, \.iconbtn, \.chip, \.seg button, \.older\):disabled \{([^}]*)\}", css)
+        assert shared and "opacity: 0.55" in shared.group(1) and "cursor: default" in shared.group(1)
+        assert len(re.findall(r":disabled \{", css)) == 1          # one rule, not one per control
 
 
 class TestTheComparisonCard:

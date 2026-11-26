@@ -1,49 +1,56 @@
 /* Design tokens. Light is the default; dark is zinc-graphite, not black.
-   Every state carries text and an icon; color never carries meaning alone. */
+   Every state carries text and an icon; color never carries meaning alone.
+   Every ink that is written as text keeps 4.5:1 on every surface it lands
+   on (the owner's bar for the board is WCAG AA, both themes). */
 :root {
+  color-scheme: light;
   --canvas: #F2F2F0;
   --surface: #FFFFFF;
   --surface-2: #F7F7F5;
   --shell: rgba(0, 0, 0, 0.06);
   --hairline: rgba(0, 0, 0, 0.08);
   --text: #1D1D1F;
-  --text-2: #6E6E73;
-  --text-3: #86868B;
-  --accent: #007AFF;
+  --text-2: #5F5F64;
+  --text-3: #6B6B70;
+  --accent: #007AFF;     /* fills and rings only, never text */
   --accent-ink: #FFFFFF;
-  --blue: #007AFF;      /* in progress */
+  --blue: #0060CC;      /* in progress */
   --blue-soft: rgba(0, 122, 255, 0.12);
   --yellow: #9A4A00;    /* needs attention: text-safe amber */
   --yellow-soft: rgba(255, 149, 0, 0.16);
-  --green: #1D7A34;     /* done */
+  --green: #176F2F;     /* done */
   --green-soft: rgba(52, 199, 89, 0.16);
-  --red: #C51E14;       /* problem */
+  --red: #BC1A10;       /* problem */
   --red-soft: rgba(255, 59, 48, 0.12);
   --gray: #86868B;      /* not started */
   --gray-soft: rgba(0, 0, 0, 0.05);
   --shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --r-lg: 24px; --r-md: 16px; --r-sm: 12px;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
-  --t: 600ms;
+  --t: 220ms;
 }
 [data-theme="dark"] {
+  color-scheme: dark;   /* the browser's own parts follow: a select's list, scrollbars, the clear button of a search */
   --canvas: #1C1C1E;
   --surface: #2C2C2E;
   --surface-2: #232325;
   --shell: rgba(255, 255, 255, 0.08);
   --hairline: rgba(255, 255, 255, 0.1);
   --text: #F5F5F7;
-  --text-2: #A1A1A6;
-  --text-3: #8E8E93;
+  --text-2: #AFAFB4;
+  --text-3: #98989D;
   --accent: #0A84FF;
-  --blue: #0A84FF; --blue-soft: rgba(10, 132, 255, 0.2);
+  --blue: #6CB3FF; --blue-soft: rgba(10, 132, 255, 0.2);
   --yellow: #FFB340; --yellow-soft: rgba(255, 159, 10, 0.2);
   --green: #30D158; --green-soft: rgba(48, 209, 88, 0.18);
-  --red: #FF453A; --red-soft: rgba(255, 69, 58, 0.18);
+  --red: #FF8578; --red-soft: rgba(255, 69, 58, 0.18);
   --gray: #98989D; --gray-soft: rgba(255, 255, 255, 0.08);
   --shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 * { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
+/* A sheet is open: the page under it stays where it was. */
+html:has(dialog[open]) { overflow: hidden; }
 html, body { margin: 0; }
 body {
   background: var(--canvas); color: var(--text);
@@ -52,6 +59,10 @@ body {
   padding: 0 20px 72px;
   transition: background-color var(--t) var(--ease), color var(--t) var(--ease);
 }
+/* The parts the browser draws itself, in the palette. */
+::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+input { caret-color: var(--accent); }
+.feed, .timeline-wrap, .sheet-body, .result-text { scrollbar-width: thin; scrollbar-color: var(--gray) transparent; }
 button { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 h2 { font-size: 17px; font-weight: 600; }
@@ -85,15 +96,19 @@ h2 { font-size: 17px; font-weight: 600; }
   font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-2);
   transition: background-color var(--t) var(--ease), color var(--t) var(--ease), transform var(--t) var(--ease);
 }
+.seg button:hover:not(:disabled) { color: var(--text); background: var(--shell); }
 .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
-.seg button:active { transform: scale(0.97); }
+.seg button:active:not(:disabled) { transform: scale(0.97); }
 .iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--hairline);
   background: var(--surface-2); cursor: pointer;
   transition: transform var(--t) var(--ease), background-color var(--t) var(--ease);
 }
-.iconbtn:active { transform: scale(0.94); }
+.iconbtn:hover:not(:disabled) { background: var(--shell); }
+.iconbtn:active:not(:disabled) { transform: scale(0.94); }
+/* One look for a control that cannot be used right now, whatever control it is. */
+:is(.action, .iconbtn, .chip, .seg button, .older):disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
 svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
@@ -117,23 +132,27 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
    something to agree to first. */
 .report-line { margin: 0 0 4px; font-size: 13px; }
 .report-line .action { text-decoration: none; display: inline-block; }
+/* What the report is stays under its button, not wrapped around it. */
+.report-line .small { display: block; margin: 8px 0 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .action { font: inherit; font-size: 13px; font-weight: 500; padding: 8px 14px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text); text-align: left;
   transition: transform var(--t) var(--ease), background-color var(--t) var(--ease); }
-.action:hover { background: var(--shell); }
-.action:active { transform: scale(0.98); }
-.action:disabled { opacity: 0.6; cursor: wait; }
+.action:hover:not(:disabled) { background: var(--shell); }
+.action:active:not(:disabled) { transform: scale(0.98); }
 .action.danger { color: var(--red); border-color: var(--red-soft); background: var(--red-soft); }
+.action.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 24%, var(--surface)); }
 .action-result { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
 .action-result.bad { color: var(--red); }
 
-/* Progress ring: the one big number */
+/* Progress ring: the one big number. The bar is not drawn until the first
+   answer says how long it is: at 0% a full green circle would lie. */
 .progress { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
 .ring { position: relative; width: 132px; height: 132px; flex: none; }
 .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .ring .track { stroke: var(--gray-soft); fill: none; stroke-width: 10; }
-.ring .bar { stroke: var(--green); fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dashoffset 700ms var(--ease); }
+.ring .bar { stroke: var(--green); fill: none; stroke-width: 10; stroke-linecap: round; opacity: 0;
+  transition: opacity 300ms var(--ease), stroke-dashoffset 700ms var(--ease); }
 .ring .num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .ring .num b { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .ring .num span { font-size: 12px; color: var(--text-2); }
@@ -149,6 +168,11 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 
 /* Attention block. Amber is "waiting for you, nothing is broken"; red is
    reserved for work that cannot continue without a decision. */
+/* On a tint the quiet text is the main ink, thinned: a grey cannot keep
+   its contrast on every tint, and never looks at home on one. Every
+   tinted surface of the page is named here. */
+.attention-item, .incidents li.open { --text-2: color-mix(in srgb, var(--text) 72%, transparent); --text-3: color-mix(in srgb, var(--text) 62%, transparent); }
+[data-theme="dark"] :is(.attention-item, .incidents li.open) { --text-2: color-mix(in srgb, var(--text) 80%, transparent); --text-3: color-mix(in srgb, var(--text) 72%, transparent); }
 .attention-list { display: flex; flex-direction: column; gap: 12px; }
 .attention-item { padding: 16px 18px; border-radius: var(--r-md); background: var(--yellow-soft); border: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent); }
 .attention-item.blocked, .attention-item.integration { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
@@ -156,6 +180,8 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .attention-item h3 svg.i { margin-top: 3px; }
 .attention-item dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; font-size: 13.5px; }
 .attention-item dt { color: var(--text-2); } .attention-item dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* The one line the owner acts on is the one that stands out. */
+.attention-item dd.ask { font-weight: 600; }
 .remarks { margin: 0 0 12px 24px; padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--surface) 72%, transparent); border: 1px solid var(--hairline); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .remarks b { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
 .empty { padding: 22px; text-align: center; color: var(--text-2); border-radius: var(--r-md); border: 1px dashed var(--hairline); font-size: 14px; }
@@ -163,7 +189,9 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 /* Now happening: activity cards */
 .now-list { display: grid; gap: 12px; container-type: inline-size; }
 .now-card { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
-.avatar { width: 38px; height: 38px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; color: var(--accent-ink); background: var(--accent); flex: none; }
+/* The letter is a large bold glyph (19px at 700): white on the accent
+   then keeps the 3:1 of large text in both themes. */
+.avatar { width: 38px; height: 38px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 19px; line-height: 1; color: var(--accent-ink); background: var(--accent); flex: none; }
 .now-card h3 { font-size: 15px; margin-bottom: 2px; }
 .now-card .role { font-size: 12.5px; color: var(--text-2); }
 .now-card .doing { font-size: 14px; margin-top: 4px; }
@@ -185,9 +213,14 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .state.idle { background: var(--gray-soft); color: var(--text-2); }
 .cost { margin-top: 12px; }
 
-/* Plan: plain-language stages */
+/* Plan: plain-language stages. A row that opens a sheet takes the accent
+   on its edge under the pointer, like a specialist card, a graph node and
+   a file button: one sign for "this opens something". */
 .plan { display: grid; gap: 8px; }
-.stage { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); }
+.stage { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline);
+  cursor: pointer; transition: border-color var(--t) var(--ease), transform var(--t) var(--ease); }
+.stage:hover { border-color: var(--accent); }
+.stage:active { transform: scale(0.99); }
 /* The mark sits on the line of the title, whatever the height of the row. */
 .stage .mark { margin-top: 0; width: 26px; height: 26px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--gray-soft); color: var(--text-2); }
 .stage.busy .mark { background: var(--blue-soft); color: var(--blue); }
@@ -209,9 +242,10 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .file.bad { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: var(--red-soft); font-weight: 600; }
 
 /* Feed: a story told oldest to newest, the newest line at the bottom */
-.feed { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; scrollbar-width: thin; }
+.feed { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .feed-item { display: grid; grid-template-columns: 40px 22px minmax(0, 1fr); gap: 8px; padding: 9px 10px; border-radius: var(--r-sm); align-items: start; }
 .feed-item:hover { background: var(--surface-2); }
+.feed-item[role="button"] { cursor: pointer; }
 .feed-item time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; padding-top: 3px; }
 .feed-item .mark { width: 22px; height: 22px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--gray-soft); color: var(--text-2); }
 .feed-item .mark svg.i { width: 13px; height: 13px; }
@@ -231,8 +265,9 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .conn.stale { border-color: color-mix(in srgb, var(--yellow) 50%, transparent); }
 .conn.lost { border-color: color-mix(in srgb, var(--red) 50%, transparent); color: var(--red); }
 
-/* Advanced tech block */
-.tech { margin-top: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+/* Advanced tech block. A long value moves to a line of its own whole and
+   breaks inside itself only when it cannot fit one. */
+.tech { margin-top: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hairline); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); overflow-x: auto; white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
 .hidden { display: none !important; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
@@ -244,8 +279,8 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 
 /* Specialists: one card per role, the busy first */
 .team-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
-.person { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; transition: box-shadow var(--t) var(--ease), transform var(--t) var(--ease); }
-.person:hover { box-shadow: var(--shadow); }
+.person { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; transition: border-color var(--t) var(--ease), transform var(--t) var(--ease); }
+.person:hover { border-color: var(--accent); }
 .person:active { transform: scale(0.99); }
 .person .who { min-width: 0; }
 .person h3 { font-size: 15px; margin-bottom: 2px; }
@@ -261,8 +296,6 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .track .link { width: 22px; height: 2px; background: var(--gray-soft); }
 .track .link.on { background: var(--green); }
 .stage .files .label { color: var(--text-2); }
-.stage { cursor: pointer; transition: box-shadow var(--t) var(--ease); }
-.stage:hover { box-shadow: 0 0 0 3px var(--blue-soft); }
 .now-card .last { font-size: 13px; color: var(--text-2); margin-top: 5px; overflow-wrap: anywhere; }
 #updatedAt.refreshing::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); margin-right: 6px; vertical-align: 1px; animation: pulse 900ms ease-in-out infinite alternate; }
 @keyframes pulse { from { opacity: 0.25; } to { opacity: 1; } }
@@ -295,21 +328,39 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .history li .dd { font-size: 12.5px; color: var(--text-2); margin-top: 1px; }
 /* Tools above a block: search, chips, zoom. Kept across refreshes. */
 .graph-tools, .feed-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.graph-tools input, .feed-tools input, .feed-tools select { font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 12px; min-width: 0; }
+/* The tools of the feed take a row of their own under the heading, and
+   the three fields share it: wrapped one by one they left orphans. */
+.feed-tools { flex: 1 1 100%; }
+.graph-tools input, .feed-tools input, .feed-tools select { font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 12px; min-width: 0;
+  transition: border-color var(--t) var(--ease); }
 .graph-tools input { width: 160px; }
+.feed-tools input, .feed-tools select { flex: 1 1 150px; width: auto; }
+.graph-tools input:hover, .feed-tools input:hover, .feed-tools select:hover { border-color: var(--gray); }
+.graph-tools input::placeholder, .feed-tools input::placeholder { color: var(--text-3); opacity: 1; }
 .graph-tools input:focus-visible, .feed-tools input:focus-visible, .feed-tools select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .graph-tools .spacer { flex: 1; }
-.chips { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); flex-wrap: wrap; }
-.chip { border: 0; background: transparent; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; white-space: nowrap; transition: background-color var(--t) var(--ease), color var(--t) var(--ease); }
-.chip:hover { color: var(--text); }
-.chip.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
-.chip:active { transform: scale(0.97); }
-.iconbtn.small { width: 30px; height: 30px; font-size: 16px; line-height: 1; }
+.chips { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); flex-wrap: wrap; max-width: 100%; }
+.chip { border: 0; background: transparent; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; white-space: nowrap; transition: background-color var(--t) var(--ease), color var(--t) var(--ease), transform var(--t) var(--ease); }
+/* The two toggles of the feed travel together and never leave one of them
+   alone on a row; standing outside a track, each carries the look of the
+   track itself. */
+.feed-tools .toggles > .chip { background: var(--surface-2); border: 1px solid var(--hairline); }
+.feed-tools .toggles { display: inline-flex; gap: 8px; }
+.chip:hover:not(:disabled) { color: var(--text); background: var(--shell); }
+.chip.on, .chip.on:hover:not(:disabled) { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.chip:active:not(:disabled) { transform: scale(0.97); }
+.iconbtn.small { width: 30px; height: 30px; }
+/* The kinds of problems with their counts are labels, not switches: they
+   never wear the look of a chip that is pressed on. */
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 4px; }
+.tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline); font-size: 12.5px; font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
 
-/* The plan graph: stages left to right, what depends on what */
+/* The plan graph: stages left to right, what depends on what. The page
+   sets the box of the drawing in pixels and no viewBox: a unit is a pixel,
+   so the plan is drawn at the scale the reader chose and only (app.js). */
 .graph-wrap { position: relative; overflow: hidden; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); cursor: grab; touch-action: none; }
 .graph-wrap:active { cursor: grabbing; }
-.graph { display: block; width: 100%; min-height: 120px; }
+.graph { display: block; max-width: none; min-height: 120px; }
 .graph .link { fill: none; stroke: var(--gray); stroke-width: 2; }
 .graph .link.done { stroke: var(--green); } .graph .link.busy { stroke: var(--blue); }
 .graph .link.problem { stroke: var(--red); } .graph .link.attention { stroke: var(--yellow); }
@@ -325,7 +376,6 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .graph .dim { opacity: 0.16; }
 
 /* The timeline: a row per task, time left to right */
-.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 22px; height: 10px; border-radius: 999px; display: inline-block; }
 /* How the results got accepted: one bar, a share per result, and the
@@ -340,8 +390,10 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .dist i.awaiting { background: var(--gray); }
 .legend { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 14px; font-size: 12.5px; }
 .legend li { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
-.legend li.zero { opacity: 0.55; }
-.legend .swatch { flex: none; margin-top: 5px; background: var(--gray); }
+/* A share of zero: its swatch fades, its words stay as readable as the rest. */
+.legend li.zero .swatch { opacity: 0.45; }
+.legend .swatch { flex: none; background: var(--gray); }
+.legend li .swatch { margin-top: 5px; }
 .legend .swatch.reworked { background: var(--yellow); }
 .legend .swatch.decision { background: var(--blue); }
 .legend .swatch.awaiting { background: var(--gray); }
@@ -351,7 +403,7 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .row-more { font-size: 11px; fill: var(--text-3); }
 /* The checks in the order they came back: one mark per check. */
 .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
-.strip i { width: 14px; height: 14px; border-radius: 4px; }
+.strip i { width: 14px; height: 14px; border-radius: 6px; }
 .swatch.ok, .strip i.ok { background: var(--green); }
 .swatch.bad, .strip i.bad { background: var(--red); }
 h3 .count { color: var(--text-2); font-weight: 500; }
@@ -376,6 +428,7 @@ h3 .count { color: var(--text-2); font-weight: 500; }
 .timeline .row-title { font: 500 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text); }
 .timeline .row-state { font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text-3); }
 .timeline .trow { cursor: pointer; outline: none; }
+.timeline .hit { fill: transparent; }
 .timeline .trow:hover .row-title { fill: var(--accent); }
 /* A row reached by the keyboard shows where the focus is. */
 .timeline .trow:focus-visible .row-title { fill: var(--accent); text-decoration: underline; }
@@ -388,10 +441,8 @@ h3 .count { color: var(--text-2); font-weight: 500; }
 .timeline .tmark.manual { fill: var(--yellow); } .timeline .tmark.busy { fill: var(--blue); }
 
 /* The activity feed's own tools */
-.feed-tools input { width: 150px; }
 .older { display: block; width: 100%; margin: 0 0 8px; padding: 7px; border-radius: var(--r-sm); border: 1px dashed var(--hairline); background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
-.older:hover { color: var(--text); background: var(--surface-2); }
-.older:disabled { opacity: 0.5; cursor: default; }
+.older:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
 
 /* The result of a task inside its sheet */
 .sheet-body ul.files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -425,10 +476,9 @@ h3 .count { color: var(--text-2); font-weight: 500; }
    bar underneath across the whole width. */
 .bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: baseline; font-size: 12.5px; }
 .bars .name { min-width: 0; overflow-wrap: anywhere; }
-.bars .bar { grid-column: 1 / -1; }
+.bars .bar { grid-column: 1 / -1; display: block; height: 8px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; }
 /* What a sum of the list does not include (a record with no price). */
 .bars .note { grid-column: 1 / -1; margin-top: -2px; font-size: 11.5px; color: var(--text-3); }
-.bars .bar { display: block; height: 8px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; }
 .bars .bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width 500ms var(--ease); }
 .bars .value { font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
 .gauge { position: relative; height: 10px; border-radius: 999px; background: var(--gray-soft); overflow: hidden; margin-bottom: 6px; }
@@ -444,6 +494,8 @@ h3 .count { color: var(--text-2); font-weight: 500; }
 .incidents li.open svg.i { color: var(--red); } .incidents li.closed svg.i { color: var(--green); }
 .incidents .tt { font-weight: 500; } .incidents .dd { font-size: 12.5px; color: var(--text-2); margin-top: 3px; }
 .incidents .outcome { color: var(--text); }
+/* What is needed from the owner is said in the main ink, never in the quiet one. */
+.incidents .dd b { color: var(--text); font-weight: 600; }
 .steps.big { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .steps.big li { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); color: var(--text-3); font-size: 14px; }
 .steps.big li.on { color: var(--text); } .steps.big li.on svg.i { color: var(--green); }
@@ -454,6 +506,22 @@ h3 .count { color: var(--text-2); font-weight: 500; }
 .table td { padding: 8px 10px; border-bottom: 1px solid var(--hairline); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .table tr:last-child td { border-bottom: 0; }
 .table tr.unfinished td { color: var(--text-3); }
+
+/* Loading: quiet bars where the first answer draws its lists. They appear
+   only when the answer takes longer than a blink, and the first picture
+   replaces them whole (a block is written as a whole). */
+.skeleton { display: grid; gap: 12px; }
+.skeleton i { display: block; height: 56px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline);
+  animation: skeleton-in 240ms ease-out 180ms backwards; }
+.skeleton i.line { height: 18px; width: 62%; border-radius: 999px; }
+.skeleton i.tall { height: 128px; }
+.team-list > .skeleton { grid-column: 1 / -1; }
+body:has(.conn.lost) .skeleton { display: none; }
+@keyframes skeleton-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* A phone is touched, not pointed at: every control keeps a side of at
+   least 32px, and a group of chips that wraps stops pretending to be
+   one pill. */
 @media (max-width: 640px) {
   body { padding: 0 12px 80px; }
   /* The header stays two short rows: the name with the goal, then the
@@ -464,7 +532,12 @@ h3 .count { color: var(--text-2); font-weight: 500; }
   .topbar .title { flex: 1 1 100%; }
   .topbar .title span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   #startedAt, #elapsed, .topbar .spacer { display: none; }
-  .seg button { padding: 6px 8px; }
+  .seg button { padding: 7px 10px; }
+  .iconbtn.small { width: 34px; height: 34px; }
+  .chip { padding: 8px 12px; }
+  .chips { padding: 0; gap: 6px; background: none; border: 0; }
+  .chips .chip { border: 1px solid var(--hairline); }
+  .graph-tools input, .feed-tools input, .feed-tools select { padding: 7px 12px; }
   .card > .core { padding: 16px; }
   /* A plan row keeps its icon, but the role moves under the title: three
      columns cannot hold a sentence at this width. */

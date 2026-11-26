@@ -179,11 +179,12 @@ Explicitly undecided or pending (record, do not invent):
   and integrated.
 - Measured on a hundred stages and twenty specialists (2026-11-26): the
   first picture of the board in 394 to 515 ms in a real browser, a
-  change on screen about 250 ms after the poll that saw it; 1299
+  change on screen about 250 ms after the poll that saw it; 1321
   automated tests.
-- Measured contrast gaps of the current palette (recorded in
-  `DESIGN.md`): the third text colour and the text of the "in work",
-  "done" (light) and "problem" (dark) pills are under 4.5:1.
+- Measured contrast of the palette (recorded in `DESIGN.md`): since
+  the polish pass of 2026-11-27 every text keeps 4.5:1 or more in both
+  themes, counted with the WCAG formula and counted again on the built
+  page, on the demo team and on a team of a hundred stages.
 
 Absences future work must not fabricate: no results of a session with
 real people; no benchmark campaign with real runs of 1, 2, 3 and 5
@@ -213,5 +214,7 @@ The owner set the bar on 2026-11-26: WCAG AA for the board.
 - Touch targets of at least 32 to 36 px on a phone.
 - Texts in plain language for readers without a technical background is
   a product requirement since the specification (see Terminology).
-- Known gaps today are the contrast values listed under Evidence; they
-  are the first item of the polish pass.
+- The contrast gaps the palette had were closed in the polish pass of
+  2026-11-27. Not checked yet by anyone: a reader with a screen reader,
+  and a phone in the hand (the board is reached at 127.0.0.1, so a
+  phone reaches it only through a forwarded port).

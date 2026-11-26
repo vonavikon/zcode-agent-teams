@@ -762,105 +762,146 @@ def _sec_tech(snap: dict) -> str:
 # ----------------------------------------------------------------- the page
 
 _CSS = """
-  body { margin: 0; padding: 2rem 1.25rem 4rem; background: #f6f6f4; color: #1a1a1a;
-         font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-         font-size: 16px; line-height: 1.55; }
+  /* The tokens of the board, light only: the report is a document to
+     print and to forward. Names follow DESIGN.md. */
+  :root { color-scheme: only light;
+    --paper: #F2F2F0; --porcelain: #FFFFFF; --mist: #F7F7F5;
+    --shell: rgba(0, 0, 0, 0.06); --hairline: rgba(0, 0, 0, 0.08);
+    --ink: #1D1D1F; --slate: #5F5F64; --gray: #86868B;
+    --accent: #007AFF;
+    --blue: #0060CC; --blue-soft: rgba(0, 122, 255, 0.12);
+    --amber: #9A4A00; --amber-soft: rgba(255, 149, 0, 0.16);
+    --moss: #176F2F; --moss-soft: rgba(52, 199, 89, 0.16);
+    --brick: #BC1A10; --brick-soft: rgba(255, 59, 48, 0.12);
+    --neutral-soft: rgba(0, 0, 0, 0.05);
+    --r-md: 16px; --r-sm: 12px; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2rem 1.25rem 4rem; background: var(--paper); color: var(--ink);
+         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+         font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   main { max-width: 62rem; margin: 0 auto; }
-  h1 { font-size: 1.65rem; margin: .15rem 0 .6rem; line-height: 1.25; overflow-wrap: anywhere; }
-  h2 { font-size: 1.2rem; margin: 0 0 .9rem; }
-  h3 { font-size: 1rem; margin: 1.4rem 0 .45rem; }
+  h1 { font-size: 1.875rem; line-height: 1.2; letter-spacing: -0.02em; margin: .1rem 0 .2rem; overflow-wrap: anywhere; }
+  h2 { font-size: 1.2rem; letter-spacing: -0.01em; margin: 0 0 .9rem; }
+  h3 { font-size: 1.0625rem; margin: 1.4rem 0 .45rem; }
   header h3, section > h3:first-of-type { margin-top: 1rem; }
   p { margin: .3rem 0 .75rem; }
-  a { color: #1d4ed8; }
+  a { color: var(--blue); text-underline-offset: .15em; }
+  a:hover { color: var(--ink); }
   code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .88em;
-         background: #f1f1ef; padding: .05rem .3rem; border-radius: 4px; overflow-wrap: anywhere; }
-  .head, section, details { background: #fff; border: 1px solid #e3e3e0; border-radius: 10px;
-                            padding: 1.15rem 1.4rem; margin: 1rem 0; }
-  .kicker { margin: 0; color: #666; font-size: .82rem; letter-spacing: .08em;
-            text-transform: uppercase; }
-  .meta { color: #444; font-size: .92rem; margin: .12rem 0; }
-  .muted, small, .note { color: #666; }
+         background: var(--mist); border: 1px solid var(--hairline); padding: .05rem .35rem;
+         border-radius: 6px; overflow-wrap: anywhere; }
+  .head, section, details { background: var(--porcelain); border: 1px solid var(--shell);
+                            border-radius: var(--r-md); padding: 1.25rem 1.5rem; margin: 1rem 0; }
+  /* What the document is stands under its name, as the first line about it. */
+  .kicker { margin: 0 0 .15rem; color: var(--slate); }
+  .meta { color: var(--slate); font-size: .92rem; margin: .1rem 0; }
+  .muted, small, .note { color: var(--slate); }
   .small { font-size: .88rem; }
   .story { font-size: 1.06rem; }
   .lead { font-size: 1.12rem; margin: 0 0 .3rem; }
-  .bad-text { color: #8a1420; }
-  .foot { color: #777; font-size: .85rem; margin: 1.5rem 0 0; }
+  .bad-text { color: var(--brick); }
+  .foot { color: var(--slate); font-size: .85rem; margin: 1.5rem 0 0; }
+  /* The status pill of the board, in the same five states and colours. */
   .state { display: inline-block; padding: .02rem .6rem; border-radius: 999px; font-size: .82rem;
-           font-weight: 600; }
-  .idle { background: #e9ecef; color: #3f4852; }
-  .busy { background: #fff3cd; color: #6b4e00; }
-  .attention { background: #ffe0b2; color: #7a3e00; }
-  .done { background: #d8f3dc; color: #1d5c2a; }
-  .problem { background: #f8d7da; color: #8a1420; }
-  .manual { background: #ffe9c7; color: #7a4a00; }
-  .toc { margin: 1rem 0 0; padding: .7rem 1rem .8rem; background: #f8f8f6; border-radius: 8px; }
+           font-weight: 600; vertical-align: .1em; }
+  .idle { background: var(--neutral-soft); color: var(--slate); }
+  .busy { background: var(--blue-soft); color: var(--blue); }
+  .attention { background: var(--amber-soft); color: var(--amber); }
+  .done { background: var(--moss-soft); color: var(--moss); }
+  .problem { background: var(--brick-soft); color: var(--brick); }
+  .manual { background: var(--amber-soft); color: var(--amber); }
+  .toc { margin: 1rem 0 0; padding: .8rem 1rem .9rem; background: var(--mist); border: 1px solid var(--hairline);
+         border-radius: var(--r-sm); }
   .toc p { margin: 0 0 .3rem; font-weight: 600; font-size: .92rem; }
-  .toc ol { margin: 0; padding-left: 1.3rem; columns: 2; column-gap: 2rem; font-size: .92rem; }
-  .toc li { break-inside: avoid; }
-  .facts { display: grid; grid-template-columns: minmax(9rem, 13rem) 1fr; gap: .15rem 1rem;
+  /* Each line of the contents carries its own number; the list adds none. */
+  .toc ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 2rem; font-size: .92rem; }
+  .toc li { break-inside: avoid; padding: .08rem 0; }
+  .facts { display: grid; grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr); gap: .15rem 1rem;
            margin: .5rem 0 .1rem; }
-  .facts dt { color: #555; }
-  .facts dd { margin: 0; overflow-wrap: anywhere; }
+  .facts dt { color: var(--slate); }
+  .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .tt { margin: 0 0 .1rem; }
-  .does { margin: 0 0 .1rem; color: #333; }
+  .does { margin: 0 0 .1rem; color: var(--slate); }
   ul.plain, ol.stages, ul.team { list-style: none; padding: 0; margin: .4rem 0; }
-  .stages > li, .team > li { border-top: 1px solid #ececea; padding: .75rem 0 .25rem; }
+  .stages > li, .team > li { border-top: 1px solid var(--hairline); padding: .75rem 0 .25rem; }
   .stages > li:first-child, .team > li:first-child { border-top: 0; padding-top: .1rem; }
-  ol.checks, ol.marks { margin: 0; padding-left: 1.5rem; }
-  ol.checks li, ol.marks li { margin: .1rem 0; }
+  /* A check in the order its answer came back: one line, one tile, in the
+     colour of its verdict. The number is the list's, the text has none. */
+  ol.checks, ol.marks { margin: 0; padding: 0; list-style: decimal inside; display: grid; gap: 4px; }
+  ol.checks li, ol.marks li { padding: .35rem .7rem .35rem .4rem; border-radius: var(--r-sm); }
+  ol.checks li.problem, ol.marks li.problem { background: var(--brick-soft); color: var(--brick); }
+  ol.checks li.done, ol.marks li.done { background: var(--moss-soft); color: var(--moss); }
+  ol.checks li.manual { background: var(--amber-soft); color: var(--amber); }
   ol.steps { list-style: none; padding: 0; margin: .7rem 0; display: grid; gap: .4rem; }
-  ol.steps li { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem .8rem;
-                border-radius: 8px; background: #f3f3f1; }
-  ol.steps li.on { background: #d8f3dc; }
-  ol.incidents { padding-left: 1.4rem; margin: .6rem 0; }
-  ol.incidents > li { margin: .2rem 0 1rem; }
-  ol.incidents > li.open { border-left: 3px solid #c9184a; padding-left: .75rem; }
-  table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: .5rem 0; }
-  th, td { text-align: left; vertical-align: top; padding: .35rem .7rem .35rem 0;
-           border-bottom: 1px solid #ececea; }
-  thead th { color: #555; font-weight: 600; }
+  ol.steps li { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem .9rem;
+                border-radius: var(--r-sm); background: var(--mist); border: 1px solid var(--hairline); }
+  ol.steps li.on { background: var(--moss-soft); border-color: transparent; }
+  /* A problem as a whole box with an edge on every side: a problem that
+     waits is brick on its tint, one that was dealt with is mist. Each is
+     named with its own number in the text, so the list adds none. */
+  ol.incidents { padding: 0; margin: .6rem 0; list-style: none; display: grid; gap: .5rem; }
+  ol.incidents > li { padding: .7rem .9rem; border-radius: var(--r-sm); background: var(--mist);
+                      border: 1px solid var(--hairline); }
+  ol.incidents > li > p:last-child { margin-bottom: 0; }
+  ol.incidents > li.open { background: var(--brick-soft); border-color: color-mix(in srgb, var(--brick) 25%, transparent); }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: .5rem 0;
+          font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; vertical-align: top; padding: .4rem .7rem .4rem 0;
+           border-bottom: 1px solid var(--hairline); }
+  thead th { color: var(--slate); font-weight: 600; }
   table.stats { max-width: 40rem; }
   table.stats th { font-weight: 500; }
   table.stats small { display: block; font-size: .8rem; }
   table.wide, table.journal { font-size: .85rem; }
-  table.journal td:first-child { white-space: nowrap; color: #555; }
+  table.journal td:first-child { white-space: nowrap; color: var(--slate); }
   ul.sums { list-style: none; padding: 0; margin: .3rem 0; }
-  ul.sums li { display: flex; flex-wrap: wrap; gap: .15rem .6rem; padding: .2rem 0;
-               border-bottom: 1px solid #f1f1ef; }
+  ul.sums li { display: flex; flex-wrap: wrap; gap: .15rem .6rem; padding: .25rem 0;
+               border-bottom: 1px solid var(--hairline); }
   ul.sums .name { flex: 1 1 10rem; }
   ul.sums .value { font-weight: 600; white-space: nowrap; }
   ul.sums .note { font-size: .85rem; flex-basis: 100%; }
   ul.inline { margin: .1rem 0 .2rem; padding-left: 1.1rem; }
+  ul.inline li { margin: .05rem 0; }
   .duo { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 2rem; }
   ul.spans { list-style: none; margin: 0; padding: 0; }
   ul.spans li { display: flex; align-items: baseline; gap: .45rem; }
-  .sw { flex: 0 0 .55rem; width: .55rem; height: .75rem; border-radius: 3px; display: inline-block;
-        background: #ced4da; align-self: center; }
-  .sw-work { background: #8ecae6; }
-  .sw-check { background: #a9c4e8; }
-  .sw-fix { background: #f4a261; }
-  .sw-wait { background: #ced4da; }
-  .sw-recovery { background: #c77dff; }
-  .sw-done { background: #95d5a4; }
-  .sw-stopped { background: #e07a5f; }
+  /* The swatches of a time span are the board's: one colour for one meaning. */
+  .sw { flex: none; width: .55rem; height: .75rem; border-radius: 3px; display: inline-block;
+        background: var(--gray); align-self: center; }
+  .sw-work { background: var(--blue); }
+  .sw-check, .sw-fix { background: var(--amber); }
+  .sw-wait { background: var(--gray); }
+  .sw-recovery { background: var(--blue-soft); border: 1px dashed var(--blue); }
+  .sw-done { background: var(--moss); }
+  .sw-stopped { background: var(--brick); }
+  /* A line of the journal: when, who, what, each in its own column, so a
+     long note wraps under itself and never under the time. */
   ol.history { list-style: none; padding: 0; margin: .3rem 0; }
-  ol.history li { display: flex; flex-wrap: wrap; gap: .1rem .7rem; padding: .2rem 0;
-                  border-bottom: 1px solid #f1f1ef; font-size: .93rem; }
-  ol.history time { flex: 0 0 10.6rem; color: #666; }
-  ol.history .who { flex: 0 0 13rem; }
-  summary { font-size: 1.2rem; font-weight: 600; cursor: pointer; }
+  ol.history li { display: grid; grid-template-columns: 10.6rem 13rem minmax(0, 1fr); gap: .1rem .7rem;
+                  padding: .25rem 0; border-bottom: 1px solid var(--hairline); font-size: .93rem; }
+  ol.history li > span:last-child { grid-column: 3; min-width: 0; overflow-wrap: anywhere; }
+  ol.history time { color: var(--slate); }
+  ol.history .who { color: var(--slate); overflow-wrap: anywhere; }
+  summary { font-size: 1.2rem; font-weight: 600; letter-spacing: -0.01em; cursor: pointer;
+            border-radius: var(--r-sm); }
   details[open] summary { margin-bottom: .9rem; }
   @media (max-width: 640px) {
+    body { padding: 1rem .75rem 3rem; }
+    .head, section, details { padding: 1rem; }
     .facts { grid-template-columns: 1fr; gap: 0; }
     .facts dd { margin-bottom: .5rem; }
     .toc ol { columns: 1; }
     ol.steps li { flex-direction: column; gap: .1rem; }
-    ol.history time, ol.history .who { flex-basis: 100%; }
+    ol.history li { grid-template-columns: 1fr; }
+    ol.history li > span:last-child { grid-column: 1; }
   }
   @media print {
     body { background: #fff; padding: 0; font-size: 12px; }
     .head, section, details { border: 0; padding: 0; margin: 1.2rem 0; }
     .toc { display: none; }
+    a { color: inherit; }
   }
 """
 
@@ -873,8 +914,9 @@ def _header(snap: dict) -> str:
     contents = "".join(
         f'<li><a href="#{section_id}">{number}. {_esc(heading)}</a></li>'
         for number, (section_id, heading) in enumerate(SECTIONS, 1))
-    return (f'<header class="head"><p class="kicker">Отчёт о работе команды</p>'
-            f'<h1>{_esc(project.get("name"))}</h1>'
+    # The name of the work is the title; what the document is follows it.
+    return (f'<header class="head"><h1>{_esc(project.get("name"))}</h1>'
+            f'<p class="kicker">Отчёт о работе команды</p>'
             f'<p class="meta">Состояние работы: <b>{_esc(state)}</b>'
             + (f" ({_esc(hint)})" if hint else "")
             + f'.</p><p class="meta">Отчёт составлен: {_esc(_when(snap.get("now")))}.</p>'

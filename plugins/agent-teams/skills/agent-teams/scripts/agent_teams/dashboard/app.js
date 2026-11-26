@@ -175,6 +175,7 @@
     var bar = $("ringBar");
     bar.style.strokeDasharray = c;
     bar.style.strokeDashoffset = c * (1 - pct / 100);
+    bar.style.opacity = "1";       // the bar is not drawn before the first answer
     $("ringPct").textContent = pct + "%";
     $("ringImg").setAttribute("aria-label", "Выполнено " + pct + " процентов задач");
     var story;
@@ -274,7 +275,7 @@
         '<dt>Что произошло</dt><dd>' + esc(a.what) + '</dd>' +
         '<dt>Почему это важно</dt><dd>' + esc(a.why) + '</dd>' +
         '<dt>Что система сделала</dt><dd>' + esc(a.tried) + '</dd>' +
-        '<dt>Что нужно от вас</dt><dd>' + esc(a.action) + '</dd>' +
+        '<dt>Что нужно от вас</dt><dd class="ask">' + esc(a.action) + '</dd>' +
         '<dt>Если ничего не делать</dt><dd>' + esc(a.if_nothing) + '</dd></dl></article>';
     }).join(""));
   }
@@ -375,10 +376,20 @@
     graph.height = plan.rows * NODE_H + (plan.rows + 1) * ROW_GAP;
     var room = ($("graphWrap").clientWidth || 600) - 4;
     // The whole plan across the width, never larger than life, and never
-    // so small that its words cannot be read: on a phone the reader pans
-    // instead of squinting.
+    // so small that its words cannot be read: what does not fit at three
+    // quarters is panned, on a phone as on a desk.
     graph.k = Math.max(0.75, Math.min(1, room / graph.width));
-    graph.x = 0; graph.y = 0;
+    graph.x = Math.max(0, (room - graph.width * graph.k) / 2);   // a plan narrower than the room stands in the middle
+    graph.y = 0;
+  }
+  /* The box of the drawing is the room and there is no viewBox: a unit is
+     a pixel, so the plan is drawn at the scale the reader chose and only
+     that one. With a viewBox the browser fitted the box a second time,
+     and a plan of a hundred stages came out at a third of its size. */
+  function graphBox() {
+    var room = ($("graphWrap").clientWidth || 600) - 4;
+    $("graph").setAttribute("width", room);
+    $("graph").setAttribute("height", Math.max(120, Math.ceil(graph.height * graph.k)));
   }
   function renderGraph(tasks) {
     var plan = (lastSnap && lastSnap.plan) || { nodes: [], edges: [], columns: 0, rows: 0 };
@@ -388,7 +399,7 @@
     tasks.forEach(function (t) { shown[t.id] = graphShown(t); });
     var width = plan.columns * NODE_W + (plan.columns + 1) * COL_GAP;
     var height = plan.rows * NODE_H + (plan.rows + 1) * ROW_GAP;
-    if (width !== graph.width) graphFit();       // the plan itself changed
+    if (width !== graph.width || height !== graph.height) graphFit();   // the plan itself changed
     var pos = {};
     plan.nodes.forEach(function (n) {
       pos[n.id] = { x: COL_GAP + n.col * (NODE_W + COL_GAP), y: ROW_GAP + n.row * (NODE_H + ROW_GAP) };
@@ -412,8 +423,7 @@
         '<foreignObject x="12" y="27" width="' + (NODE_W - 24) + '" height="' + (tech ? 22 : 32) + '">' +
         '<div xmlns="http://www.w3.org/1999/xhtml" class="node-title">' + esc(t.title || n.id) + "</div></foreignObject>" + tech + "</g>";
     }).join("");
-    $("graph").setAttribute("viewBox", "0 0 " + (width || 600) + " " + (height || 120));
-    $("graph").setAttribute("height", height || 120);
+    graphBox();
     paint($("graph"), '<g id="graphViewport">' + links + nodes + "</g>");
     graphMove();
   }
@@ -464,7 +474,7 @@
         redrawGraph();
       });
     });
-    window.addEventListener("resize", function () { graphFit(); graphMove(); });
+    window.addEventListener("resize", function () { graphFit(); graphBox(); graphMove(); });
   })();
   opener($("graph"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
 
@@ -503,7 +513,11 @@
         return '<circle class="tmark ' + esc(m.kind || "normal") + '" cx="' + at(m.ts) + '" cy="' + (y + 21) + '" r="4">' +
           "<title>" + esc(fmtClock(m.ts) + " · " + m.title + (m.detail ? ": " + m.detail : "")) + "</title></circle>";
       }).join("");
+      // An invisible plate the size of the whole row: without it only the
+      // letters and the bars of a row answer the pointer, in gaps between
+      // them it does not, and the row is a smaller target than it looks.
       return '<g class="trow" data-task="' + esc(row.id) + '" role="button" tabindex="0" aria-label="' + esc(row.title + ", " + row.state) + '">' +
+        '<rect class="hit" x="0" y="' + y + '" width="' + width + '" height="' + rowH + '"/>' +
         '<text class="row-title" x="12" y="' + (y + 18) + '"><title>' + esc(row.title) + "</title>" +
         esc(shorten(row.title, 26)) + "</text>" +
         '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks +
@@ -815,8 +829,8 @@
     var incidents = list(r.incidents);
     var html = '<p class="story-text">' + esc(r.story) + "</p>";
     if (incidents.length) {
-      html += '<div class="chips">' + list(r.kinds).map(function (k) {
-        return '<span class="chip on">' + esc(k.title) + " · " + k.count + "</span>";
+      html += '<div class="tags">' + list(r.kinds).map(function (k) {
+        return '<span class="tag">' + esc(k.title) + " · " + k.count + "</span>";
       }).join("") + "</div>";
       html += '<ul class="incidents">' + incidents.slice(0, 8).map(function (i) {
         return '<li class="' + (i.human_needed ? "open" : "closed") + '">' + icon(i.human_needed ? "alert" : "check") +
