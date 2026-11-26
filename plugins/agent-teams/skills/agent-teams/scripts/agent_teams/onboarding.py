@@ -158,7 +158,7 @@ _CHECK_PASSED = "команда проходит: "
 # The four questions, the most important first.
 _ASK_REQUEST = "Что вы просите команду сделать?"
 _ASK_STAGES = "Из каких этапов состоит работа? Назовите хотя бы один этап."
-_ASK_WRITES = ("Какие файлы должны получиться в {stage}? Назовите хотя бы один "
+_ASK_WRITES = ("Какие файлы должны получиться на {stage}? Назовите хотя бы один "
                "файл, который этот этап создаст или изменит.")
 _ASK_DONE = "Как понять, что {stage} готов и можно двигаться дальше?"
 
@@ -640,7 +640,7 @@ def review(brief: dict) -> dict:
         raw_writes = raw.get("writes")
         if raw_writes is None or (_is_list(raw_writes) and not raw_writes):
             stage.flagged = True
-            ask_files.append(_ASK_WRITES.format(stage=the_stage))
+            ask_files.append(_ASK_WRITES.format(stage=in_stage))      # "на этапе «X»"
         stage.writes = _read_list(raw_writes, stage.say, f"В {in_stage} список файлов должен",
                                   f"В {in_stage} каждый файл должен")
         for file in stage.writes:

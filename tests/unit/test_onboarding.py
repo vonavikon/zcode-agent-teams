@@ -501,7 +501,9 @@ class TestOnlyTheFourCriticalGapsAreAsked:
     def test_a_question_names_an_untitled_stage_by_its_place(self):
         answer = review({"request": "Подготовь отчёт", "stages": [{"writes": []}]})
         assert kinds(answer["questions"]) == ["files", "done"]
-        assert all("этап номер 1" in text for text in answer["questions"])
+        files, done = answer["questions"]
+        # Each question in its own case: "на этапе номер 1", "этап номер 1 готов".
+        assert "на этапе номер 1" in files and "этап номер 1 готов" in done
 
     def test_nothing_is_ok_while_a_question_is_left(self):
         for left in (without(MINIMAL, "request"), {"request": "x", "stages": []}):
