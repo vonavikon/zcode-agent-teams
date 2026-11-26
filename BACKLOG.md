@@ -58,6 +58,24 @@ Found on the way, none of them seen by the unit tests that existed:
   incidents: 1540 KB for a hundred stages, where the page shows a
   window.
 
+How three places of the specification were read (so the owner can say no):
+
+- The "start screen" of 14.1 is the conversation with the lead session:
+  the owner describes the task in words, the lead fills the brief, the
+  engine asks the one question that matters. The board has no text field
+  for a new task, and a team has to exist before a board can be opened.
+- The plan of 14.2 has stages and no subtasks: a stage is the unit the
+  engine knows. The plan in words that the owner confirms is made by the
+  lead session from the document `plan --brief` answers (the command
+  prints the document itself).
+- "Approve the final result" of 17 is the apply step: once the results
+  are integrated the board offers to apply them to the project, and
+  asks first.
+- The technical level of the integration (13) names the branch, the base
+  and the resulting commit, the merged commits and the clash as the
+  engine wrote it, and the files of each result. A line diff is not
+  drawn on the board: `team.py diff --task` gives it.
+
 Open after this milestone:
 
 - The session with five people (20): the owner's.
