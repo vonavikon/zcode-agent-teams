@@ -7,17 +7,19 @@ colors:
   porcelain: "#FFFFFF"              # --surface
   mist: "#F7F7F5"                   # --surface-2
   ink: "#1D1D1F"                    # --text
-  slate: "#6E6E73"                  # --text-2
-  quartz: "#86868B"                 # --text-3, --gray
+  slate: "#5F5F64"                  # --text-2
+  quartz: "#6B6B70"                 # --text-3
+  flint: "#86868B"                  # --gray: not started
   shell: "rgba(0, 0, 0, 0.06)"      # --shell
   hairline: "rgba(0, 0, 0, 0.08)"   # --hairline
-  signal-blue: "#007AFF"            # --accent, --blue
+  signal-blue: "#007AFF"            # --accent: a fill or a ring, never text
   signal-blue-tint: "rgba(0, 122, 255, 0.12)"      # --blue-soft
+  cobalt: "#0060CC"                 # --blue: the ink of "in work"
   amber-ink: "#9A4A00"              # --yellow
   amber-tint: "rgba(255, 149, 0, 0.16)"             # --yellow-soft
-  moss: "#1D7A34"                   # --green
+  moss: "#176F2F"                   # --green
   moss-tint: "rgba(52, 199, 89, 0.16)"              # --green-soft
-  brick: "#C51E14"                  # --red
+  brick: "#BC1A10"                  # --red
   brick-tint: "rgba(255, 59, 48, 0.12)"             # --red-soft
   neutral-tint: "rgba(0, 0, 0, 0.05)"               # --gray-soft
   # Dark theme ([data-theme="dark"]): zinc-graphite, never black.
@@ -25,18 +27,19 @@ colors:
   charcoal: "#2C2C2E"               # --surface
   basalt: "#232325"                 # --surface-2
   chalk: "#F5F5F7"                  # --text
-  pewter: "#A1A1A6"                 # --text-2
-  quartz-dark: "#8E8E93"            # --text-3
+  pewter: "#AFAFB4"                 # --text-2
+  quartz-dark: "#98989D"            # --text-3
   zinc: "#98989D"                   # --gray
   shell-dark: "rgba(255, 255, 255, 0.08)"           # --shell, --gray-soft
   hairline-dark: "rgba(255, 255, 255, 0.1)"         # --hairline
-  night-blue: "#0A84FF"             # --accent, --blue
+  night-blue: "#0A84FF"             # --accent: a fill or a ring, never text
   night-blue-tint: "rgba(10, 132, 255, 0.2)"        # --blue-soft
+  sky: "#6CB3FF"                    # --blue: the ink of "in work"
   lantern: "#FFB340"                # --yellow
   lantern-tint: "rgba(255, 159, 10, 0.2)"           # --yellow-soft
   spring: "#30D158"                 # --green
   spring-tint: "rgba(48, 209, 88, 0.18)"            # --green-soft
-  flame: "#FF453A"                  # --red
+  coral: "#FF8578"                  # --red
   flame-tint: "rgba(255, 69, 58, 0.18)"             # --red-soft
 typography:
   display:
@@ -45,6 +48,11 @@ typography:
     fontWeight: 700
     lineHeight: 1
     letterSpacing: "-0.03em"
+  glyph:
+    fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+    fontSize: "19px"
+    fontWeight: 700
+    lineHeight: 1
   headline:
     fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
     fontSize: "19px"
@@ -68,9 +76,31 @@ typography:
     fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
     fontSize: "13px"
     fontWeight: 500
+  sheet-title:
+    fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+    fontSize: "18px"
+    fontWeight: 600
+    letterSpacing: "-0.02em"
   caption:
     fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
     fontSize: "12.5px"
+    fontWeight: 400
+  note:
+    fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+    fontSize: "11.5px"
+    fontWeight: 400
+  tick:
+    fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+    fontSize: "11px"
+    fontWeight: 400
+  reading:
+    fontFamily: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+    fontSize: "13.5px"
+    fontWeight: 400
+    lineHeight: 1.5
+  node-tech:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontSize: "10.5px"
     fontWeight: 400
   mono:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -103,6 +133,19 @@ components:
     rounded: "{rounded.pill}"
     width: "34px"
     height: "34px"
+  tag:
+    backgroundColor: "{colors.mist}"
+    textColor: "{colors.slate}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.pill}"
+    padding: "5px 11px"
+  avatar:
+    backgroundColor: "{colors.signal-blue}"
+    textColor: "{colors.porcelain}"
+    typography: "{typography.glyph}"
+    rounded: "{rounded.pill}"
+    width: "38px"
+    height: "38px"
   chip:
     textColor: "{colors.slate}"
     typography: "{typography.caption}"
@@ -217,6 +260,11 @@ open decision of the owner; nothing in the visual system depends on it.
   is always visible.
 - Nothing is loaded from the network: no web font, no icon font, no
   image. Icons are a small inline set drawn with a 2px stroke.
+- Every text keeps a contrast of 4.5:1 or more in both themes (the
+  owner's bar is WCAG AA), and on a phone every control keeps a side of
+  32px or more.
+- Before the first answer the page shows quiet bars where its lists will
+  be and draws no progress: nothing is shown that the engine did not say.
 
 ## Colors
 
@@ -229,25 +277,28 @@ above are those tokens.
 ### Primary
 
 - **Signal Blue** (#007AFF; dark: Night Blue #0A84FF): the only accent.
-  It marks what is alive or reachable: a stage or a specialist in work,
-  the keyboard focus ring, a specialist's avatar, the line of a graph
-  node under the pointer, the sparkline of the spend. On its tint
-  (12% over the surface) it is the text of the "in work" pill.
+  It is a fill or a ring and never text: a specialist's avatar, the
+  keyboard focus ring, the edge of a row under the pointer, a bar of the
+  spend, the sparkline. As text on its own tint it cannot reach 4.5:1.
 
 ### Secondary
 
-The three state colours that speak. Each is used as a text-safe ink on
-its own soft tint, and as a solid fill only for small marks (a dot, a
-stroke, a bar of 8 to 12px).
+The four state colours that speak. Each is a text-safe ink on its own
+soft tint, and as a solid fill only for small marks (a dot, an icon of
+16px, a stroke, a bar of 8 to 18px).
 
+- **Cobalt** (#0060CC; dark: Sky #6CB3FF): in work. The text of the "in
+  work" pill, the dot of a counter, the icon of a stage at work, a link
+  of the graph and a span of the timeline that come from a stage at
+  work. Its tint is Signal Blue at 12% over the surface (dark: 20%).
 - **Amber Ink** (#9A4A00; dark: Lantern #FFB340): waiting for the owner,
   nothing is broken. A stage on check, a remark of the checker, an
   attention item, the warning band of the budget, the line of a graph
   node that waits for a decision. Its tint is 16% over the surface.
-- **Moss** (#1D7A34; dark: Spring #30D158): done. An accepted stage, a
+- **Moss** (#176F2F; dark: Spring #30D158): done. An accepted stage, a
   checkpoint reached, a passed check, the progress ring, a settled
   problem.
-- **Brick** (#C51E14; dark: Flame #FF453A): work that cannot go on
+- **Brick** (#BC1A10; dark: Coral #FF8578): work that cannot go on
   without a decision. A stage stopped after failed checks, a failed
   integration, a defect found in a result, an action that has
   consequences and asks for a confirmation first, the "connection lost"
@@ -265,38 +316,49 @@ stroke, a bar of 8 to 12px).
   every tile inside a card: a stage row, a specialist card, a figure
   tile, a record block.
 - **Ink** (#1D1D1F; dark: Chalk #F5F5F7): the main text.
-- **Slate** (#6E6E73; dark: Pewter #A1A1A6): the second line of text: a
+- **Slate** (#5F5F64; dark: Pewter #AFAFB4): the second line of text: a
   hint, a detail, a caption that has to be read.
-- **Quartz** (#86868B; dark #8E8E93): the third line: a time stamp, a
-  note under a figure, a disabled step. Also the "not started" state
-  (dark: Zinc #98989D): an empty checkpoint, a free specialist.
+- **Quartz** (#6B6B70; dark #98989D): the third line: a time stamp, a
+  note under a figure, a step not reached, the placeholder of a search.
+- **Flint** (#86868B; dark: Zinc #98989D): the "not started" state, as
+  a mark and never as text: an empty checkpoint, a free specialist, a
+  span of waiting.
 - **Shell** (black at 6%; dark: white at 8%) and **Hairline** (black at
   8%; dark: white at 10%): the two borders. The shell draws the outer
   edge of a card, the hairline the edge of everything inside it.
 - **Neutral tint** (black at 5%; dark: white at 8%): the track of a bar
   that is empty, the mark of a stage nobody started, the idle pill.
 
-### Measured contrast (known gaps)
+### Measured contrast
 
 Measured with the WCAG formula on the tint over its surface, November
-2026. The main text and the second line pass AA (15:1 to 17:1, and 4.5:1
-to 6.6:1). These do not reach 4.5:1 and are a decision for the polish
-pass, not a rule:
+2026, after the polish pass; the script repeats the same count on the
+built page in both themes and on a team of a hundred stages. Every ink
+that is written as text keeps 4.5:1 or more on the worst surface it
+lands on:
 
-- Quartz as small text: 3.2:1 to 3.6:1 in light, 4.3:1 to 5.2:1 in dark.
-- The text of the "in work" pill: 3.2:1 to 3.4:1 in light, 3.0:1 to
-  3.4:1 in dark.
-- The text of the "done" pill: 4.1:1 to 4.3:1 in light.
-- The text of the "problem" pill in dark: 3.4:1 to 3.7:1.
+- Ink 13.4:1 (dark 8.7:1), Slate 5.3:1 (5.0:1), Quartz 4.9:1 (4.9:1).
+- Cobalt on its tint 4.8:1 (Sky 5.0:1), Amber Ink 5.2:1 (Lantern
+  5.3:1), Moss 5.2:1 (Spring 4.9:1), Brick 5.1:1 (Coral 4.8:1).
+- The letter of an avatar is large text (19px at 700) and needs 3:1:
+  it keeps 4.0:1 in light and 3.7:1 in dark. The focus ring keeps 3.6:1
+  and 3.8:1 against what surrounds it.
+
+**On a tint the quiet text is the main ink, thinned.** A grey cannot
+keep its contrast on every tint and never looks at home on one: inside
+an attention item and inside a problem that waits, Slate and Quartz are
+Ink at 72% (dark: Chalk at 80%). The one line the owner acts on is set
+in Ink at 600 and is never the quiet one.
 
 ### The report for a manager
 
-The report the owner can download is a document of the same family
-(system type, 16px body, the same five state colours with their tints)
-but it has its own values today: a canvas of #f6f6f4, text of #1a1a1a,
-borders of #e3e3e0, cards of 10px radius, and light only. Whether it
-should take the board's tokens exactly is open; the polish pass is the
-place to decide it.
+The report the owner can download is a document of the same system and
+now takes the board's tokens exactly (decided in the polish pass of
+November 2026): the same canvas, the same five state colours as inks on
+their tints, the same three lines of text, the same corners (16px for a
+section, 12px for a tile inside it, a pill for a state). It stays a
+document: 16px body for reading and printing, one column of 62rem, and
+light only.
 
 ### Named Rules
 
@@ -337,18 +399,33 @@ numbers and headings.
 - **Headline** (600, 19px, tracking -0.01em): the sentence of the
   progress card ("Команда работает. 1 задача в работе."), the statement
   of the comparison of teams.
-- **Title** (600, 17px, tracking -0.02em): the heading of a card; the
-  title of the open sheet is 18px.
+- **Title** (600, 17px, tracking -0.02em): the heading of a card.
+- **Sheet title** (600, 18px, tracking -0.02em): the title of the open
+  sheet, one step above a card because the sheet is a page of its own.
 - **Body** (400, 15px, line-height 1.5): everything the reader reads as
   a sentence, in cards and in the sheet.
 - **Row title** (500, 14px): the title of a stage, of a feed line, of a
   history line; a state hint under it is 12.5px in Slate.
 - **Label** (500, 13px): buttons, chips, pills, inputs, the second
   line of a figure.
+- **Glyph** (700, 19px, line-height 1): the one letter of an avatar.
 - **Caption** (400, 12.5px, Slate): a hint, a detail, a note under a
   figure; time stamps are 12px in Quartz with tabular numerals.
+- **Reading** (400, 13.5px, line-height 1.5): a sentence inside a tile:
+  what a specialist is doing, the lines of an attention item, of a
+  problem.
+- **Note** (400, 11.5px, Quartz): a note under a figure, the small line
+  of a legend, the state of a graph node at 600.
+- **Tick** (400, 11px, Quartz): the hour on the axis of the timeline, the
+  state under the name of a row and the count of what a row does not
+  draw.
+- **Node tech** (400, 10.5px, the mono face, Quartz): the identifier and
+  the branch under a node of the graph, at the technical level only; the
+  smallest step of the ramp and the only one in mono besides Mono.
 - **Mono** (400, 12px, line-height 1.55): the technical block of a card
-  at the technical level, in Slate; never in the simple level.
+  at the technical level, in Slate; never in the simple level. The
+  whole ramp is 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 17, 18, 19
+  and 30px: a size outside it is a new step and belongs here first.
 
 ### Named Rules
 
@@ -388,14 +465,21 @@ The page adapts at three widths:
   rows (the name and the goal, then the state, the mode and the theme):
   it is sticky, and a taller one covered a quarter of the screen. The
   body padding is 12px, the face of a card 16px, a stage row two
-  columns, lists of specialists one column.
+  columns, lists of specialists one column. A phone is touched, not
+  pointed at: a chip, a button of the switch, an icon button, a search
+  field and a select each keep a side of 32px or more, and a group of
+  chips that wraps stops pretending to be one pill (each chip is a pill
+  of its own).
 - The card of "what happens now" follows its own width, not the
   window's (a container query at 560px): narrow, its state moves under
   the title.
 
 Wide content scrolls inside its card, never stretches the page: the
 timeline and the graph pan sideways inside a clipped panel of 16px
-corners.
+corners. The tools of the feed (a search, two selects, the chips, two
+toggles) take rows of their own under the heading: the three fields
+share a row, the two toggles travel together and never leave one of
+them alone on a row.
 
 ### Named Rules
 
@@ -413,8 +497,9 @@ one soft shadow (`0 20px 40px -15px rgba(0,0,0,0.08), 0 1px 2px
 rgba(0,0,0,0.04)`; in dark `0 20px 40px -15px rgba(0,0,0,0.5), 0 1px 2px
 rgba(0,0,0,0.3)`) under its 6px shell. Everything inside a card is flat
 and separated by tone (Porcelain, Mist, Paper) and by the hairline. A
-specialist card or a stage row under the pointer takes the same shadow:
-no second, deeper level exists. The header floats above the page as a
+specialist card or a stage row under the pointer stays flat: it takes
+the accent on its edge. No second, deeper level exists. The header
+floats above the page as a
 translucent pill (the surface at 72%, a 20px backdrop blur with 180%
 saturation). The sheet opens over a backdrop of black at 28%.
 
@@ -456,24 +541,35 @@ are for containers only.
 - **Shape:** a full pill (999px).
 - **The action button** ("Что можно сделать"): quiet and factual. Mist
   background, Ink text at 13px 500, a hairline, 8px 14px. Under the
-  pointer it takes the shell tone; pressed, it scales to 0.98; while
-  the engine works on it, it dims to 60%.
+  pointer it takes the shell tone; pressed, it scales to 0.98.
 - **With consequences:** the same pill in Brick on its tint, so the
-  owner sees before reading that it will ask first.
-- **Icon buttons:** 34px circles (30px small), Mist, a hairline, a 16px
-  icon; pressed, they scale to 0.94. Used for the theme, the zoom of
-  the graph, the close of the sheet.
+  owner sees before reading that it will ask first; under the pointer
+  the tint deepens to 24%.
+- **Icon buttons:** 34px circles (30px small, 34px on a phone), Mist, a
+  hairline, a 16px icon; under the pointer the shell tone, pressed they
+  scale to 0.94. Used for the theme, the zoom and the fit of the graph,
+  the close of the sheet.
+- **Not available now:** every control (an action, an icon button, a
+  chip, a part of the switch, the "earlier" button of the feed) takes
+  one and the same look when it cannot be used: 55% opaque, no press,
+  no change under the pointer.
 - **Focus:** every button shows the focus ring (2px Signal Blue, 2px
   away from the edge).
 
 ### Chips
 - **Style:** a filter group is a pill of Mist with a hairline and 3px
   inside; each chip is a pill of 5px 11px, 12.5px 500, Slate on a
-  transparent background.
+  transparent background. A chip that stands outside a group (the two
+  toggles of the feed) carries the look of the track itself: Mist and a
+  hairline.
 - **State:** the chip that is on sits on Porcelain in Ink with a
-  `0 1px 3px rgba(0,0,0,0.12)` shadow; pressed, it scales to 0.97.
-  The state is also written (`aria-pressed`), for the reader who does
-  not see the contrast.
+  `0 1px 3px rgba(0,0,0,0.12)` shadow; under the pointer an off chip
+  takes Ink and the shell tone; pressed, it scales to 0.97. The state
+  is also written (`aria-pressed`), for the reader who does not see
+  the contrast.
+- **A label is not a switch.** The kinds of problems with their counts
+  are tags: a pill of Mist with a hairline in Slate, never the look of
+  a chip that is pressed on.
 
 ### Cards / Containers
 - **Corner Style:** 24px outside, 18px inside.
@@ -486,8 +582,12 @@ are for containers only.
 
 ### Inputs / Fields
 - **Style:** a pill of Mist with a hairline, 13px, 6px 12px: the search
-  of the graph and of the feed, the two selects of the feed.
+  of the graph and of the feed, the two selects of the feed. Under the
+  pointer the edge takes Flint. The placeholder of a search is Quartz.
 - **Focus:** the focus ring, 1px from the edge.
+- **The browser's own parts follow the theme** (`color-scheme`): the
+  list of a select, the clear button of a search and the scrollbars are
+  dark in the dark theme; scrollbars are thin and Flint.
 - **Error / Disabled:** not used as a form: the board has one number
   field (the new budget), asked for in the system's own dialog and
   checked in words.
@@ -501,30 +601,36 @@ are for containers only.
   and the goal (15px 600 and 12px Slate, each cut with an ellipsis on
   one line), the state pill, the start and the elapsed time as quiet
   pills, a two-part switch for the level (Простой / Технический) and
-  the theme button. On a phone, two rows.
+  the theme button. A part of the switch that is off takes Ink and the
+  shell tone under the pointer; the part that is on sits on Porcelain in
+  Ink. On a phone, two rows.
 
 ### Icons
-A set of eight inline icons drawn with a 2px round stroke in the colour
-of the text: a circle (not started), a clock (in work), a magnifier (on
-check), a check mark (done), a triangle (a decision or a problem), a
-minus (cancelled), an hourglass (waiting), two arrows (recovered). 16px
-in a row, 13px in the feed; each is decorative next to a word, and the
-word carries the meaning for assistive technology.
+A set of thirteen inline icons drawn with a 2px round stroke in the
+colour of the text: a circle (not started), a clock (in work), a
+magnifier (on check), a check mark (done), a triangle (a decision or a
+problem), a minus (cancelled), an hourglass (waiting), two arrows
+(recovered), a sun (the theme), a cross (close), and for the graph a
+minus (smaller), a plus (larger) and four corners (the whole plan). 16px in a row, 13px in the feed; each is decorative
+next to a word, and the word carries the meaning for assistive
+technology. A sign is never a character of the font standing in for an
+icon.
 
 ### The status pill
 The signature of the board: an 8px dot, an icon and a word in a tinted
-pill of 12.5px 600 (4px 10px). Five kinds: busy (Signal Blue), attention
-(Amber Ink), done (Moss), problem (Brick), idle (Neutral tint with
-Slate). The same five kinds drive the mark of a stage row, of a
+pill of 12.5px 600 (4px 10px). Five kinds: busy (Cobalt on the tint of
+Signal Blue), attention (Amber Ink), done (Moss), problem (Brick), idle
+(Neutral tint with Slate). The same five kinds drive the mark of a stage row, of a
 specialist card, of a graph node, of a feed line and of a time span, so
 a reader learns them once.
 
 ### Specialist card
 A tile of 16px corners with a 38px avatar: a Signal Blue circle with
-the first letter of the role (never of an identifier), Ink text on it.
-Name 15px 600, the responsibility in Slate 12.5px, what it is doing
-now 13.5px, the figures 12.5px, the status pill at the end. Under the
-pointer the one shadow; pressed, 0.99. Opens the sheet.
+the first letter of the role (never of an identifier), 19px at 700 in
+Porcelain. Name 15px 600, the responsibility in Slate 12.5px, what it
+is doing now 13.5px, the figures 12.5px, the status pill at the end.
+Under the pointer the edge takes Signal Blue; pressed, 0.99. Opens the
+sheet.
 
 ### Stage row
 A tile of 12px corners in three columns: a 26px round mark with the
@@ -533,7 +639,9 @@ lines "после" and "дальше" in Slate 12.5px, and the role at the right
 Under the title: the checkpoint track, three 10px points joined by
 22px lines, filled in Moss as the engine records them (started, handed
 over, accepted); then the files of the result as file chips. Under the
-pointer a 3px ring of the blue tint. Opens the sheet.
+pointer the edge takes Signal Blue, like every row that opens
+something (a specialist card, a graph node, a file button); pressed,
+0.99. Opens the sheet.
 
 ### File chip
 A 6px chip of Porcelain with a hairline, 12px, 2px 8px, Slate; a file
@@ -550,8 +658,10 @@ to it (19px 600) and the counters as pills with an 8px dot.
 A 16px panel in Amber Ink on its tint with a 25% amber edge: the title
 with an icon, then five labelled lines (what happened, why it matters,
 what the system tried, what is needed, what happens otherwise) and the
-checker's remark in a quoted panel. A stage that is stopped, or a
-failed integration, is the same panel in Brick on its tint.
+checker's remark in a quoted panel. The line "what is needed" is set at
+600: it is the one the owner acts on. The quiet text on the tint is Ink
+thinned (see Colors). A stage that is stopped, or a failed integration,
+is the same panel in Brick on its tint.
 
 ### Activity feed
 A column that scrolls inside 520px, a row of three columns: the time
@@ -569,8 +679,18 @@ they come from. What a filter hides stays in place at 16% opacity, so
 the shape does not jump. The reader zooms (25% to 250%) and drags; the
 position survives refreshes.
 
+The drawing has no viewBox and its box is set in pixels: a unit is a
+pixel, and the plan is drawn at the scale the reader chose and only
+that one. On arrival the whole plan is shown across the width, never
+larger than life and never under 75%: what does not fit at 75% is
+panned, on a phone as on a desk. (With a viewBox the browser fitted the
+box a second time, and a plan of a hundred stages came out with its
+words at a third of their size.)
+
 ### Timeline
-A row per stage (46px high): the title (12.5px 500, cut after 26 signs),
+A row per stage (46px high, the whole of it one target: an invisible
+plate answers the pointer between the letters and the bars): the title
+(12.5px 500, cut after 26 signs),
 the state (11px, Quartz), the spans of what the stage was doing (18px
 high, 9px ends, at 85% opacity: work in blue, check and rework in amber,
 wait in grey, recovery in the blue tint with a dashed blue stroke, done
@@ -588,16 +708,18 @@ Signal Blue on the neutral tint; the budget gauge is a 10px bar in Moss
 warning starts; the spend over time is a sparkline in Signal Blue, 56px
 high; the distribution of results is one 12px bar in Moss, Amber Ink,
 Signal Blue and Quartz, always with its legend in words; the checks in
-their order are 14px squares (4px corners) in Moss and Brick, one per
-check.
+their order are 14px squares (the 6px corner of a chip) in Moss and
+Brick, one per check.
 
 ### Problem list
-A tile per problem (16px corners, 10px 12px, 13.5px): the ones that wait
-for the owner come first. A problem that waits is Brick on its tint with
-a 25% brick edge and a Brick icon; one that was dealt with is Mist with
-a Moss icon. Each says what happened and when, what the system did, what
-cannot be lost, how it ended, and in 600 weight what is needed from the
-owner when something is.
+Under the sentence of the recovery centre stand the kinds of problems
+with their counts, as tags. Then a tile per problem (16px corners, 10px
+12px, 13.5px): the ones that wait for the owner come first. A problem
+that waits is Brick on its tint with a 25% brick edge and a Brick icon;
+one that was dealt with is Mist with a Moss icon. Each says what
+happened and when, what the system did, what cannot be lost, how it
+ended, and in 600 weight in Ink what is needed from the owner when
+something is; the rest of its quiet text is Ink thinned.
 
 ### Record blocks
 A block per model (technical level) or per compared team: a tile of
@@ -616,17 +738,32 @@ full width less 16px and 92% of the height), 24px corners, the one
 shadow, over black at 28%: a sticky head (18px title, a close
 button) and the body with sections of 13px 600 headings in Slate. It
 closes with Escape, with its button and with a click on the backdrop;
-it stays open across refreshes and follows the data.
+it stays open across refreshes and follows the data. While it is open
+the page under it does not scroll.
+
+### Loading
+Before the first answer nothing is shown that the engine did not say:
+the ring is an empty track beside "0%", and where the lists will be
+drawn there are quiet bars (a tile of Mist with a hairline, or a line
+62% wide). The bars appear after 180ms, so an answer that comes at once
+never shows them; the first picture replaces them as a whole. If the
+first answer fails, the bars go and the banner says so.
+
+### The parts the browser draws
+Text selection is the accent at 26% over the surface; the caret of a
+search is Signal Blue; scrollbars are thin and Flint; in the dark theme
+the browser's own parts are dark.
 
 ### Connection banner
 A pill fixed at the bottom (9px 16px): stale updates in Amber, a lost
 connection in Brick, in words, with the time of the last known state.
 
 ### Motion
-One easing (`cubic-bezier(0.32, 0.72, 0, 1)`) and one duration (600ms)
-for colours and transforms; the ring fills over 700ms, a bar grows over
-500ms, a new feed line rises over 500ms, the refresh dot pulses over
-900ms. With `prefers-reduced-motion: reduce` every animation and
+One easing (`cubic-bezier(0.32, 0.72, 0, 1)`) and one duration (220ms)
+for colours and transforms, the theme change included: a reader in flow
+is not made to wait for a hover. The ring fills over 700ms and fades in
+over 300ms, a bar grows over 500ms, a new feed line rises over 500ms,
+the refresh dot pulses over 900ms, the loading bars fade in over 240ms. With `prefers-reduced-motion: reduce` every animation and
 transition is switched off. A block of the page is written again only
 when its markup changed: a refresh that moved nothing is perfectly
 still.
@@ -654,6 +791,11 @@ still.
   breaking inside long words, so nothing ever stretches the page.
 - **Do** add a new control to the nearest family (the action pill, the
   chip, the icon button) rather than inventing a new shape for it.
+- **Do** check a new ink where it is written, on the tint over its
+  surface, in both themes, before adding it to the palette; 4.5:1 is
+  the floor for text.
+- **Do** give a control its hover, press and unavailable looks from its
+  family, and a side of 32px on a phone.
 
 ### Don't:
 - **Don't** load a web font, an icon font, an image or any other
@@ -675,3 +817,10 @@ still.
   change (a new line, a filled bar), nothing else.
 - **Don't** show a colour without its word and icon in a new component
   "because there is no room": make room or leave the colour out.
+- **Don't** write Signal Blue as text, and don't write Slate or Quartz
+  on a tint: on a tint the quiet text is Ink thinned.
+- **Don't** let a label wear the look of a switch that is pressed on,
+  and don't let one thing that opens a sheet signal it differently from
+  the others.
+- **Don't** fit the plan graph a second time or draw it under 75%: the
+  reader pans and zooms, and never squints.

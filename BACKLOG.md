@@ -1,5 +1,50 @@
 # Backlog
 
+## Done after v2.1.0a5: the polish pass (2026-11-27)
+
+The look of the board and of the report, with the Impeccable plugin, in
+the scope the owner chose: the look only, every word as it was, WCAG AA.
+The owner's answers that set the pass: the primary language of the
+product is English (the translation is other work), and the report takes
+the tokens of the board (decided here).
+
+- Every text keeps 4.5:1 or more in both themes. Two inks of text and
+  the four state inks moved (the state inks are one token each, so a dot
+  and its word change together); on a tint the quiet text is the main
+  ink, thinned; the placeholder of a search, the zero share of a legend
+  and the letter of an avatar are covered too. Counted with the WCAG
+  formula and counted again on the built page, in both themes, on the
+  demo team and on a team of a hundred stages: nothing under the floor.
+- A phone keeps 32px or more on every control; a group of chips that
+  wraps stops pretending to be one pill.
+- Every control has its hover, press and unavailable look; the rows that
+  open a sheet (a specialist, a stage, a node, a file) signal it one way:
+  the accent on the edge.
+- The plan graph was drawn at a third of its size on a hundred stages,
+  on a desk too: the browser fitted the drawing a second time through
+  its viewBox. The box is in pixels now; the reader pans and zooms, and
+  the words never go under 75%.
+- Before the first answer the ring showed a full green circle beside
+  "0%". The bar is not drawn until the first answer, and quiet bars mark
+  the lists that are coming.
+- The report: no list numbered twice ("1. 1. Цель проекта"), a problem
+  is a whole box and not a bar on one side, the journal of a stage is in
+  three columns, the name of the work is the title.
+- The detector of the plugin, run once at the end: three advisories and
+  nothing that has to be fixed (a radius off the scale, two type steps
+  the record did not list); all three are closed.
+
+Left open on purpose:
+
+- The glass header stays: it is the look the owner accepted. The plugin
+  reads a blurred translucent bar as a fashion of its own time; the
+  decision to change it is the owner's.
+- A name of a stage is cut after 26 signs in the timeline (the full name
+  is in the tooltip and in the sheet).
+- The technical block sets a key and its value in one colour.
+- Nobody has read the board with a screen reader, and nobody has held
+  it on a phone (the board listens on 127.0.0.1).
+
 ## Done in v2.1.0a5: the product behind the spec (2026-11-26)
 
 The last milestone of the v2.1 specification (14, 17, 18, 20, 21, 22).
@@ -79,14 +124,12 @@ How three places of the specification were read (so the owner can say no):
 Open after this milestone:
 
 - The session with five people (20): the owner's.
-- The visual system is recorded in `DESIGN.md` (2026-11-26, in the
-  DESIGN.md format, for a polish pass with the Impeccable plugin). Known
-  gaps it records, measured with the WCAG formula: the third text colour
-  and the text of the "in work", "done" (light) and "problem" (dark)
-  pills are under 4.5:1 on their backgrounds; the report for a manager
-  has neutrals, radii and a single theme of its own. The polish pass
-  decides them.
-- The report is in Russian, as the board. The language decision is open.
+- The visual system is recorded in `DESIGN.md` and the product in
+  `PRODUCT.md`; the polish pass is done (see above).
+- English is the primary language of the product (the owner,
+  2026-11-26); the board and the report are in Russian today. Moving
+  their texts into English, with the strings in one dictionary, is work
+  without a date.
 - The page's blocks are rewritten as a whole when their markup changes;
   a stage list that changes in one row is rewritten entirely. At a
   hundred stages it costs about 200 ms, well inside the target; a finer

@@ -66,9 +66,12 @@
             <button type="button" class="chip" data-plan-filter="problem" aria-pressed="false">Только проблемы</button>
           </div>
           <span class="spacer"></span>
-          <button type="button" class="iconbtn small" id="graphZoomOut" aria-label="Уменьшить схему">−</button>
-          <button type="button" class="iconbtn small" id="graphZoomIn" aria-label="Увеличить схему">+</button>
-          <button type="button" class="iconbtn small" id="graphReset" aria-label="Показать схему целиком">⤢</button>
+          <button type="button" class="iconbtn small" id="graphZoomOut" aria-label="Уменьшить схему">
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+          <button type="button" class="iconbtn small" id="graphZoomIn" aria-label="Увеличить схему">
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button type="button" class="iconbtn small" id="graphReset" aria-label="Показать схему целиком">
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg></button>
         </div>
         <div class="graph-wrap" id="graphWrap"><svg class="graph" id="graph" role="img" aria-label="Схема плана: этапы слева направо"></svg></div>
     </div>
@@ -79,43 +82,43 @@
 <section class="card" id="nowCard" aria-labelledby="nowH">
       <div class="core">
         <div class="cardhead"><h2 id="nowH">Что происходит сейчас</h2></div>
-        <div class="now-list" id="nowList"></div>
+        <div class="now-list" id="nowList"><div class="skeleton" aria-hidden="true"><i></i><i></i></div></div>
       </div>
     </section>
 <section class="card" id="teamCard" aria-labelledby="teamH">
       <div class="core">
         <div class="cardhead"><h2 id="teamH">Специалисты</h2><span class="small muted">нажмите на карточку, чтобы увидеть историю работы</span></div>
-        <div class="team-list" id="teamList"></div>
+        <div class="team-list" id="teamList"><div class="skeleton" aria-hidden="true"><i class="tall"></i><i class="tall"></i></div></div>
       </div>
     </section>
 <section class="card" id="planCard" aria-labelledby="planH">
       <div class="core">
         <div class="cardhead"><h2 id="planH">План работы</h2><span class="small muted">нажмите на этап, чтобы увидеть подробности</span></div>
-        <div class="plan" id="planList"></div>
+        <div class="plan" id="planList"><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div>
       </div>
     </section>
 <section class="card" id="qualityCard" aria-labelledby="qualityH">
       <div class="core">
         <div class="cardhead"><h2 id="qualityH">Качество результатов</h2><span class="small muted">насколько результатам можно доверять</span></div>
-        <div id="qualityBody"></div>
+        <div id="qualityBody"><div class="skeleton" aria-hidden="true"><i class="line"></i><i class="line"></i><i class="tall"></i></div></div>
       </div>
     </section>
 <section class="card" id="moneyCard" aria-labelledby="moneyH">
       <div class="core">
         <div class="cardhead"><h2 id="moneyH">Расходы и бюджет</h2><span class="small muted">в долларах, по цене моделей на момент работы</span></div>
-        <div id="moneyBody"></div>
+        <div id="moneyBody"><div class="skeleton" aria-hidden="true"><i class="line"></i><i class="line"></i><i class="tall"></i></div></div>
       </div>
     </section>
 <section class="card" id="problemCard" aria-labelledby="problemH">
       <div class="core">
         <div class="cardhead"><h2 id="problemH">Проблемы и восстановление</h2><span class="small muted">что шло не так и чем закончилось</span></div>
-        <div id="problemBody"></div>
+        <div id="problemBody"><div class="skeleton" aria-hidden="true"><i class="line"></i><i class="tall"></i><i class="tall"></i></div></div>
       </div>
     </section>
 <section class="card" id="buildCard" aria-labelledby="buildH">
       <div class="core">
         <div class="cardhead"><h2 id="buildH">Сборка результата</h2><span class="small muted">как отдельные части становятся общим результатом</span></div>
-        <div id="buildBody"></div>
+        <div id="buildBody"><div class="skeleton" aria-hidden="true"><i class="line"></i><i></i><i></i><i></i></div></div>
       </div>
     </section>
 <section class="card hidden" id="benchCard" aria-labelledby="benchH">
@@ -144,7 +147,7 @@
 <section class="card" id="attCard" aria-labelledby="attH">
       <div class="core">
         <div class="cardhead"><h2 id="attH">Нужно ваше внимание</h2><span class="pill" id="attCount">0</span></div>
-        <div class="attention-list" id="attList"></div>
+        <div class="attention-list" id="attList"><div class="skeleton" aria-hidden="true"><i class="tall"></i></div></div>
       </div>
     </section>
 <section class="card" id="feedCard" aria-labelledby="feedH">
@@ -162,12 +165,14 @@
               <button type="button" class="chip" data-feed-kind="done" aria-pressed="false">Готово</button>
               <button type="button" class="chip" data-feed-kind="manual" aria-pressed="false">Решения</button>
             </div>
-            <button type="button" class="chip" id="feedHour" aria-pressed="false">За последний час</button>
-            <button type="button" class="chip" id="feedPause" aria-pressed="false">Пауза</button>
+            <div class="toggles">
+              <button type="button" class="chip" id="feedHour" aria-pressed="false">За последний час</button>
+              <button type="button" class="chip" id="feedPause" aria-pressed="false">Пауза</button>
+            </div>
           </div>
         </div>
         <button type="button" class="older hidden" id="feedOlder">Показать раньше</button>
-        <div class="feed" id="feed"></div>
+        <div class="feed" id="feed"><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
       </div>
     </section>
     </div>

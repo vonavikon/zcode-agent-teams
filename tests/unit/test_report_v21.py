@@ -854,3 +854,62 @@ class TestTheWordsOfTimeAndMoney:
         assert report._reliability(0) == "Все расходы известны."
         assert report._reliability(1) == "Цена 1 записи неизвестна: она не учтена."
         assert report._reliability(4) == "Цена 4 записей неизвестна: они не учтены."
+
+
+# --------------------------------------------------------- the look of it
+
+
+BOARD_CSS = (Path(__file__).resolve().parents[2]
+             / "plugins/agent-teams/skills/agent-teams/scripts/agent_teams/dashboard/app.css")
+COLOUR = re.compile(r"#[0-9A-Fa-f]{6}\b|rgba?\([^)]*\)")
+
+
+def _rule(selector: str) -> str:
+    """The declarations of one rule of the report's stylesheet."""
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", report._CSS)
+    assert match, selector
+    return match.group(1)
+
+
+class TestTheLookOfTheReport:
+    """The report takes the tokens of the board (DESIGN.md, decided in the
+    polish pass of November 2026) and keeps the craft floor: nothing above
+    the title, no list numbered twice, no box with a bar on one side."""
+
+    def test_the_name_of_the_work_is_the_title_and_the_page_says_what_it_is_under_it(self, page):
+        head = page[page.index("<header"):page.index("</header>")]
+        assert head.index("<h1>") < head.index('class="kicker"') < head.index('class="meta"')
+
+    @pytest.mark.parametrize("selector", [".toc ol", "ol.incidents"])
+    def test_a_list_whose_lines_carry_their_own_numbers_adds_no_marker(self, selector):
+        # "1. 1. Цель проекта" was on the page: the number twice.
+        assert "list-style: none" in _rule(selector)
+
+    def test_the_checks_keep_the_marker_that_is_their_only_number(self):
+        assert "list-style: decimal inside" in _rule("ol.checks, ol.marks")
+
+    def test_no_box_has_a_bar_on_one_side(self):
+        assert not re.search(r"border-(left|right)\s*:", report._CSS)
+
+    def test_a_problem_is_a_whole_box_that_takes_its_state(self):
+        dealt, waiting = _rule("ol.incidents > li"), _rule("ol.incidents > li.open")
+        assert "background: var(--mist)" in dealt and "border: 1px solid" in dealt
+        assert "background: var(--brick-soft)" in waiting
+
+    def test_the_journal_is_three_columns_so_a_long_note_wraps_under_itself(self):
+        assert "grid-template-columns: 10.6rem 13rem minmax(0, 1fr)" in _rule("ol.history li")
+        assert "grid-column: 3" in _rule("ol.history li > span:last-child")
+
+    def test_the_states_are_the_colours_of_the_board(self):
+        assert "color: var(--blue)" in _rule(".busy")
+        assert "color: var(--amber)" in _rule(".attention")
+        assert "color: var(--moss)" in _rule(".done")
+        assert "color: var(--brick)" in _rule(".problem")
+
+    def test_every_colour_of_the_report_is_a_colour_of_the_board(self):
+        board = BOARD_CSS.read_text(encoding="utf-8")
+        tokens = {re.sub(r"\s+", "", value).upper() for _name, value in
+                  re.findall(r"(--[a-z0-9-]+):\s*([^;{}]+);", board)
+                  if re.match(r"#[0-9A-Fa-f]{6}$|rgba?\(", value.strip())}
+        used = {re.sub(r"\s+", "", value).upper() for value in COLOUR.findall(report._CSS)}
+        assert used and used <= tokens, used - tokens
