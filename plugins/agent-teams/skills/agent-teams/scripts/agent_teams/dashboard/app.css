@@ -115,6 +115,8 @@ main { max-width: 1180px; margin: 28px auto 0; display: grid; gap: 20px; }
 .cardhead h2 { display: inline-flex; align-items: center; gap: 8px; }
 /* The owner's actions (spec 17): a button each, red where there is
    something to agree to first. */
+.report-line { margin: 0 0 4px; font-size: 13px; }
+.report-line .action { text-decoration: none; display: inline-block; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .action { font: inherit; font-size: 13px; font-weight: 500; padding: 8px 14px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text); text-align: left;

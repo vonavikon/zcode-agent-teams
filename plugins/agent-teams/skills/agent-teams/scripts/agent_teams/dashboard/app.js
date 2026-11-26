@@ -1147,8 +1147,11 @@
     // Only a board started with the lead's authority can act.
     if (snap.control === false) store.control = false;
     if (snap.control === true) store.control = true;
-    if (!store.control) { card.classList.add("hidden"); return; }
+    // The report needs no authority: the card is there on a read-only
+    // board too, with nothing else in it.
     card.classList.remove("hidden");
+    $("reportLink").setAttribute("href", "/api/report" + API);
+    if (!store.control) { paint($("actList"), ""); return; }
     var actions = list(snap.actions);
     if (!actions.length) {
       paint($("actList"), '<p class="muted">Сейчас от вас ничего не нужно.</p>');

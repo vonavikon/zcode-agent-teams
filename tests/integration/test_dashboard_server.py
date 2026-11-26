@@ -8,6 +8,7 @@ load anything from another origin, and every bad value is a clear 400.
 from __future__ import annotations
 
 import hashlib
+import html as html_module
 import http.client
 import io
 import json
@@ -260,6 +261,24 @@ class TestTheAnswers:
         assert set(events) == {"ok", "events", "last_seq", "now"}
         newest = events["last_seq"]
         assert get_json(board["port"], f"/api/events?team=t&after={newest}")["events"] == []
+
+    def test_the_report_is_served_as_a_file_to_keep(self, board):
+        status, headers, data = call(board["port"], "GET", "/api/report?team=t")
+        assert status == 200 and headers["content-type"].startswith("text/html")
+        assert headers["content-disposition"] == 'attachment; filename="report-t.html"'
+        assert "sandbox" in headers["content-security-policy"]
+        text = data.decode("utf-8")
+        # The twelve sections in their order; the hostile title escaped; and
+        # nothing technical before the collapsible section.
+        assert re.findall(r'id="(sec-[a-z-]+)"', text) == [
+            "sec-goal", "sec-result", "sec-done", "sec-not-done", "sec-problems", "sec-how-solved",
+            "sec-quality", "sec-cost", "sec-time", "sec-team", "sec-history", "sec-tech"]
+        assert html_module.escape(HOSTILE_TITLE) in text and HOSTILE_TITLE not in text
+        assert "agent-teams" not in text.split('id="sec-tech"')[0]
+        assert "<script" not in text and "<link" not in text
+        # A name that is not a team is refused as everywhere else.
+        status, _headers, _data = call(board["port"], "GET", "/api/report?team=nobody")
+        assert status == 404
 
     def test_markup_in_a_title_travels_as_text_and_back_unchanged(self, board):
         snap = get_json(board["port"], SNAPSHOT)

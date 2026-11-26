@@ -279,6 +279,7 @@ async function main() {
     /* The owner's actions (spec 17): steps script the answers of the
        confirmation and of the question for a number, and the server's. */
     const shown = () => ({ hidden: (state.classes.actCard || []).includes("hidden"),
+                           card: state.html.actCard || "", report: (state.attrs.reportLink || {}).href || "",
                            buttons: state.html.actList, result: state.text.actResult,
                            resultCls: (state.classes.actResult || []).join(" "),
                            posts: state.posts.map((p) => p.body),

@@ -531,7 +531,7 @@ class TestSwitches:
 
     def test_the_cards_follow_the_width_of_the_window(self):
         out = run("resize", [snapshot()])
-        assert out["columnsNarrow"] == [["attCard", "nowCard", "teamCard", "planCard", "timeCard",
+        assert out["columnsNarrow"] == [["actCard", "attCard", "nowCard", "teamCard", "planCard", "timeCard",
                                    "feedCard", "qualityCard", "moneyCard", "problemCard", "buildCard"], []]
         assert out["columnsWide"][0] and out["columnsWide"][1]
         assert out["allCardsPlaced"]
@@ -1101,9 +1101,11 @@ class TestTheActionsCard:
         out = run("control", [snap])["steps"]
         return {"start": out[0], "presses": [step for step in out[1:] if step["name"].startswith("press")]}
 
-    def test_the_card_exists_only_where_the_owner_can_act(self):
+    def test_the_buttons_exist_only_where_the_owner_can_act(self):
+        # A read-only board still offers the report: it needs no authority.
         plain = run("control", [snapshot(actions=self.ACTIONS)])["steps"][0]
-        assert plain["hidden"] is True and plain["buttons"] == ""
+        assert plain["hidden"] is False and plain["buttons"] == ""
+        assert plain["report"] == "/api/report?team=demo"
         controlled = self.run_control([])["start"]
         assert controlled["hidden"] is False and controlled["buttons"].count("<button") == 5
         # Red where there is something to agree to first; plain otherwise.
@@ -1124,7 +1126,7 @@ class TestTheActionsCard:
         quiet = snapshot(actions=self.ACTIONS)
         awoken = snapshot(actions=self.ACTIONS, control=True)
         out = run("control", [dict(quiet, _control=[["poll"]]), awoken])
-        assert out["steps"][0]["hidden"] is True and out["steps"][1]["hidden"] is False
+        assert out["steps"][0]["buttons"] == "" and out["steps"][1]["buttons"].count("<button") == 5
 
     def test_nothing_from_the_wire_becomes_markup(self):
         written = self.run_control([], actions=[{"key": EVIL, "task": EVIL, "label": EVIL,

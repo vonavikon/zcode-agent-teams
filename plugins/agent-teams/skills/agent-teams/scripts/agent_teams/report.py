@@ -908,20 +908,25 @@ def _page(snap: dict) -> str:
         "</main>\n</body>\n</html>\n")
 
 
-def render_report(store: Store, team: str) -> str:
-    """The report of one team as one HTML document.
+def render_from(project_root, team: str) -> str:
+    """The report of one team as one HTML document, read-only.
 
-    The project root is read from the row of the team, and everything
-    else from the read-only snapshot the board is built from. Nothing in
-    the team's state is touched: the snapshot opens the database read-only.
+    Everything comes from the read-only snapshot the board is built
+    from: nothing in the team's state is touched, so the board can serve
+    the report while the engine works (v2.1 spec 17: export the report).
     """
-    row = store.get_team(team)
-    if row is None:
-        raise NotFoundError(f"team not found in state database: {team}")
-    snap = dashboard_data.snapshot(row["project_root"], team, level="advanced",
+    snap = dashboard_data.snapshot(project_root, team, level="advanced",
                                    event_limit=_WHOLE_JOURNAL, parts=("task_events",),
                                    whole=True)
     return _page(snap)
+
+
+def render_report(store: Store, team: str) -> str:
+    """The report of one team; the project root is read from its row."""
+    row = store.get_team(team)
+    if row is None:
+        raise NotFoundError(f"team not found in state database: {team}")
+    return render_from(row["project_root"], team)
 
 
 def write_report(store: Store, team: str, out_path: Path) -> Path:

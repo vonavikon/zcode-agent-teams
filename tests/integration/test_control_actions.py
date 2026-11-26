@@ -337,7 +337,7 @@ class TestTheBoardActs:
         with pytest.raises(StateRejected, match="PAUSED"):
             engine.op_claim(board["root"], "t", "a", "w1")
         for path in ("/api/status?team=t", "/api/snapshot?team=t&level=advanced",
-                     "/api/events?team=t"):
+                     "/api/events?team=t", "/api/report?team=t"):
             _status, data = self.get(board, path)
             assert board["lead"].encode() not in data, path
         _status, data = self.get(board, "/api/snapshot?team=t")

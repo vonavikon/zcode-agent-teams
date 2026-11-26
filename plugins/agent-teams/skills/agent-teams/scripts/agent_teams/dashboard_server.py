@@ -58,7 +58,7 @@ DEFAULT_PORT = 8765
 # /api/results/<task>/<file>.
 ENDPOINTS = ("/api/status", "/api/events", "/api/snapshot", "/api/tasks",
              "/api/agents", "/api/cost", "/api/metrics", "/api/recovery",
-             "/api/integration", "/api/artifacts", "/api/benchmark")
+             "/api/integration", "/api/artifacts", "/api/benchmark", "/api/report")
 # The one address a control action goes to (v2.1 spec 17), and the most
 # it may carry: an action names a few fields, never a document.
 ACTION_PATH = "/api/actions"
@@ -310,6 +310,17 @@ class _Handler(BaseHTTPRequestHandler):
                 if cursors[name] is not None and cursors[name] < 0:
                     raise ValueError(f"{name} must not be negative")
             after_seq = cursors["after"]
+            if path == "/api/report":
+                # The document for a manager (v2.1 spec 18), read from the
+                # same snapshot as the board and sent as a file to keep:
+                # it opens on its own long after the engine has finished.
+                from .report import render_from
+
+                page = render_from(root, team)
+                self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8",
+                           extra={"Content-Disposition": f'attachment; filename="report-{team}.html"'},
+                           policy=RESULT_CSP)
+                return
             if path.startswith("/api/results/"):
                 self._result(path, root, team)
                 return
