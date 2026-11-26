@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from . import dashboard_server, engine
@@ -78,9 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     json_flag.add_argument("--json", action="store_true",
                            help="print the result as JSON")
 
-    sp = sub.add_parser("init", parents=[json_flag], help="create a team from a tasks file")
+    sp = sub.add_parser("init", parents=[json_flag],
+                        help="create a team from a tasks file, or from a brief in plain words")
     sp.add_argument("--team", required=True)
-    sp.add_argument("--tasks", required=True)
+    source = sp.add_mutually_exclusive_group(required=True)
+    source.add_argument("--tasks", help="the task specification (JSON)")
+    source.add_argument("--brief", help="a brief in plain words (v2.1 spec 14): it becomes "
+                         "the specification once nothing is missing and nothing is wrong")
     sp.add_argument("--project-root", default=".")
     sp.set_defaults(fn=_cmd_init)
 
@@ -190,8 +195,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--notification", required=True)
     sp.set_defaults(fn=_cmd_usage)
 
-    sp = sub.add_parser("plan", parents=[json_flag], help="validate a spec and show the DAG")
-    sp.add_argument("--tasks", required=True)
+    sp = sub.add_parser("plan", parents=[json_flag],
+                        help="validate a spec and show the DAG, or review a brief in plain words")
+    source = sp.add_mutually_exclusive_group(required=True)
+    source.add_argument("--tasks", help="the task specification (JSON)")
+    source.add_argument("--brief", help="a brief in plain words: the answer says what to ask "
+                         "the owner, what is written wrongly, and shows the plan to confirm")
     sp.add_argument("--project-root", default=".")
     sp.set_defaults(fn=_cmd_plan)
 
@@ -283,7 +292,71 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _brief(path: str) -> dict:
+    """The brief as its file holds it: a mapping of human words."""
+    try:
+        brief = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise UsageError(f"cannot read --brief: {exc}") from exc
+    except ValueError as exc:
+        raise UsageError(f"--brief is not valid JSON: {exc}") from exc
+    if not isinstance(brief, dict):
+        raise UsageError("--brief must be a JSON object with the fields of the brief")
+    return brief
+
+
+def _from_brief(args) -> dict:
+    """Review the brief and, when it is ready, check its specification
+    against the real project the way the engine does before a team is
+    made (v2.1 spec 14.3): what the engine sees only on a real disk is
+    said in words, with the engine's text beside it."""
+    from .onboarding import review
+
+    answer = review(_brief(args.brief))
+    if not answer["ok"]:
+        return answer
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8",
+                                     delete=False) as handle:
+        json.dump(answer["spec"], handle, ensure_ascii=False)
+        spec_path = Path(handle.name)
+    try:
+        checked = engine.op_plan(Path(args.project_root), spec_path)
+    finally:
+        spec_path.unlink(missing_ok=True)
+    if not checked["ok"]:
+        answer["ok"] = False
+        answer["spec"] = None
+        answer["problems"] = answer["problems"] + [
+            {"stage": None,
+             "what": "Система не приняла план для этой папки проекта: руководитель команды "
+                     "должен посмотреть подробности и поправить его.",
+             "detail": text} for text in checked["errors"]]
+    answer["warnings"] = checked["warnings"]
+    return answer
+
+
 def _cmd_init(args):
+    if getattr(args, "brief", None):
+        answer = _from_brief(args)
+        if not answer["ok"]:
+            first = answer["problems"][0]["what"] if answer["problems"] else "the plan is not ready"
+            what = answer["question"] or first
+            raise UsageError(
+                "the brief is not ready. "
+                + ("Question for the owner: " if answer["question"] else "Problem in the brief: ")
+                + json.dumps(what, ensure_ascii=True),
+                detail={"question": answer["question"], "problems": answer["problems"]})
+        with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8",
+                                         delete=False) as handle:
+            json.dump(answer["spec"], handle, ensure_ascii=False)
+            spec_path = Path(handle.name)
+        try:
+            result = engine.op_init(Path(args.project_root), args.team, spec_path)
+        finally:
+            spec_path.unlink(missing_ok=True)
+        # What the owner agreed to, for the record of the lead.
+        result["summary"] = answer["plan"]["summary"]
+        return result
     return engine.op_init(Path(args.project_root), args.team,
                           Path(args.tasks))
 
@@ -370,6 +443,11 @@ def _cmd_usage(args):
 
 
 def _cmd_plan(args):
+    if getattr(args, "brief", None):
+        answer = _from_brief(args)
+        # The answer is a document: printed whole, and it exits with 1 when
+        # something is still to ask or to fix, so the lead can branch on it.
+        return {**answer, "_exit": 0 if answer["ok"] else 1}
     return engine.op_plan(Path(args.project_root), Path(args.tasks))
 
 
@@ -539,8 +617,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if result is None:
         return 0
+    # A command may say with which code it ends after a document is printed.
+    code = result.pop("_exit", None) if isinstance(result, dict) else None
     _print_result(result, json_mode=json_mode)
-    return 0
+    return 0 if code is None else code
 
 
 if __name__ == "__main__":
