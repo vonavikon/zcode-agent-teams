@@ -26,6 +26,28 @@ Layers:
   against a real team: the gate refuses a start, a running executor is
   not stopped, nothing is left behind, the limit can be raised, and the
   command exits with code 2 on `BUDGET_LIMIT`.
+- The eight scenarios of v2.1 spec 22.4, end to end
+  (`test_e2e_v21.py`): normal work with five specialists and ten
+  stages, a failed check accepted the second time, a lost specialist
+  replaced, a clash at the integration, the budget, watching a live
+  board, a hundred stages on the page, and the ten questions of a
+  newcomer answered on the board. Each is judged by what the engine did
+  and by what the owner sees.
+- Control from the board (`test_control_actions.py`): the pause and its
+  gate, the fencing of a cancelled stage, the one door for the actions,
+  the server with and without the lead's authority, the origin check,
+  the token in no answer, the page's card (confirmations, a number asked
+  and checked, what the server answered).
+- The command line of the brief (`test_brief_cli.py`): the document it
+  answers, ASCII in both modes, exit 1 while something is left, the team
+  the engine creates, nothing created from a brief that is not ready.
+- Reading while the engine writes (`test_api_under_load.py`): readers
+  of both levels and pages polling a real server see whole snapshots
+  only, and a read leaves no trace.
+- The size (`test_scale.py`, `big_team.py`): five, twenty and a hundred
+  stages built straight in the team's database through the storage
+  methods; what a snapshot carries and what it leaves out; gzip. The
+  time assertions are guards against a walk that turns quadratic.
 - `tests/security/`: path rules (absolute, traversal, reserved
   directories, symlink escapes, case collisions) and the authority
   battery (forged lead token, executor self-verify, stale execution

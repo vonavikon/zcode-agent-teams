@@ -18,7 +18,9 @@ A port of the [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-te
 - **Observability**: token usage from subagent notifications, cost with explicit quality flags, run metrics including the multi-agent vs single-agent comparison, a self-contained HTML report and an idempotent Langfuse export
 - **Live board for a non-technical owner**: `team.py ui` opens a read-only page in the browser with the plan as a graph, how the time went, what each specialist is doing now, what waits for the owner's decision and why, how far the results can be trusted, the spend against the budget, the problems and how each ended, and the files of every result as they were accepted, in plain words; nothing on it can change the run
 - **A budget that holds**: agree a budget for the team and a limit per task; once it is spent, no new work starts (exit code 2, `BUDGET_LIMIT`), running executors are not stopped, and the board says why
-
+- **A task in plain words**: describe what you want; the engine asks the one question that matters now, shows the plan in words, and builds the team only after your yes (`team.py plan --brief`, `init --brief`)
+- **The owner can act from the board**: when the lead lends it authority, pause and resume, allow one more attempt of a stage, cancel a stage, ask for a check, integrate, apply, raise the budget, each with a confirmation where there are consequences; the lead token never reaches the page
+- **A report for a manager**: one file in plain words, twelve sections, fit to show; the technical details are folded at its end
 Roles: the lead is the main ZCode session; teammates and verifiers are subagents (role profiles ship in `agents/`).
 
 ## Installation

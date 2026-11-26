@@ -18,6 +18,10 @@ Una adaptación del enfoque de [Claude Code Agent Teams](https://code.claude.com
 - **Observabilidad**: tokens desde las notificaciones de los subagentes, coste con indicadores de calidad explícitos, métricas de la ejecución incluida la comparación equipo frente a un solo agente, un informe HTML autosuficiente y una exportación idempotente a Langfuse
 - **Tablero en vivo para un responsable no técnico**: `team.py ui` abre en el navegador una página de solo lectura: el plan como esquema, cómo fue el tiempo, qué hace ahora cada especialista, qué espera la decisión del responsable y por qué, hasta qué punto se puede confiar en los resultados, el gasto frente al presupuesto, los problemas y cómo terminó cada uno, y los archivos de cada resultado tal como se aceptaron, en palabras claras; nada en ella puede cambiar la ejecución
 - **Un presupuesto que se respeta**: acuerde un presupuesto para el equipo y un límite por tarea; cuando se agota, no empieza trabajo nuevo (código de salida 2, `BUDGET_LIMIT`), los ejecutores en marcha no se detienen y el tablero dice por qué
+- **Una tarea en palabras corrientes**: describa lo que quiere; el motor hace la única pregunta que importa ahora, muestra el plan en palabras claras y crea el equipo solo después de su sí (`team.py plan --brief`, `init --brief`)
+- **El responsable puede actuar desde el tablero**: cuando el líder le presta autoridad, pausar y reanudar, permitir otro intento, cancelar una etapa, pedir una revisión, integrar, aplicar, subir el presupuesto, con confirmación donde hay consecuencias; el token del líder nunca llega a la página
+- **Un informe para un responsable**: un solo archivo en palabras claras, doce secciones, apto para mostrar; los detalles técnicos quedan plegados al final
+
 
 Roles: el lead es la sesión principal de ZCode; los teammates y verificadores son subagentes (los perfiles de rol están en `agents/`).
 

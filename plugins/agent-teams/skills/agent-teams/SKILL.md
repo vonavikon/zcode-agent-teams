@@ -12,18 +12,43 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
 
 ## Quick start
 
-1. **Plan**: write the tasks spec (schema below) and check it:
+There are two ways to give the team its work. When the owner describes
+it in words, start with the brief (step 1): the owner never writes a
+specification. When a specification exists already, start at step 3.
+
+1. **Brief** (the owner's words): write `brief.json` with the owner as
+   you talk (the fields are documented at the top of
+   `scripts/agent_teams/onboarding.py`): `request` (what to ask the
+   team), `stages` (each with `title`, `writes`, `done_when`, and
+   `specialist`, `after`, `check` as needed), and whatever the owner
+   gave among `result`, `constraints`, `materials`, `deadline`,
+   `budget_usd`, `quality`. Then ask the engine:
+   `python <skill>/scripts/team.py plan --brief brief.json --project-root <root> --json`
+   The answer is a document. While `ok` is false, ask the owner **one**
+   question, the one in `question`, and write the answer into the
+   brief; `problems` say what is written wrongly, in words you can
+   repeat. Never ask for the budget, the date or the constraints: the
+   team can start without them.
+2. **Confirm**: show the owner `plan.summary` and the stages with
+   their specialists, and start only on the owner's yes:
+   `python <skill>/scripts/team.py init --team <id> --brief brief.json --project-root <root>`
+   Prints the **lead token once**: keep it in the lead session. A
+   brief that is not ready creates nothing and says which question to
+   ask.
+3. **Plan** (a specification that exists): write the tasks spec
+   (schema below) and check it:
    `python <skill>/scripts/team.py plan --tasks tasks.json --project-root <root>`
    Non-overlapping `files_write`, verifiable `acceptance`, 2 to 5
    teammates, 1 to 3 tasks each.
-2. **init**: `python <skill>/scripts/team.py init --team <id> --tasks tasks.json --project-root <root>`
+4. **init** (from a specification):
+   `python <skill>/scripts/team.py init --team <id> --tasks tasks.json --project-root <root>`
    Prints the **lead token once**: keep it in the lead session; every
    verdict and intervention requires it.
-3. **Spawn teammates**: Agent tool, one per teammate,
+5. **Spawn teammates**: Agent tool, one per teammate,
    `run_in_background: true`, prompt from `references/prompt-teammate.md`.
    Each claim prints an **execution token** that the executor passes to
    submit.
-4. **Gate**: on every `VERIFICATION REQUEST` spawn a verifier
+6. **Gate**: on every `VERIFICATION REQUEST` spawn a verifier
    (`references/prompt-verifier.md`, read-only). The engine itself runs
    the command-backed criteria; your verdict still needs the lead token:
    - PASS -> the verifier's answer is one JSON object. Save it to a file
@@ -36,13 +61,13 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
    A failed required machine criterion or a write outside `files_write`
    overrides PASS into FAIL automatically. The second failed round (by
    default) blocks the task: `release` it or handle it yourself.
-5. **Integrate**: `team.py integrate --team <id> --lead-token <tok> [--check CMD] [--apply]`
+7. **Integrate**: `team.py integrate --team <id> --lead-token <tok> [--check CMD] [--apply]`
    merges the accepted branches, runs the integration check, refuses to
    finish the run on conflicts or regressions.
-6. **Finish**: `team.py status` (all completed), `report --out run.html`,
+8. **Finish**: `team.py status` (all completed), `report --out run.html`,
    `metrics`, optionally `langfuse --name "<run name>"`. Give the owner
    the summary and the report path.
-7. **Board** (any time after init): `python <skill>/scripts/team.py ui --team <id> --project-root <root>`
+9. **Board** (any time after init): `python <skill>/scripts/team.py ui --team <id> --project-root <root>`
    prints an address and serves a read-only board in the browser: the
    plan as a graph and as a list, how the time went, what each
    specialist is doing, what waits for the owner's decision and why, in
@@ -52,9 +77,24 @@ under `.agent-teams/<team>/` with v0.2-compatible JSON mirrors.
    yours are never summed into one), the spend against the budget, the
    problems and how each ended, how the parts become the whole result.
    Offer it when the owner wants to watch or is not technical. `--open`
-   opens the browser; it stops with Ctrl-C. Nothing on the board can
+   opens the browser; it stops with Ctrl-C. Nothing on this board can
    change the run.
-8. **Budget** (when the owner agrees one): put it in the spec's config
+10. **Letting the owner act** (when the owner asks for it): start the
+   board with the lead's authority:
+   `python <skill>/scripts/team.py ui --team <id> --project-root <root> --lead-token-file <a file only you can read>`
+   The token stays in the memory of that process; the page never sees
+   it. The card "Что можно сделать" then offers what the engine would
+   accept right now: put the team on pause and take it off, allow one
+   more attempt of a blocked stage, cancel a stage, ask you to check a
+   result (you will find the request with `team.py read --for lead`),
+   integrate, apply, raise the budget. The owner confirms what has
+   consequences. Start it this way only at the owner's own machine: the
+   board has no authentication.
+11. **The report for a manager**: `team.py report --team <id> --project-root <root> --out report.html`,
+   or the link "Скачать отчёт о работе команды" on the board (it needs
+   no authority). One file in plain words, twelve sections, fit to
+   show to a manager; the technical details are folded at its end.
+12. **Budget** (when the owner agrees one): put it in the spec's config
    (`budget_usd`, `budget_per_task_usd`, `budget_warn_ratio`) or set it
    as the lead:
    `python <skill>/scripts/team.py budget --team <id> --project-root <root> --usd 10 --per-task 2.5 --lead-token <tok>`
@@ -116,8 +156,10 @@ the comparison is worth nothing.
 
 ## Commands (team.py)
 
-Lifecycle: `init`, `claim --by`, `submit --token`, `verify --verdict
---lead-token`, `release`, `cancel`, `recover`, `heartbeat`.
+Lifecycle: `init` (from `--tasks` or from `--brief`), `claim --by`,
+`submit --token`, `verify --verdict --lead-token`, `release`, `cancel`,
+`recover`, `heartbeat`, `pause --lead-token [--reason]`,
+`resume --lead-token`.
 Inspection: `status`, `inspect`, `graph`, `agents`, `logs`, `diff`,
 `workspace`, `plan`.
 Economics: `tokens`, `usage --notification FILE`, `cost`, `metrics`,
@@ -125,7 +167,11 @@ Economics: `tokens`, `usage --notification FILE`, `cost`, `metrics`,
 Budget: `budget [--usd n | none] [--per-task n | none] [--warn-ratio r]
 [--lead-token]`.
 Integration: `integrate [--check CMD] [--apply]`.
-Mailbox: `message`, `read`. Board: `ui [--host] [--port] [--open]`.
+Mailbox: `message`, `read`. Board: `ui [--host] [--port] [--open]
+[--lead-token | --lead-token-file]`.
+Starting from the owner's words: `plan --brief FILE` (answers a
+document, exits 1 while something is to ask or to fix), `init --brief
+FILE`.
 All commands take `--project-root` and `--json`.
 
 `team.py budget` without the lead token shows the limits, the known
@@ -142,7 +188,12 @@ board decides them.
 
 - The lead does not implement: it plans, verifies and integrates.
 - The lead token is printed once; if lost, start a new run. Never paste
-  it into teammate prompts.
+  it into teammate prompts, and never into a chat with the owner: to
+  let the owner act from the board, pass it through a file only you can
+  read (`--lead-token-file`).
+- A paused team answers every `claim` with `PAUSED`: that is your own
+  decision (or the owner's from the board), not a fault of the executor.
+  `team.py resume` lifts it.
 - Do not change `files_read` of active tasks: reviewers check line
   numbers against the current files.
 - A first run of a new configuration is a research or review run.
@@ -164,6 +215,8 @@ board decides them.
 - `BUDGET_LIMIT` on a claim is not a failure of the executor: the budget
   or the task's limit is spent. The board names the records without a
   price, which the limit does not count.
+- A brief that is not ready: `plan --brief` exits with 1 and says one
+  question. Ask the owner that one question, not the whole list.
 - A comparison of teams is shown only for a declared benchmark, and
   says "nothing to compare" until two teams finished: do not present a
   guess as a measurement.

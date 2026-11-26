@@ -584,3 +584,20 @@ class TestTheArchiveNoteOfALostExecutor:
     def test_without_the_flag_it_is_what_it_always_was(self):
         shown = viewmodel.event_view(self.note(), titles=TITLES, roles=ROLES)
         assert shown["title"] == "Специалист перестал отвечать" and "bookkeeping" not in shown
+
+
+class TestTheLiftedBlockIsBookkeeping:
+    def test_the_block_recovery_lifts_at_once_is_marked_as_a_note(self):
+        lifted = event("task_blocked", actor="recovery", seq=3, reason="executor lost: heartbeat timeout")
+        shown = viewmodel.event_view(lifted, level="advanced", titles=TITLES, roles=ROLES)
+        assert shown["bookkeeping"] is True
+        assert shown["title"] == "Исполнитель потерян (запись в журнале)"
+
+    def test_a_real_stop_is_not_a_note(self):
+        stopped = event("task_blocked", actor="lead", seq=9, reason="verification limit reached",
+                        failures=2, feedback="нет оценок")
+        shown = viewmodel.event_view(stopped, titles=TITLES, roles=ROLES)
+        assert "bookkeeping" not in shown and shown["kind"] == "problem"
+        advanced = viewmodel.event_view(stopped, level="advanced", titles=TITLES, roles=ROLES)
+        assert "bookkeeping" not in advanced
+

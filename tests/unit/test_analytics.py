@@ -298,11 +298,32 @@ class TestRecovery:
         assert "передала замечания проверяющего исполнителю" in check["did"]
 
     def test_the_block_recovery_writes_and_lifts_at_once_is_not_a_problem(self):
+        # The reader's model marks that half of the pair as bookkeeping.
         events = {"a": [item(1, "task_claimed"), item(2, "agent_timeout"),
-                        item(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
-                        item(4, "task_released")]}
+                        {**item(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
+                         "bookkeeping": True}, item(4, "task_released")]}
         view = recovery_view([task("a", "in_progress", restarts=1)], events)
         assert [i["kind"] for i in view["incidents"]] == ["executor"]
+
+    def test_a_real_stop_after_an_earlier_loss_of_the_same_stage_is_a_problem(self):
+        # Found on a demo board: a specialist was replaced, then the stage
+        # failed two checks and stopped. The stop has to wait for the owner.
+        def at(seq, event_type, title="", **fields):
+            return item(seq, event_type, title, ts=f"2026-11-25T09:{seq:02d}:00.000Z", **fields)
+
+        events = {"a": [at(1, "task_claimed"), at(2, "agent_timeout"),
+                        {**at(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
+                         "bookkeeping": True}, at(4, "task_released"), at(5, "task_claimed"),
+                        at(6, "task_submitted"), at(7, "verification_failed", detail="нет оценок"),
+                        at(8, "task_submitted"), at(9, "verification_failed", detail="опять нет"),
+                        at(10, "task_blocked", "Задача остановлена", detail="two failed rounds")]}
+        view = recovery_view([task("a", "blocked", restarts=1, verification_failures=2)], events)
+        # What waits for the owner stands first, the newest of it on top: the
+        # stop and the check that used up the rounds, both about one stage.
+        assert [(i["kind"], i["human_needed"]) for i in view["incidents"]] == [
+            ("blocked", True), ("check", True), ("check", False), ("executor", False)]
+        assert "Сейчас нужна ваша помощь по 1 задаче" in view["story"]
+        assert view["open"] == 2 and view["total"] == 4
 
     def test_incidents_come_newest_first(self):
         events = {"a": [item(1, "verification_failed", ts="2026-11-25T09:01:00.000Z"),

@@ -336,13 +336,9 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
             kind = _PROBLEMS.get(item.get("type"))
             if not kind:
                 continue
-            # The block recovery writes and lifts in one step is no
-            # problem of the owner (viewmodel.event_view hides it in the
-            # simple level; here it is told as the timeout it belongs to).
-            if item["type"] == "task_blocked" and any(
-                    earlier.get("type") == "agent_timeout" for earlier in events
-                    if earlier["seq"] < item["seq"]):
-                continue
+            # The block recovery writes and lifts in one step is marked
+            # as bookkeeping by the reader's model (the timeout it belongs
+            # to is the problem); any other block is a real stop.
             what_followed = after.get(item["seq"], [])
             did = []
             # What the owner cannot lose is said out loud (spec 12).

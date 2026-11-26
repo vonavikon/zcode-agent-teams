@@ -370,6 +370,10 @@ def test_h_every_question_of_a_newcomer_has_its_answer_on_the_board(project):
     waiting = next(a for a in snap["attention"] if a["task"] == "s3")
     assert waiting["action"] and waiting["why"] and waiting["what"]
     assert any(i["human_needed"] for i in snap["recovery"]["incidents"])
+    # Both places ask about the same stage: a stop after two failed checks
+    # is a problem that waits, not only a line on the attention card.
+    assert "Сейчас нужна ваша помощь по 1 задаче" in snap["recovery"]["story"]
+    assert any(i["kind"] == "blocked" and i["human_needed"] for i in snap["recovery"]["incidents"])
     # 7. See the finished result.
     assert mine["Этап 1"]["result"]["ready"] and mine["Этап 1"]["result"]["files"]
     # 8. The amount spent.

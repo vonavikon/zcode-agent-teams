@@ -605,6 +605,8 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
         item["title"] = "Исполнитель потерян (запись в журнале)"
         item["kind"], item["icon"] = "normal", "refresh"
         item["detail"] = "Задача сразу возвращена в очередь, решения человека не требуется."
+        # A journal line that only repeats the timeout: nothing counts it.
+        item["bookkeeping"] = True
     elif etype in ("task_blocked", "round_limit"):
         item["detail"] = _blocked_explanation(
             reason, failures=meta.get("failures"))[0]
