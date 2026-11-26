@@ -549,3 +549,38 @@ def test_no_long_dash_in_any_reader_text():
     source = Path(viewmodel.__file__).read_text(encoding="utf-8")
     body = source.split("TASK_STATE = {", 1)[1]
     assert "\u2014" not in body and "\u2013" not in body
+
+
+class TestAStageAcceptedByDecision:
+    def test_it_is_not_said_to_be_checked_and_accepted(self):
+        attempts = [{"verdict": "fail", "feedback": "нет оценок"},
+                    {"verdict": "pass", "manual": True}]
+        done = task(status="completed", title="Риски", submitted_at="x")
+        view = viewmodel.task_view(done, attempts=attempts)
+        assert view["state"] == "Принято"
+        assert view["state_hint"] == "принято решением руководителя команды, без проверки"
+        # A stage that passed a real check keeps the words of a check.
+        checked = viewmodel.task_view(done, attempts=[{"verdict": "pass"}])
+        assert checked["state_hint"] == "проверено и принято"
+
+
+class TestTheArchiveNoteOfALostExecutor:
+    """The engine writes one lost executor twice: the timeout, then the
+    archive of its workspace under the same event type."""
+
+    def note(self):
+        return event("agent_timeout", actor="recovery", metadata={"quarantine": "/q", "attempt": 1})
+
+    def test_the_simple_level_shows_one_loss(self):
+        assert viewmodel.event_view(self.note(), titles=TITLES, roles=ROLES, archive_note=True) is None
+
+    def test_the_technical_level_shows_it_as_what_it_is(self):
+        shown = viewmodel.event_view(self.note(), level="advanced", titles=TITLES, roles=ROLES,
+                                     archive_note=True)
+        assert shown["bookkeeping"] is True and shown["kind"] == "normal"
+        assert shown["title"] == "Рабочая область прежней попытки убрана в архив"
+        assert shown["specialist"] == "Система"
+
+    def test_without_the_flag_it_is_what_it_always_was(self):
+        shown = viewmodel.event_view(self.note(), titles=TITLES, roles=ROLES)
+        assert shown["title"] == "Специалист перестал отвечать" and "bookkeeping" not in shown

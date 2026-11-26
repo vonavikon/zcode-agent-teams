@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from agent_teams import engine
+from agent_teams.analytics import budget_view
 from agent_teams.observability import (PRICE_TABLE_USD_1M, collect_metrics, compute_cost,
                                        cost_of)
 from agent_teams.storage import open_store
@@ -120,7 +121,9 @@ class TestTheCostIsStoredOnce:
         assert metrics["cost_total_usd"] == pytest.approx(FLASH_TOTAL)
         out = project / "report.html"
         engine.op_report(project, "t", out)
-        assert f"cost ${FLASH_TOTAL:.4f}" in out.read_text(encoding="utf-8")
+        # The report says what the cost says, in the words of the board.
+        said = budget_view(cost_view(usage_rows(project)), {}, [])["spent_text"]
+        assert said and said in out.read_text(encoding="utf-8")
 
     def test_a_record_from_before_costs_were_stored_is_estimated_from_the_table(
             self, project):

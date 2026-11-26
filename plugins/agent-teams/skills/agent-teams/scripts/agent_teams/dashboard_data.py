@@ -362,7 +362,11 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         item = viewmodel.event_view(
             e, level=level, titles=titles, roles=roles,
             quarantined=e.get("task_id") in quarantined,
-            after_override=after_override)
+            after_override=after_override,
+            # The engine records the archive of a lost attempt as a second
+            # timeout of the same task: a note, not another loss.
+            archive_note=(e.get("event_type") == "agent_timeout"
+                          and isinstance(raw_meta, dict) and bool(raw_meta.get("quarantine"))))
         if item is not None:
             item["by"] = index_of.get(e.get("actor_id"))
             events.append(item)

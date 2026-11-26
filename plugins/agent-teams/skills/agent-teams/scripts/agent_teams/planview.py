@@ -124,6 +124,8 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
         spans: list[dict] = []
         marks = []
         for index, item in enumerate(events):
+            if item.get("bookkeeping"):
+                continue        # the archive of a lost attempt: a note, not a moment of work
             marks.append({"ts": item["ts"], "title": item["title"], "kind": item.get("kind"),
                           "icon": item.get("icon"), "detail": item.get("detail", "")})
             state = _AFTER.get(item.get("type"))

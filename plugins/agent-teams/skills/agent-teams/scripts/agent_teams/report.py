@@ -51,9 +51,10 @@ SECTIONS = (
 # The feed of the snapshot is a window of the newest events (200 by
 # default: enough for a board that polls). A report is written once and
 # has to carry the whole journal, so the window is asked as wide as a
-# journal can be. One call that also asks for ``task_events`` gives one
-# consistent snapshot: the history of every stage is read together with
-# everything else.
+# journal can be and the limits of a polling page are lifted
+# (``whole=True``: every incident, every mark, every raw record). One
+# call that also asks for ``task_events`` gives one consistent snapshot:
+# the history of every stage is read together with everything else.
 _WHOLE_JOURNAL = 1_000_000
 
 # A tone is always a class of this page, never data: a state is read
@@ -918,7 +919,8 @@ def render_report(store: Store, team: str) -> str:
     if row is None:
         raise NotFoundError(f"team not found in state database: {team}")
     snap = dashboard_data.snapshot(row["project_root"], team, level="advanced",
-                                   event_limit=_WHOLE_JOURNAL, parts=("task_events",))
+                                   event_limit=_WHOLE_JOURNAL, parts=("task_events",),
+                                   whole=True)
     return _page(snap)
 
 

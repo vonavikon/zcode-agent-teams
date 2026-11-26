@@ -384,6 +384,9 @@ def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
             "accepted": task["status"] == "completed",
         },
     }
+    if task["status"] == "completed" and attempts and any(a.get("manual") for a in attempts):
+        # "Checked and accepted" would be a lie: a decision accepted it.
+        view["state_hint"] = "принято решением руководителя команды, без проверки"
     started, finished = parse_time(task.get("claimed_at")), parse_time(task.get("completed_at"))
     if started:
         view["worked_s"] = max(0, int(((finished if task["status"] == "completed"
@@ -525,7 +528,7 @@ def verifier_view(tasks: list[dict], attempts: list[dict],
 
 def event_view(event: dict, *, level: str = "simple", titles: dict | None = None,
                roles: dict | None = None, quarantined: bool = False,
-               after_override: bool = False) -> dict | None:
+               after_override: bool = False, archive_note: bool = False) -> dict | None:
     """One feed item, or None when the event means nothing to a reader.
 
     ``titles`` maps a task id to its title and ``roles`` an
@@ -534,11 +537,24 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
     ``quarantined`` says that the workspace of this task's previous
     attempt was archived. ``after_override`` marks the journal half of a
     manual acceptance (the engine writes two events for one decision).
+    ``archive_note`` marks the other line the engine writes for one lost
+    executor: after the timeout it records the archive of the workspace
+    under the same event type. One loss is one line for a reader.
     """
     etype = event.get("event_type")
     text = EVENT_TEXT.get(etype)
     if text is None or (level != "advanced" and etype in _ADVANCED_ONLY):
         return None
+    if etype == "agent_timeout" and archive_note:
+        if level != "advanced":
+            return None
+        return {"seq": event.get("seq"), "ts": event.get("timestamp"),
+                "title": "Рабочая область прежней попытки убрана в архив",
+                "type": etype, "kind": "normal", "icon": "refresh",
+                "specialist": _FUNCTION_ACTORS["recovery"],
+                "task": (titles or {}).get(event.get("task_id")),
+                "detail": "Служебная запись: то, что исполнитель не успел сдать, лежит в архиве.",
+                "bookkeeping": True}
     meta = _event_meta(event)
     if after_override:
         # The engine records a manual acceptance twice: the decision of

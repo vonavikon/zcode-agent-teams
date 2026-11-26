@@ -67,17 +67,25 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     for a in attempts:
         checks_by_task.setdefault(a["task_id"], []).append(a)
 
+    def real_checks(task: dict) -> list[dict]:
+        """The checks a result really had. The row the engine writes behind
+        a decision of the lead is not one of them."""
+        rows = list(checks_by_task.get(task["id"]) or [])
+        if task["id"] in accepted_by_lead and rows and rows[-1].get("verdict") == "pass":
+            rows = rows[:-1]
+        return rows
+
     handed = [t for t in tasks if checks_by_task.get(t["id"]) or t.get("submitted_at")]
     by_decision = [t for t in handed if t["id"] in accepted_by_lead]
     # Judged, and already checked: a result handed over whose check has
     # not come back yet is neither passed nor failed.
-    judged = [t for t in handed
-              if t["id"] not in accepted_by_lead and checks_by_task.get(t["id"])]
-    first_time = [t for t in judged
-                  if checks_by_task[t["id"]][0].get("verdict") == "pass"]
-    reworked = [t for t in judged
-                if any(a.get("verdict") == "fail" for a in checks_by_task[t["id"]])]
-    checks = [a for t in judged for a in checks_by_task[t["id"]]]
+    judged = [t for t in handed if t["id"] not in accepted_by_lead and real_checks(t)]
+    first_time = [t for t in judged if real_checks(t)[0].get("verdict") == "pass"]
+    # Every check that really happened counts, on a result the lead then
+    # took over too: a failed check is a fact, whatever accepted the
+    # result in the end.
+    checks = [a for t in handed for a in real_checks(t)]
+    reworked = [t for t in handed if any(a.get("verdict") == "fail" for a in real_checks(t))]
     passed = len([a for a in checks if a.get("verdict") == "pass"])
     failed = len([a for a in checks if a.get("verdict") == "fail"])
 
@@ -86,7 +94,7 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     # A result that passed at first and was then sent back is one that
     # needed rework, like any other.
     clean = {t["id"] for t in first_time
-             if not any(a.get("verdict") == "fail" for a in checks_by_task[t["id"]])}
+             if not any(a.get("verdict") == "fail" for a in real_checks(t))}
     split = {"first": len(clean), "reworked": len(judged) - len(clean),
              "decision": len(by_decision),
              "awaiting": max(0, len(handed) - len(judged) - len(by_decision))}
@@ -102,7 +110,7 @@ def quality_view(tasks: list[dict], attempts: list[dict],
 
     machine = {"run": 0, "passed": 0, "failed": 0, "forced": 0}
     for t in judged:
-        latest = checks_by_task[t["id"]][-1]
+        latest = real_checks(t)[-1]
         report = latest.get("report") if isinstance(latest.get("report"), dict) else {}
         for criterion in report.get("criteria") or []:
             if not isinstance(criterion, dict):
@@ -123,7 +131,12 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     if not handed:
         story = "Результаты ещё не передавались на проверку."
     elif total == 0:
-        story = "Результаты переданы на проверку, её ответ ещё не пришёл."
+        if checks:
+            story = "Ни один результат не прошёл проверку с первого раза."
+        elif len(by_decision) == len(handed):
+            story = "Результаты не проверялись."
+        else:
+            story = "Результаты переданы на проверку, её ответ ещё не пришёл."
     elif total == 1:
         story = ("1 результат прошёл проверку с первого раза." if first_time
                  else "Проверенный результат не прошёл проверку с первого раза.")
@@ -315,6 +328,7 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
         task = by_id.get(task_id)
         if task is None:
             continue
+        events = [item for item in events if not item.get("bookkeeping")]
         after: dict[int, list[dict]] = {}
         for index, item in enumerate(events):
             after.setdefault(item["seq"], []).extend(events[index + 1:index + 4])
