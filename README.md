@@ -71,6 +71,7 @@ plugins/agent-teams/
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
                                      + dashboard/ (the board page)
+DESIGN.md                           the visual system of the board: tokens, components, rules
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

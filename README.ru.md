@@ -74,6 +74,7 @@ plugins/agent-teams/
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
                                      + dashboard/ (the board page)
+DESIGN.md                           визуальная система доски: токены, компоненты, правила
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

@@ -44,6 +44,10 @@ Layers:
 - Reading while the engine writes (`test_api_under_load.py`): readers
   of both levels and pages polling a real server see whole snapshots
   only, and a read leaves no trace.
+- The design record (`test_design_doc.py`): `DESIGN.md` keeps its eight
+  sections, its frontmatter speaks the DESIGN.md schema, every colour it
+  names is a token of the stylesheet and every colour token of the
+  stylesheet is in it, and it carries no long dash.
 - The size (`test_scale.py`, `big_team.py`): five, twenty and a hundred
   stages built straight in the team's database through the storage
   methods; what a snapshot carries and what it leaves out; gzip. The
