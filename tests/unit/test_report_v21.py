@@ -204,14 +204,23 @@ def team(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def page(team) -> str:
-    return _render(team)
+def picture(team) -> dict:
+    """One snapshot for the whole module. The page and what it is
+    compared with come from the same moment: an open span of the
+    timeline grows with every second, and two snapshots taken seconds
+    apart disagree about its length."""
+    return dashboard_data.snapshot(team["root"], TEAM, level="advanced",
+                                   parts=("task_events",), whole=True)
 
 
 @pytest.fixture(scope="module")
-def snap(team) -> dict:
-    return dashboard_data.snapshot(team["root"], TEAM, level="advanced",
-                                   parts=("task_events",))
+def page(picture) -> str:
+    return report._page(picture)
+
+
+@pytest.fixture(scope="module")
+def snap(picture) -> dict:
+    return picture
 
 
 # ------------------------------------------------------- reading the page
