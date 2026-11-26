@@ -20,6 +20,9 @@ _AFTER = {
     "verification_passed": "done", "verify_pass": "done", "task_completed": "done",
     "task_blocked": "stopped", "task_cancelled": "stopped",
 }
+# Marks drawn for one task; the older ones are counted, not sent (v2.1
+# spec 21: the whole journal is never loaded at once).
+MARK_LIMIT = 10
 SPAN_TEXT = {
     "work": "работа", "check": "проверка качества", "fix": "доработка после замечаний",
     "wait": "ожидание в очереди", "recovery": "восстановление после сбоя",
@@ -111,6 +114,8 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
     oldest first. Every span runs from one real event to the next (or
     to ``end``: now, or the moment the run finished). A task without
     events has no spans: the engine recorded nothing about its time.
+    The spans are all sent; the marks are the last ``MARK_LIMIT`` of a
+    task, and ``marks_more`` says how many older ones are not.
     """
     rows = []
     for task in tasks:
@@ -130,5 +135,6 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
             spans.append({"from": item["ts"], "to": till, "kind": state,
                           "text": SPAN_TEXT[state]})
         rows.append({"id": task["id"], "title": task["title"], "state": task["state"],
-                     "kind": task["kind"], "spans": spans, "marks": marks})
+                     "kind": task["kind"], "spans": spans, "marks": marks[-MARK_LIMIT:],
+                     "marks_more": max(0, len(marks) - MARK_LIMIT)})
     return {"start": start, "end": end, "rows": rows, "span_text": dict(SPAN_TEXT)}

@@ -729,7 +729,11 @@ class TestTheClock:
     def test_it_runs_while_the_run_is_open(self, team):
         snap = snapshot(team["root"], "t")
         assert snap["finished"] is False
-        assert 0 <= snap["elapsed_s"] < 120, snap["elapsed_s"]
+        # As old as the team is, to the second: not a fixed span, the team
+        # was built once for the whole module and may be minutes old.
+        created = dashboard_data.viewmodel.parse_time(snap["created_at"])
+        now = dashboard_data.viewmodel.parse_time(snap["now"])
+        assert 0 <= snap["elapsed_s"] <= int((now - created).total_seconds()) + 2, snap["elapsed_s"]
 
     def test_it_stops_with_the_run(self, fresh_team):
         with sqlite3.connect(fresh_team["db"]) as conn:

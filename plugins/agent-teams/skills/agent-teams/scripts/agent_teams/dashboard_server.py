@@ -23,6 +23,7 @@ Security posture, by construction:
 """
 from __future__ import annotations
 
+import gzip
 import json
 import mimetypes
 import os
@@ -101,7 +102,16 @@ class _Handler(BaseHTTPRequestHandler):
     # -- helpers ---------------------------------------------------------
 
     def _send(self, status: HTTPStatus, body: bytes, ctype: str,
-              extra: dict | None = None, policy: str = CSP) -> None:
+              extra: dict | None = None, policy: str = CSP, *,
+              compressible: bool = False) -> None:
+        headers = dict(extra or {})
+        # A big answer is packed for a browser that accepts it (v2.1 spec
+        # 21): a hundred stages make a picture of hundreds of kilobytes
+        # that squeeze to a few dozen on the wire.
+        if compressible and len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body = gzip.compress(body, compresslevel=5)
+            headers["Content-Encoding"] = "gzip"
+            headers["Vary"] = "Accept-Encoding"
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -110,7 +120,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        for key, value in (extra or {}).items():
+        for key, value in headers.items():
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
@@ -118,7 +128,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _json(self, status: HTTPStatus, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self._send(status, body, "application/json; charset=utf-8")
+        self._send(status, body, "application/json; charset=utf-8", compressible=True)
 
     def _static(self, rel: str) -> None:
         root = STATIC_DIR.resolve()

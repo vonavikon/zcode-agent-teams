@@ -27,6 +27,13 @@ BUDGET_STATE_TEXT = {
 }
 
 
+# How much of a long history travels with one snapshot (v2.1 spec 21):
+# the newest, and a count of the rest.
+CHECK_MARK_LIMIT = 300
+PROBLEM_LIMIT = 50
+INCIDENT_LIMIT = 50
+
+
 def _money(value: float | None) -> str:
     if value is None:
         return "не согласован"
@@ -84,10 +91,11 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     # Every check in the order the answers came back: the strip of marks
     # shows how the checks went, and where one result was sent back more
     # than once.
+    ordered = sorted(checks, key=lambda a: a.get("created_at") or "")
     timeline = [{"ts": a.get("created_at"), "verdict": a.get("verdict"),
                  "attempt": a.get("attempt"),
                  "task": (titles or {}).get(a["task_id"], a["task_id"])}
-                for a in sorted(checks, key=lambda a: a.get("created_at") or "")]
+                for a in ordered[-CHECK_MARK_LIMIT:]]
 
     machine = {"run": 0, "passed": 0, "failed": 0, "forced": 0}
     for t in judged:
@@ -100,11 +108,12 @@ def quality_view(tasks: list[dict], attempts: list[dict],
             machine["passed" if criterion.get("passed") else "failed"] += 1
         machine["forced"] += len(report.get("forced_failures") or [])
 
+    # The newest are sent, the others are counted (v2.1 spec 21).
+    failed_newest = [a for a in reversed(ordered) if a.get("verdict") == "fail"]
     problems = [{"task": (titles or {}).get(a["task_id"], a["task_id"]),
                  "remark": a.get("feedback") or "",
                  "when": a.get("created_at"), "attempt": a.get("attempt")}
-                for a in sorted(checks, key=lambda a: a.get("created_at") or "", reverse=True)
-                if a.get("verdict") == "fail"]
+                for a in failed_newest[:PROBLEM_LIMIT]]
     awaited = [t for t in tasks if t["status"] in ("in_progress", "awaiting_verification")]
 
     total = len(judged)
@@ -143,9 +152,10 @@ def quality_view(tasks: list[dict], attempts: list[dict],
         "accepted_by_decision": len(by_decision),
         "first_time": len(first_time), "reworked": len(reworked), "judged": total,
         "split": split, "timeline": timeline, "empty": empty,
+        "timeline_more": max(0, len(checks) - CHECK_MARK_LIMIT),
         "machine": machine,
         "awaited": [t["title"] for t in awaited],
-        "problems": problems,
+        "problems": problems, "problems_more": max(0, len(failed_newest) - PROBLEM_LIMIT),
         "story": story,
     }
 
@@ -416,13 +426,17 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
         story = (f"Было проблем: {len(incidents)}. Ни одна не ждёт вашего решения."
                  if resolved else f"Было проблем: {len(incidents)}.")
     return {
+        # The counts are over every incident; the list is the newest.
+        "shown": min(len(incidents), INCIDENT_LIMIT),
+        "more": max(0, len(incidents) - INCIDENT_LIMIT),
+        "incidents": incidents[:INCIDENT_LIMIT],
         "total": len(incidents), "by_kind": by_kind,
         "kinds": [{"kind": kind, "title": _PROBLEM_TEXT[kind], "count": by_kind[kind]}
                   for kind in ("budget", "executor", "check", "contradiction", "blocked")
                   if kind in by_kind],
         "repeated": {task: n for task, n in repeated.items() if n > 1},
         "open": len(open_now), "resolved": len(resolved),
-        "incidents": incidents, "story": story,
+        "story": story,
     }
 
 

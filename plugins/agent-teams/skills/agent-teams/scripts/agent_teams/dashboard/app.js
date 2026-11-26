@@ -480,6 +480,7 @@
     // A narrow window scrolls it sideways instead.
     var plotW = Math.max(360, ($("timeline").clientWidth || 680) - left - 16);
     var width = left + plotW + 16, height = top + rows.length * rowH + 12;
+    var spanName = function (sp) { return (tl.span_text || {})[sp.kind] || sp.text || sp.kind; };
     var at = function (iso) {
       var t = Date.parse(iso);
       return left + plotW * Math.min(1, Math.max(0, (t - start) / (end - start)));
@@ -496,7 +497,7 @@
       var spans = list(row.spans).map(function (sp) {
         var x1 = at(sp.from), x2 = Math.max(at(sp.to), x1 + 3);
         return '<rect class="span ' + esc(sp.kind) + '" x="' + x1 + '" y="' + (y + 12) + '" width="' + (x2 - x1) + '" height="18" rx="9">' +
-          "<title>" + esc(sp.text + ": с " + fmtClock(sp.from) + " по " + fmtClock(sp.to)) + "</title></rect>";
+          "<title>" + esc(spanName(sp) + ": с " + fmtClock(sp.from) + " по " + fmtClock(sp.to)) + "</title></rect>";
       }).join("");
       var marks = list(row.marks).map(function (m) {
         return '<circle class="tmark ' + esc(m.kind || "normal") + '" cx="' + at(m.ts) + '" cy="' + (y + 21) + '" r="4">' +
@@ -505,7 +506,10 @@
       return '<g class="trow" data-task="' + esc(row.id) + '" role="button" tabindex="0" aria-label="' + esc(row.title + ", " + row.state) + '">' +
         '<text class="row-title" x="12" y="' + (y + 18) + '"><title>' + esc(row.title) + "</title>" +
         esc(shorten(row.title, 26)) + "</text>" +
-        '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks + "</g>";
+        '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks +
+        // What is not drawn is said: the marks of a long history are counted.
+        (Number(row.marks_more) > 0 ? '<text class="row-more" x="' + (width - 12) + '" y="' + (y + 34) +
+          '" text-anchor="end">ещё ' + row.marks_more + "</text>" : "") + "</g>";
     }).join("");
     $("timeline").setAttribute("viewBox", "0 0 " + width + " " + height);
     $("timeline").setAttribute("width", width);
@@ -679,7 +683,7 @@
   }
   /* Every check in the order the answers came back, one mark each: a
      result that came back more than once is seen at a glance. */
-  function strip(timeline) {
+  function strip(timeline, more) {
     var marks = list(timeline);
     if (!marks.length) return "";
     var fails = {};
@@ -697,6 +701,8 @@
       '<span class="swatch bad cap"></span> вернула результат на доработку.' +
       (again ? " " + again + " " + plural(again, "результат возвращался", "результата возвращались",
                                           "результатов возвращались") + " на доработку больше одного раза." : "") +
+      (Number(more) > 0 ? " Раньше была ещё " + more + " " +
+        plural(Number(more), "проверка", "проверки", "проверок") + "." : "") +
       "</p>";
   }
   function renderQuality(q) {
@@ -723,13 +729,15 @@
              {n: q.accepted_by_decision, label: "принято решением", note: "руководитель команды принял без проверки"}]) +
       distribution(q.split) +
       duo("Что проверила машина", machineBody, "Что оценил проверяющий", judgedBody) +
-      strip(q.timeline) +
+      strip(q.timeline, q.timeline_more) +
       (list(q.empty).length ? "<p class='bad-text'>Принято без единого файла: " + esc(list(q.empty).join(", ")) +
        ". Исполнитель ничего не подготовил.</p>" : "") +
-      (problems.length ? "<h3>Найденные недостатки <span class='count'>" + problems.length +
-       "</span></h3><ul class='plain'>" + problems.map(function (p) {
+      (problems.length ? "<h3>Найденные недостатки <span class='count'>" + (problems.length + (Number(q.problems_more) || 0)) +
+       "</span></h3><ul class='plain'>" + problems.slice(0, 20).map(function (p) {
         return "<li><b>" + esc(p.task) + ".</b> " + esc(p.remark || "замечаний не записано") + "</li>";
-      }).join("") + "</ul>" : "") +
+      }).join("") + "</ul>" +
+       (problems.length > 20 || Number(q.problems_more) > 0 ? "<p class='small muted'>Показаны последние " +
+        Math.min(problems.length, 20) + " из " + (problems.length + (Number(q.problems_more) || 0)) + ".</p>" : "") : "") +
       (list(q.awaited).length ? "<h3>Ещё ждут проверки</h3>" + linesOf(list(q.awaited)) : "") +
       techBlock(q);
     paint($("qualityBody"), qualityHtml);
@@ -822,6 +830,10 @@
           (i.human_needed ? '<div class="dd"><b>' + esc(i.action) + "</b></div>" : "") +
           "</div></li>";
       }).join("") + "</ul>";
+      if (Number(r.more) > 0) {
+        html += "<p class='small muted'>Показаны последние " + r.shown + " из " + r.total +
+          ". Остальные случились раньше.</p>";
+      }
       var repeated = Object.keys(r.repeated || {});
       if (repeated.length) {
         html += "<p class='small muted'>Повторялись: " + esc(repeated.map(function (t) {

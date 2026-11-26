@@ -49,6 +49,10 @@ _SUBMISSION_COLUMNS = ("id, task_id, attempt, commit_sha, base_commit_sha, branc
                        " evidence_status")
 # Keys of tasks.metadata_json safe to expose. The rest may hold free text
 # and is dropped.
+# How many raw records of a long history travel with the technical
+# level of one snapshot (v2.1 spec 21).
+TECH_LIMIT = 200
+
 _META_KEYS = ("changed_files", "workspace_violations", "quarantine_dir",
               "quarantined_at", "submission_id", "uncommitted_changes")
 # Keys of event metadata safe to expose in the simple level. The remark of
@@ -472,9 +476,16 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     if comparison is not None:
         out["benchmark"] = comparison
     if level == "advanced":
+        # The records the technical reader reads one by one are the newest
+        # (v2.1 spec 21); how many older ones exist is said with them.
         out["tech"] = {"submissions": [{k: v for k, v in s.items() if k != "count"}
-                                       for s in submissions],
-                       "attempts": attempts, "usage": usage, "config": config}
+                                       for s in submissions][-TECH_LIMIT:],
+                       "submissions_more": max(0, len(submissions) - TECH_LIMIT),
+                       "attempts": attempts[-TECH_LIMIT:],
+                       "attempts_more": max(0, len(attempts) - TECH_LIMIT),
+                       "usage": usage[-TECH_LIMIT:],
+                       "usage_more": max(0, len(usage) - TECH_LIMIT),
+                       "config": config}
     if "task_events" in parts:
         out["task_events"] = task_events
     return out
