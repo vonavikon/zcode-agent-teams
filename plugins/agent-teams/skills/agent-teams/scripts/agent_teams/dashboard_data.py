@@ -213,7 +213,8 @@ def _result(task: dict, submission: dict | None, level: str) -> dict:
 
 def snapshot(project_root: Path, team: str, *, level: str = "simple",
              event_limit: int = 200, event_after: int | None = None,
-             event_before: int | None = None, parts: tuple[str, ...] = ()) -> dict:
+             event_before: int | None = None, parts: tuple[str, ...] = (),
+             whole: bool = False) -> dict:
     """Everything the dashboard needs, in one consistent read.
 
     ``level`` is ``simple`` or ``advanced``. The feed is a window of the
@@ -222,6 +223,9 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     (reading further back), the newest ``event_limit`` of them.
     ``parts`` asks for what the whole board does not need on every
     request: ``task_events`` (the history of each task, by task id).
+    ``whole`` lifts the limits a polling page lives under (v2.1 spec 21):
+    a report that is written once asks for the whole journal, every
+    incident, every mark and every raw record.
     """
     if level not in ("simple", "advanced"):
         level = "simple"
@@ -417,7 +421,9 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     quality = analytics.quality_view(
         tasks, attempts, accepted_by_lead, titles,
         empty=[view["title"] for view in task_views
-               if view["result"]["ready"] and not view["result"]["files"]])
+               if view["result"]["ready"] and not view["result"]["files"]],
+        mark_limit=None if whole else analytics.CHECK_MARK_LIMIT,
+        problem_limit=None if whole else analytics.PROBLEM_LIMIT)
     budget = analytics.budget_view(cost, config, tasks)
     budget["series"] = cost["series"]
     if level == "advanced":
@@ -457,7 +463,8 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         # What the numbers mean (v2.1 spec 10 to 13).
         "quality": quality,
         "budget": budget,
-        "recovery": analytics.recovery_view(tasks, task_events, budget),
+        "recovery": analytics.recovery_view(tasks, task_events, budget,
+                                            limit=None if whole else analytics.INCIDENT_LIMIT),
         "integration": integration,
         # What the owner can do from the board (spec 17); the page shows
         # it only when the server was started with the lead's authority.
@@ -470,7 +477,8 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         "plan": planview.plan_layout(tasks),
         "timeline": planview.timeline(
             task_views, task_events, team_row["created_at"],
-            end.isoformat(timespec="milliseconds").replace("+00:00", "Z")),
+            end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            mark_limit=None if whole else planview.MARK_LIMIT),
     }
     comparison = benchmark_view(project_root, team, config)
     if comparison is not None:
@@ -478,13 +486,13 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     if level == "advanced":
         # The records the technical reader reads one by one are the newest
         # (v2.1 spec 21); how many older ones exist is said with them.
-        out["tech"] = {"submissions": [{k: v for k, v in s.items() if k != "count"}
-                                       for s in submissions][-TECH_LIMIT:],
-                       "submissions_more": max(0, len(submissions) - TECH_LIMIT),
-                       "attempts": attempts[-TECH_LIMIT:],
-                       "attempts_more": max(0, len(attempts) - TECH_LIMIT),
-                       "usage": usage[-TECH_LIMIT:],
-                       "usage_more": max(0, len(usage) - TECH_LIMIT),
+        def kept(rows: list) -> list:
+            return rows if whole else rows[-TECH_LIMIT:]
+
+        handed = [{k: v for k, v in s.items() if k != "count"} for s in submissions]
+        out["tech"] = {"submissions": kept(handed), "submissions_more": len(handed) - len(kept(handed)),
+                       "attempts": kept(attempts), "attempts_more": len(attempts) - len(kept(attempts)),
+                       "usage": kept(usage), "usage_more": len(usage) - len(kept(usage)),
                        "config": config}
     if "task_events" in parts:
         out["task_events"] = task_events

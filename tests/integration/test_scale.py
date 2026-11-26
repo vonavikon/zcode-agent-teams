@@ -142,3 +142,14 @@ def request(port: int, accept: str | None, path: str = "/api/snapshot?team=big")
     headers = {key.lower(): value for key, value in response.getheaders()}
     conn.close()
     return response.status, headers, data
+
+
+def test_a_report_can_ask_for_the_whole_journal(big):
+    # A page that polls lives under the limits; a report written once
+    # does not: it asks, and gets every incident, mark and record.
+    snap = dashboard_data.snapshot(big["root"], "big", level="advanced", whole=True)
+    assert snap["recovery"]["more"] == 0 and len(snap["recovery"]["incidents"]) == snap["recovery"]["total"]
+    rows = snap["timeline"]["rows"]
+    assert all(row["marks_more"] == 0 for row in rows)
+    assert sum(len(row["marks"]) for row in rows) > 10 * big["tasks"]
+    assert len(snap["tech"]["usage"]) == big["usage"] and snap["tech"]["usage_more"] == 0

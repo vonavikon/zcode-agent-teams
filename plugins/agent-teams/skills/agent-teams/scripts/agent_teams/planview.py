@@ -107,7 +107,7 @@ def plan_layout(tasks: list[dict]) -> dict:
 
 
 def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
-             start: str, end: str) -> dict:
+             start: str, end: str, *, mark_limit: int | None = MARK_LIMIT) -> dict:
     """How each task spent its time, from the journal.
 
     ``events_by_task`` holds the reader's event items of each task,
@@ -115,7 +115,8 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
     to ``end``: now, or the moment the run finished). A task without
     events has no spans: the engine recorded nothing about its time.
     The spans are all sent; the marks are the last ``MARK_LIMIT`` of a
-    task, and ``marks_more`` says how many older ones are not.
+    task, and ``marks_more`` says how many older ones are not. A report
+    that is written once asks for every mark with ``mark_limit=None``.
     """
     rows = []
     for task in tasks:
@@ -135,6 +136,7 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
             spans.append({"from": item["ts"], "to": till, "kind": state,
                           "text": SPAN_TEXT[state]})
         rows.append({"id": task["id"], "title": task["title"], "state": task["state"],
-                     "kind": task["kind"], "spans": spans, "marks": marks[-MARK_LIMIT:],
-                     "marks_more": max(0, len(marks) - MARK_LIMIT)})
+                     "kind": task["kind"], "spans": spans,
+                     "marks": marks if mark_limit is None else marks[-mark_limit:],
+                     "marks_more": 0 if mark_limit is None else max(0, len(marks) - mark_limit)})
     return {"start": start, "end": end, "rows": rows, "span_text": dict(SPAN_TEXT)}

@@ -44,7 +44,9 @@ def _money(value: float | None) -> str:
 
 def quality_view(tasks: list[dict], attempts: list[dict],
                  accepted_by_lead: set[str], titles: dict | None = None,
-                 empty: list[str] | None = None) -> dict:
+                 empty: list[str] | None = None, *,
+                 mark_limit: int | None = CHECK_MARK_LIMIT,
+                 problem_limit: int | None = PROBLEM_LIMIT) -> dict:
     """How far the results of a team can be trusted (v2.1 spec 10).
 
     Three things are counted apart, because they are different:
@@ -92,10 +94,11 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     # shows how the checks went, and where one result was sent back more
     # than once.
     ordered = sorted(checks, key=lambda a: a.get("created_at") or "")
+    shown_checks = ordered if mark_limit is None else ordered[-mark_limit:]
     timeline = [{"ts": a.get("created_at"), "verdict": a.get("verdict"),
                  "attempt": a.get("attempt"),
                  "task": (titles or {}).get(a["task_id"], a["task_id"])}
-                for a in ordered[-CHECK_MARK_LIMIT:]]
+                for a in shown_checks]
 
     machine = {"run": 0, "passed": 0, "failed": 0, "forced": 0}
     for t in judged:
@@ -113,7 +116,7 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     problems = [{"task": (titles or {}).get(a["task_id"], a["task_id"]),
                  "remark": a.get("feedback") or "",
                  "when": a.get("created_at"), "attempt": a.get("attempt")}
-                for a in failed_newest[:PROBLEM_LIMIT]]
+                for a in (failed_newest if problem_limit is None else failed_newest[:problem_limit])]
     awaited = [t for t in tasks if t["status"] in ("in_progress", "awaiting_verification")]
 
     total = len(judged)
@@ -152,10 +155,10 @@ def quality_view(tasks: list[dict], attempts: list[dict],
         "accepted_by_decision": len(by_decision),
         "first_time": len(first_time), "reworked": len(reworked), "judged": total,
         "split": split, "timeline": timeline, "empty": empty,
-        "timeline_more": max(0, len(checks) - CHECK_MARK_LIMIT),
+        "timeline_more": max(0, len(checks) - len(timeline)),
         "machine": machine,
         "awaited": [t["title"] for t in awaited],
-        "problems": problems, "problems_more": max(0, len(failed_newest) - PROBLEM_LIMIT),
+        "problems": problems, "problems_more": max(0, len(failed_newest) - len(problems)),
         "story": story,
     }
 
@@ -296,7 +299,8 @@ _PROBLEM_TEXT = {
 
 
 def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
-                  budget: dict | None = None) -> dict:
+                  budget: dict | None = None, *,
+                  limit: int | None = INCIDENT_LIMIT) -> dict:
     """Every problem the team ran into and how it ended (v2.1 spec 12).
 
     Read from the journal only. A problem is not hidden because it
@@ -427,9 +431,9 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
                  if resolved else f"Было проблем: {len(incidents)}.")
     return {
         # The counts are over every incident; the list is the newest.
-        "shown": min(len(incidents), INCIDENT_LIMIT),
-        "more": max(0, len(incidents) - INCIDENT_LIMIT),
-        "incidents": incidents[:INCIDENT_LIMIT],
+        "shown": len(incidents) if limit is None else min(len(incidents), limit),
+        "more": 0 if limit is None else max(0, len(incidents) - limit),
+        "incidents": incidents if limit is None else incidents[:limit],
         "total": len(incidents), "by_kind": by_kind,
         "kinds": [{"kind": kind, "title": _PROBLEM_TEXT[kind], "count": by_kind[kind]}
                   for kind in ("budget", "executor", "check", "contradiction", "blocked")
