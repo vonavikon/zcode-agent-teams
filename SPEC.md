@@ -272,7 +272,9 @@ network in the suite.
 
 `team.py ui --team <id> [--host] [--port] [--open]` serves a read-only
 board for a reader who does not know the engine's vocabulary. It binds
-to 127.0.0.1, prints its address, and runs until interrupted. It stops
+to 127.0.0.1, prints its address, and runs until interrupted. Its visual
+system (tokens, components, rules) is recorded in `DESIGN.md` at the
+root; the stylesheet is the source of truth and the record follows it. It stops
 on Ctrl-C however it was started: a process a script left in the
 background inherits the interrupt as ignored, and the command takes it
 back, because it promised to stop on it.

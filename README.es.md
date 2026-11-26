@@ -74,6 +74,7 @@ plugins/agent-teams/
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
                                      + dashboard/ (the board page)
+DESIGN.md                           el sistema visual del tablero: tokens, componentes, reglas
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

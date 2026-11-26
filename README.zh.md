@@ -75,6 +75,7 @@ plugins/agent-teams/
                                      validation, workspaces, quality,
                                      observability, report, langfuse)
                                      + dashboard/ (the board page)
+DESIGN.md                           看板的视觉体系：令牌、组件、规则
 docs/                                architecture, state machine, security,
                                      workspace isolation, verification,
                                      observability, cost model, testing,

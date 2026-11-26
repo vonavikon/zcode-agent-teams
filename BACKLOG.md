@@ -79,6 +79,13 @@ How three places of the specification were read (so the owner can say no):
 Open after this milestone:
 
 - The session with five people (20): the owner's.
+- The visual system is recorded in `DESIGN.md` (2026-11-26, in the
+  DESIGN.md format, for a polish pass with the Impeccable plugin). Known
+  gaps it records, measured with the WCAG formula: the third text colour
+  and the text of the "in work", "done" (light) and "problem" (dark)
+  pills are under 4.5:1 on their backgrounds; the report for a manager
+  has neutrals, radii and a single theme of its own. The polish pass
+  decides them.
 - The report is in Russian, as the board. The language decision is open.
 - The page's blocks are rewritten as a whole when their markup changes;
   a stage list that changes in one row is rewritten entirely. At a
