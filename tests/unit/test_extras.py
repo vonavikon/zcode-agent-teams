@@ -84,6 +84,15 @@ class TestInspection:
 
 
 class TestReport:
+    """The report of the team's work (v2.1 spec, section 18), through the
+    command the lead runs. The team is in shared mode: with no git project
+    the files a stage declared are its result. The whole contract of the
+    page is pinned in tests/unit/test_report_v21.py."""
+
+    SECTIONS = ["sec-goal", "sec-result", "sec-done", "sec-not-done", "sec-problems",
+                "sec-how-solved", "sec-quality", "sec-cost", "sec-time", "sec-team",
+                "sec-history", "sec-tech"]
+
     def test_html_report_self_contained(self, tmp_path):
         created = init_two_tasks(tmp_path)
         lead = created["lead_token"]
@@ -95,13 +104,21 @@ class TestReport:
         result = engine.op_report(tmp_path, "t", out)
         html_text = Path(result["report"]).read_text(encoding="utf-8")
         assert out.exists()
-        assert "agent-teams report: t" in html_text
-        assert "st-completed" in html_text
-        assert "lib" in html_text and "app" in html_text
-        assert "verification" in html_text
-        assert "http" not in html_text  # self-contained, no external links
         assert html_text.startswith("<!DOCTYPE html>")
-        # hardening spec 6.3 sections
-        assert "Submissions (immutable snapshots)" in html_text
-        assert "Recovery history" in html_text
-        assert "Integration and apply" in html_text
+        assert "http" not in html_text  # self-contained, no external links
+        assert "<script" not in html_text and "<link" not in html_text
+        assert "\u2014" not in html_text and "\u2013" not in html_text
+        # twelve sections with stable ids, in the order of the spec
+        assert html_text.count('id="sec-') == 12
+        places = [html_text.index(f'id="{section_id}"') for section_id in self.SECTIONS]
+        assert places == sorted(places)
+        # said in Russian, by the titles of the stages, in the words of the board
+        assert "Что выполнено" in html_text and "Что не удалось выполнить" in html_text
+        assert "Library" in html_text and "Application" in html_text
+        assert "Принятая версия результата." in html_text
+        assert "Проверка пройдена" in html_text      # a real check, in shared mode
+        assert "Принято вручную" not in html_text    # nobody decided over a check
+        # the identifiers of the stages stay inside the one closed details element
+        before, inside = html_text.split("<details")
+        assert "<code>lib</code>" in inside and "<code>app</code>" in inside
+        assert "<code>lib</code>" not in before and "<code>app</code>" not in before
