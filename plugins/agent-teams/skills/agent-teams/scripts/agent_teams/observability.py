@@ -289,7 +289,6 @@ def collect_metrics(store: Store, team: str, run_id: str | None = None) -> dict:
         "integration_events": integrated_events,
         "applied_runs": applied,
     }
-    base.pop("recovered_tasks") if False else None
     return base
 
 

@@ -1,5 +1,72 @@
 # Backlog
 
+## Done in v2.1.0a5: the product behind the spec (2026-11-26)
+
+The last milestone of the v2.1 specification (14, 17, 18, 20, 21, 22).
+
+- A task in plain words (14): the lead fills a brief with the owner,
+  `team.py plan --brief` answers one question at a time (only four gaps
+  are critical), shows the plan to confirm and builds the specification;
+  `team.py init --brief` creates the team only after the owner's yes.
+- Control from the board (17): with `--lead-token` the lead lends the
+  board its authority; the token stays in the memory of the server. The
+  owner can pause and resume, allow one more attempt, cancel a stage
+  (one in work has its attempt fenced), ask for a check (a message to
+  the lead), integrate, apply and raise the budget, with a confirmation
+  where there are consequences. Every action is one engine operation.
+- The report for a manager (18): twelve sections in one file, built
+  from the board's own snapshot with the limits lifted; a link on the
+  board, `GET /api/report`.
+- Size and speed (21): a block is written only when its markup changed,
+  a snapshot carries the newest of everything and a count of the rest,
+  gzip for browsers. A hundred stages: first picture 394 to 515 ms in a
+  real browser, a change on screen about 250 ms after the poll that saw
+  it.
+- Tests (22): the eight scenarios end to end, reading while the engine
+  writes, the keyboard, every state, the command line of the brief.
+- A kit for the session with real people (20): the protocol
+  (`docs/usability-protocol.md`) and `examples/usability-demo/prepare.py`.
+  The session itself has not been run: it needs five people.
+
+How it was built: the first time since milestone 1 that the engine ran a
+team for its own development. Two executors built the report and the
+onboarding module with disjoint files through the engine; two
+independent verifiers passed them on reports bound to the pinned
+submissions; the engine integrated the accepted commits with a check in
+the merged tree and applied them. Both executors lost their model stream
+after submitting; their work was already in git.
+
+Found on the way, none of them seen by the unit tests that existed:
+
+- One lost executor was two problems on the board. The engine writes a
+  loss twice under one event type (the timeout, then the archive of the
+  workspace). The second line is a note now.
+- A result that failed a real check, was reworked and was then accepted
+  by the lead's decision lost its failed check. The checks that really
+  happened count now, whatever accepted the result in the end.
+- A real stop after two failed checks never reached the list of problems
+  if the same stage had lost a specialist earlier: the rule that a lifted
+  block is no problem was written too wide. The board asked for help
+  about the budget alone while the attention card asked about the stage.
+- A board started with the lead's authority showed no actions until the
+  next change: the page learned the right only from the poll. The
+  snapshot says it now.
+- A stage accepted by decision was captioned "checked and accepted".
+- `team.py ui` did not stop on Ctrl-C when a script had started it in
+  the background (the interrupt was inherited as ignored).
+- The snapshot carried the whole journal in its timeline marks and its
+  incidents: 1540 KB for a hundred stages, where the page shows a
+  window.
+
+Open after this milestone:
+
+- The session with five people (20): the owner's.
+- The report is in Russian, as the board. The language decision is open.
+- The page's blocks are rewritten as a whole when their markup changes;
+  a stage list that changes in one row is rewritten entirely. At a
+  hundred stages it costs about 200 ms, well inside the target; a finer
+  update would be work for a size nobody has asked for.
+
 ## Done in v2.1.0a4: what the numbers mean (2026-11-25)
 
 Budget control (v2.1 spec 11.2) in the engine: `budget_usd`,
