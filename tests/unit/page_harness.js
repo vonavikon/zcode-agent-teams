@@ -421,6 +421,8 @@ async function main() {
         state.listeners.feed.click(card("data-task", a)); await settle(); await settle();
       } else if (kind === "trow") {         // press a row of the timeline
         state.listeners.timeline.click(card("data-task", a)); await settle(); await settle();
+      } else if (kind === "person") {      // open a specialist from the team list
+        state.listeners.teamList.click(card("data-specialist", a)); await settle(); await settle();
       } else if (kind === "sheet") {        // open a task from the plan list
         state.listeners.planList.click(card("data-task", a)); await settle(); await settle();
       } else if (kind === "file") {         // press a file of the result

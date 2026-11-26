@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_teams import viewmodel
+
 DASH = Path(__file__).resolve().parents[2] / \
     "plugins/agent-teams/skills/agent-teams/scripts/agent_teams/dashboard"
 HARNESS = Path(__file__).with_name("page_harness.js")
@@ -1204,4 +1206,60 @@ class TestTheKeyboard:
             assert 'role="button" tabindex="0"' in markup and attribute + '="' in markup, block
         timeline = out["dom"]["timeline"]["html"]
         assert 'role="button" tabindex="0"' in timeline and 'data-task=' in timeline
+
+
+class TestEveryStateAndTheEmptyStates:
+    """All the states a reader can meet, each with its word and its mark,
+    and what the board says when there is nothing yet (v2.1 spec 22.3)."""
+    MARK = '<svg class="i"'
+
+    def test_every_state_of_a_stage_has_its_word_and_its_mark(self):
+        for number, (_key, view) in enumerate(viewmodel.TASK_STATE.items()):
+            label = view["label"]
+            stage = task(title=f"Этап {number}", state=label, state_hint=view["hint"],
+                         kind=view["kind"], icon=view["icon"], active=view["kind"] == "busy")
+            specialist = agent(tasks=[{"id": "a", "title": stage["title"], "state": label,
+                                       "kind": view["kind"]}])
+            snap = snapshot(tasks=[stage], agents=[specialist])
+            dom = run("render", [snap])["dom"]
+            row = dom["planList"]["html"]
+            assert f'class="stage {view["kind"]}"' in row, label
+            assert view["hint"] in row and self.MARK in row, label
+            node = dom["graph"]["html"]
+            assert f'class="node {view["kind"]}"' in node and label in node, label
+            # The specialist's sheet says the same about the same stage.
+            sheet = run("actions", [dict(snap, _actions=[["person", "0"]])])["steps"][1]["sheet"]
+            assert label in sheet and stage["title"] in sheet, label
+
+    def test_every_state_of_a_specialist_has_its_word_and_its_mark(self):
+        for key, view in viewmodel.AGENT_STATE.items():
+            dom = run("render", [snapshot(agents=[agent(state=view["label"], state_hint=view["hint"],
+                                                         kind=key, icon=view["icon"],
+                                                         doing="дело специалиста")])])["dom"]
+            card = dom["teamList"]["html"]
+            assert f'class="person {key}' in card and view["label"] in card, key
+            # The card says what the specialist is doing; the hint is in its sheet.
+            assert "дело специалиста" in card and self.MARK in card, key
+            opened = run("actions", [snapshot(agents=[agent(state=view["label"], state_hint=view["hint"],
+                                                                kind=key, icon=view["icon"])],
+                                              _actions=[["person", "0"]])])["steps"][1]["sheet"]
+            assert view["label"] in opened and view["hint"] in opened, key
+
+    def test_every_state_of_the_whole_team_has_its_word(self):
+        for key, view in viewmodel.RUN_STATE.items():
+            dom = run("render", [snapshot(run={"state": view["label"], "hint": view["hint"]})])["dom"]
+            assert dom["runStateText"]["text"] == view["label"], key
+
+    def test_a_team_with_nothing_yet_says_so_in_words(self):
+        nothing = snapshot(tasks=[], agents=[], events=[], attention=[],
+                           plan={"nodes": [], "edges": [], "columns": 0, "rows": 0},
+                           timeline={"start": "2026-11-25T09:00:00.000Z",
+                                     "end": "2026-11-25T10:00:00.000Z", "span_text": {}, "rows": []})
+        out = run("render", [nothing])
+        dom = out["dom"]
+        assert "План ещё не сформирован." in dom["planList"]["html"]
+        assert "Специалистов пока нет" in dom["teamList"]["html"]
+        assert "Событий пока нет." in dom["feed"]["html"]
+        assert "Ничего не требует вашего решения" in dom["attList"]["html"]
+        assert out["console"] == []
 
