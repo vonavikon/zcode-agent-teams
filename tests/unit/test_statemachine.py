@@ -98,6 +98,19 @@ class TestAllowedEdges:
         assert status_of(conn) == "cancelled"
 
 
+class TestTheLeadCancelsAStageInWork:
+    """v2.1 spec 17: the owner asks to drop a stage that already runs."""
+
+    @pytest.mark.parametrize("source", ["in_progress", "awaiting_verification"])
+    def test_allowed_for_the_lead_only(self, conn, source):
+        conn.execute("UPDATE tasks SET status = ? WHERE team_id='t1' AND id='a'", (source,))
+        sm.apply_transition(conn, task_row(conn), sm.CANCELLED,
+                            event_type="task_cancelled", run_id="r", actor_id="lead",
+                            initiator=sm.LEAD, timestamp="2026-01-01T00:00:00.000Z",
+                            reason="not needed")
+        assert status_of(conn) == "cancelled"
+
+
 class TestForbiddenEdges:
     @pytest.mark.parametrize("source,target,initiator", [
         ("completed", "pending", "lead"),
@@ -108,7 +121,9 @@ class TestForbiddenEdges:
         ("pending", "blocked", "gate"),
         ("in_progress", "pending", "executor"),
         ("in_progress", "completed", "executor"),
-        ("awaiting_verification", "cancelled", "lead"),
+        ("in_progress", "cancelled", "executor"),      # only the lead cancels
+        ("awaiting_verification", "cancelled", "executor"),
+        ("blocked", "cancelled", "lead"),              # a blocked stage goes back first
         ("blocked", "in_progress", "executor"),
         ("blocked", "completed", "gate"),
     ])

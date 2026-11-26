@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_teams import viewmodel
+
 DASH = Path(__file__).resolve().parents[2] / \
     "plugins/agent-teams/skills/agent-teams/scripts/agent_teams/dashboard"
 HARNESS = Path(__file__).with_name("page_harness.js")
@@ -354,6 +356,26 @@ class TestItRefreshesWithoutDisturbingTheReader:
         assert out["snapshotFetchesAfterNew"] == 2
         assert "Передал результат на проверку" in out["feedAfterNew"]
 
+    def test_a_refresh_rewrites_only_the_blocks_that_changed(self):
+        # A new line in the journal: the feed and the progress figures.
+        newer = snapshot(events=[event(1), event(2, title="Передал результат на проверку")], last_seq=2)
+        # The spend moved: the money card joins, and the feed loses the
+        # mark of the line that was new a moment ago.
+        costlier = with_money(events=[event(1), event(2, title="Передал результат на проверку")],
+                              last_seq=3, spent_usd=2.5, spent_text="$2.50", remaining_usd=7.5, share=0.25)
+        out = run("redraw", [snapshot(), newer, costlier])
+
+        def moved(before, after):
+            return {key for key in after if after[key] != before.get(key)}
+
+        assert moved(out["start"], out["afterEvent"]) == {"feed", "counters"}
+        assert moved(out["afterEvent"], out["afterMoney"]) == {"feed", "counters", "moneyBody"}
+        # What did not change was written once, with the first picture, and
+        # never again: the graph, the lists and the cards that read the same.
+        for block in ("graph", "planList", "teamList", "timeline", "attList", "qualityBody",
+                      "problemBody", "buildBody", "nowList"):
+            assert out["afterMoney"][block] == out["start"][block] == 1, block
+
     def test_only_the_new_line_is_marked_as_new(self):
         newer = snapshot(events=[event(1), event(2)], last_seq=2)
         newer2 = snapshot(events=[event(1), event(2), event(3)], last_seq=3)
@@ -509,7 +531,7 @@ class TestSwitches:
 
     def test_the_cards_follow_the_width_of_the_window(self):
         out = run("resize", [snapshot()])
-        assert out["columnsNarrow"] == [["attCard", "nowCard", "teamCard", "planCard", "timeCard",
+        assert out["columnsNarrow"] == [["actCard", "attCard", "nowCard", "teamCard", "planCard", "timeCard",
                                    "feedCard", "qualityCard", "moneyCard", "problemCard", "buildCard"], []]
         assert out["columnsWide"][0] and out["columnsWide"][1]
         assert out["allCardsPlaced"]
@@ -632,7 +654,9 @@ class TestTheTimeline:
         assert [k for k in re.findall(r'<rect class="span (\w+)"', tl)] == ["work", "check", "fix", "check", "done"]
         assert tl.count('<circle class="tmark problem"') == 1 and tl.count('<circle class="tmark done"') == 1
         assert tl.count('<text class="tick"') == 5
-        assert "доработка: 09:" in tl and "09:18 · Проверка не пройдена: нет оценок" in tl.replace("09:18", "09:18") if False else "Проверка не пройдена: нет оценок" in tl
+        # What a span and a mark say when asked: the zone of the clock is
+        # the reader's, so the words are checked without the hour.
+        assert "доработка: с " in tl and "· Проверка не пройдена: нет оценок" in tl
         for word in ("работа", "проверка качества", "доработка", "завершено", "событие"):
             assert word in legend, word
         assert "ожидание" not in legend                  # only what really happened
@@ -1054,3 +1078,190 @@ class TestTheComparisonCard:
         body = run("render", [snapshot(quality=quality)])["dom"]["qualityBody"]["html"]
         assert "<b>1</b><span>проверка</span>" in body and "<b>1</b><span>доработка</span>" in body
         assert "<b>0</b><span>прошли с первого раза" in body
+
+
+class TestTheActionsCard:
+    """What the owner can do from the board (v2.1 spec 17)."""
+    ACTIONS = [{"key": "pause", "task": None, "label": "Поставить на паузу",
+                "confirm": "Новые задачи не будут начинаться."},
+               {"key": "cancel", "task": "a", "label": "Отменить этап: Собрать отчёт",
+                "confirm": "Этап закроют."},
+               {"key": "request_check", "task": "b", "label": "Попросить проверить: Проверить отчёт",
+                "confirm": ""},
+               {"key": "integrate", "task": None, "label": "Объединить результаты", "confirm": "Соберутся."},
+               {"key": "budget", "task": None, "label": "Увеличить бюджет", "confirm": "",
+                "ask": "Новый бюджет команды, в долларах"}]
+
+    def run_control(self, steps, actions=None) -> dict:
+        """What the page showed at the start and after each press of a
+        button (the other steps only set the answers up)."""
+        snap = snapshot(actions=self.ACTIONS if actions is None else actions, control=True,
+                        run={"state": "Пауза", "hint": "новые задачи не запускаются"})
+        snap["_control"] = steps
+        out = run("control", [snap])["steps"]
+        return {"start": out[0], "presses": [step for step in out[1:] if step["name"].startswith("press")]}
+
+    def test_the_buttons_exist_only_where_the_owner_can_act(self):
+        # A read-only board still offers the report: it needs no authority.
+        plain = run("control", [snapshot(actions=self.ACTIONS)])["steps"][0]
+        assert plain["hidden"] is False and plain["buttons"] == ""
+        assert plain["report"] == "/api/report?team=demo"
+        controlled = self.run_control([])["start"]
+        assert controlled["hidden"] is False and controlled["buttons"].count("<button") == 5
+        # Red where there is something to agree to first; plain otherwise.
+        assert 'class="action danger" data-action="pause"' in controlled["buttons"]
+        assert 'class="action" data-action="request_check" data-task="b"' in controlled["buttons"]
+        assert 'data-confirm="Этап закроют."' in controlled["buttons"]
+        assert 'data-ask="Новый бюджет команды, в долларах"' in controlled["buttons"]
+        quiet = run("control", [snapshot(actions=[], control=True)])["steps"][0]
+        assert quiet["hidden"] is False and "Сейчас от вас ничего не нужно." in quiet["buttons"]
+
+    def test_the_right_to_act_is_known_with_the_first_picture_and_when_it_changes(self):
+        # The server says it with the snapshot: no poll is needed to see the card.
+        snap = snapshot(actions=self.ACTIONS, control=True)
+        first = run("control", [snap])["steps"][0]
+        assert first["hidden"] is False and first["buttons"].count("<button") == 5
+        # A board restarted with the right to act, on a team where nothing
+        # else moved: the light poll says so and the picture follows.
+        quiet = snapshot(actions=self.ACTIONS)
+        awoken = snapshot(actions=self.ACTIONS, control=True)
+        out = run("control", [dict(quiet, _control=[["poll"]]), awoken])
+        assert out["steps"][0]["buttons"] == "" and out["steps"][1]["buttons"].count("<button") == 5
+
+    def test_nothing_from_the_wire_becomes_markup(self):
+        written = self.run_control([], actions=[{"key": EVIL, "task": EVIL, "label": EVIL,
+                                                  "confirm": EVIL, "ask": EVIL}])["start"]["buttons"]
+        assert EVIL not in written and EVIL_ESCAPED in written and "<script" not in written
+
+    def test_an_action_with_consequences_needs_a_yes(self):
+        ran = self.run_control([["confirm", False], ["press", "pause"],
+                                ["confirm", True], ["press", "pause"]])
+        no, yes = ran["presses"]
+        assert no["posts"] == [] and no["result"] == ""          # the owner thought better of it
+        assert yes["posts"] == [{"action": "pause", "confirm": True}]
+        assert yes["result"] == "Пауза поставлена: новые задачи не начинаются."
+        assert yes["snapshots"] == ran["start"]["snapshots"] + 1   # the state is read again at once
+        assert yes["header"] == "Пауза" and "attention" in yes["dot"]
+
+    def test_a_number_is_asked_for_and_checked(self):
+        nothing, typed, wrong = self.run_control(
+            [["prompt", ""], ["press", "budget"],
+             ["answer", {"body": {"ok": True, "action": "budget", "budget_usd": 12}}], ["prompt", "12"],
+             ["press", "budget"], ["prompt", "abc"], ["press", "budget"]])["presses"]
+        assert nothing["posts"] == []
+        assert typed["posts"] == [{"action": "budget", "confirm": True, "usd": 12}]
+        assert typed["result"] == "Бюджет изменён: $12.00."
+        assert wrong["posts"] == typed["posts"] and wrong["resultCls"] == "action-result bad"
+        assert wrong["result"] == "Нужно число больше нуля, в долларах."
+
+    def test_what_the_server_answers_is_worded_for_the_owner(self):
+        moved, conflict, joined, lost = self.run_control([
+            ["answer", {"status": 409, "body": {"ok": False, "kind": "state", "error": "task b: x"}}],
+            ["press", "request_check"],
+            ["answer", {"body": {"ok": False, "action": "integrate", "applied": False,
+                                 "conflicts": ["c"]}}],
+            ["press", "integrate"],
+            ["answer", {"body": {"ok": True, "action": "cancel", "status": "cancelled"}}],
+            ["press", "cancel"],
+            ["answer", {"status": 503, "body": {"ok": False}}], ["press", "cancel"]])["presses"]
+        assert moved["result"].startswith("Сейчас так нельзя: состояние команды изменилось.")
+        assert "task b: x" not in moved["result"]            # the engine's text stays out of the simple level
+        assert moved["resultCls"] == "action-result bad"
+        assert conflict["result"] == "Объединить не удалось: найдено противоречие. Исходные версии на месте."
+        assert joined["result"] == "Этап отменён."
+        assert lost["result"].startswith("Действие не выполнено: доска не связалась с сервером.")
+
+    def test_the_engine_text_is_shown_to_the_technical_reader(self):
+        refused = self.run_control([
+            ["mode", "advanced"],
+            ["answer", {"status": 409, "body": {"ok": False, "kind": "state", "error": "task b: x"}}],
+            ["press", "request_check"]])["presses"][0]
+        assert refused["result"].startswith("Сейчас так нельзя: состояние команды изменилось.")
+        assert refused["result"].endswith("(task b: x)")
+
+
+class TestTheKeyboard:
+    """What the mouse opens, the keyboard opens too (v2.1 spec 22.3)."""
+    PLACES = [("teamList", "data-specialist", "0"), ("planList", "data-task", "a"),
+              ("feed", "data-task", "a"), ("graph", "data-task", "a"), ("timeline", "data-task", "a")]
+
+    def pressed(self, place, key):
+        out = run("actions", [snapshot(_actions=[["key", *place, key]])])
+        return out["steps"][1]
+
+    @pytest.mark.parametrize("place", PLACES, ids=[p[0] for p in PLACES])
+    def test_enter_opens_the_sheet(self, place):
+        step = self.pressed(place, "Enter")
+        assert step["sheet"] != "" and step["prevented"] == 1
+
+    def test_space_opens_too_and_other_keys_do_nothing(self):
+        assert self.pressed(self.PLACES[1], " ")["sheet"] != ""
+        for key in ("ArrowDown", "a", "Escape", "Tab"):
+            step = self.pressed(self.PLACES[1], key)
+            assert step["sheet"] == "" and step["prevented"] == 0, key
+
+    def test_every_openable_row_says_it_is_a_button_and_can_be_reached(self):
+        out = run("render", [snapshot()])
+        for block, attribute in (("teamList", "data-specialist"), ("planList", "data-task"),
+                                 ("feed", "data-task"), ("graph", "data-task")):
+            markup = out["dom"][block]["html"]
+            assert 'role="button" tabindex="0"' in markup and attribute + '="' in markup, block
+        timeline = out["dom"]["timeline"]["html"]
+        assert 'role="button" tabindex="0"' in timeline and 'data-task=' in timeline
+
+
+class TestEveryStateAndTheEmptyStates:
+    """All the states a reader can meet, each with its word and its mark,
+    and what the board says when there is nothing yet (v2.1 spec 22.3)."""
+    MARK = '<svg class="i"'
+
+    def test_every_state_of_a_stage_has_its_word_and_its_mark(self):
+        for number, (_key, view) in enumerate(viewmodel.TASK_STATE.items()):
+            label = view["label"]
+            stage = task(title=f"Этап {number}", state=label, state_hint=view["hint"],
+                         kind=view["kind"], icon=view["icon"], active=view["kind"] == "busy")
+            specialist = agent(tasks=[{"id": "a", "title": stage["title"], "state": label,
+                                       "kind": view["kind"]}])
+            snap = snapshot(tasks=[stage], agents=[specialist])
+            dom = run("render", [snap])["dom"]
+            row = dom["planList"]["html"]
+            assert f'class="stage {view["kind"]}"' in row, label
+            assert view["hint"] in row and self.MARK in row, label
+            node = dom["graph"]["html"]
+            assert f'class="node {view["kind"]}"' in node and label in node, label
+            # The specialist's sheet says the same about the same stage.
+            sheet = run("actions", [dict(snap, _actions=[["person", "0"]])])["steps"][1]["sheet"]
+            assert label in sheet and stage["title"] in sheet, label
+
+    def test_every_state_of_a_specialist_has_its_word_and_its_mark(self):
+        for key, view in viewmodel.AGENT_STATE.items():
+            dom = run("render", [snapshot(agents=[agent(state=view["label"], state_hint=view["hint"],
+                                                         kind=key, icon=view["icon"],
+                                                         doing="дело специалиста")])])["dom"]
+            card = dom["teamList"]["html"]
+            assert f'class="person {key}' in card and view["label"] in card, key
+            # The card says what the specialist is doing; the hint is in its sheet.
+            assert "дело специалиста" in card and self.MARK in card, key
+            opened = run("actions", [snapshot(agents=[agent(state=view["label"], state_hint=view["hint"],
+                                                                kind=key, icon=view["icon"])],
+                                              _actions=[["person", "0"]])])["steps"][1]["sheet"]
+            assert view["label"] in opened and view["hint"] in opened, key
+
+    def test_every_state_of_the_whole_team_has_its_word(self):
+        for key, view in viewmodel.RUN_STATE.items():
+            dom = run("render", [snapshot(run={"state": view["label"], "hint": view["hint"]})])["dom"]
+            assert dom["runStateText"]["text"] == view["label"], key
+
+    def test_a_team_with_nothing_yet_says_so_in_words(self):
+        nothing = snapshot(tasks=[], agents=[], events=[], attention=[],
+                           plan={"nodes": [], "edges": [], "columns": 0, "rows": 0},
+                           timeline={"start": "2026-11-25T09:00:00.000Z",
+                                     "end": "2026-11-25T10:00:00.000Z", "span_text": {}, "rows": []})
+        out = run("render", [nothing])
+        dom = out["dom"]
+        assert "План ещё не сформирован." in dom["planList"]["html"]
+        assert "Специалистов пока нет" in dom["teamList"]["html"]
+        assert "Событий пока нет." in dom["feed"]["html"]
+        assert "Ничего не требует вашего решения" in dom["attList"]["html"]
+        assert out["console"] == []
+

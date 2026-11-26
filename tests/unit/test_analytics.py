@@ -68,6 +68,30 @@ class TestQuality:
         assert view["problems"] == [{"task": "b", "remark": "нет оценок", "when": "2026-11-25T09:10:00Z",
                                      "attempt": 1}]
 
+    def test_a_failed_check_stays_a_fact_when_the_lead_then_accepts_by_decision(self):
+        tasks = [task("x", "completed", submitted_at="x")]
+        attempts = [check("x", 1, "fail", "нет оценок", "2026-11-25T09:01:00Z"),
+                    check("x", 2, "pass", when="2026-11-25T09:02:00Z")]   # the engine's row behind the decision
+        view = quality_view(tasks, attempts, accepted_by_lead={"x"})
+        assert (view["checks"], view["failed"], view["passed"]) == (1, 1, 0)
+        assert (view["reworked"], view["accepted_by_decision"], view["judged"]) == (1, 1, 0)
+        assert view["problems"] == [{"task": "x", "remark": "нет оценок",
+                                     "when": "2026-11-25T09:01:00Z", "attempt": 1}]
+        assert view["split"] == {"first": 0, "reworked": 0, "decision": 1, "awaiting": 0}
+        assert [c["verdict"] for c in view["timeline"]] == ["fail"]      # the decision is not a check
+        assert view["machine"] == {"run": 0, "passed": 0, "failed": 0, "forced": 0}
+        assert view["story"] == ("Ни один результат не прошёл проверку с первого раза. "
+                                 "1 результат принят решением руководителя команды, без проверки.")
+
+    def test_when_nothing_was_checked_at_all_it_is_said_so(self):
+        tasks = [task("x", "completed", submitted_at="x"), task("y", "completed", submitted_at="x")]
+        [row] = [check("x", 1, "pass")]
+        view = quality_view(tasks, [row, dict(row, task_id="y")], accepted_by_lead={"x", "y"})
+        assert (view["checks"], view["reworked"], view["passed"], view["failed"]) == (0, 0, 0, 0)
+        assert view["timeline"] == [] and view["problems"] == []
+        assert view["story"] == ("Результаты не проверялись. 2 результата приняты решением "
+                                 "руководителя команды, без проверки.")
+
     def test_every_sum_is_broken_down_and_every_check_has_its_mark(self):
         # The same team, with every check stamped in its turn.
         tasks, _ = self.team()
@@ -274,11 +298,32 @@ class TestRecovery:
         assert "передала замечания проверяющего исполнителю" in check["did"]
 
     def test_the_block_recovery_writes_and_lifts_at_once_is_not_a_problem(self):
+        # The reader's model marks that half of the pair as bookkeeping.
         events = {"a": [item(1, "task_claimed"), item(2, "agent_timeout"),
-                        item(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
-                        item(4, "task_released")]}
+                        {**item(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
+                         "bookkeeping": True}, item(4, "task_released")]}
         view = recovery_view([task("a", "in_progress", restarts=1)], events)
         assert [i["kind"] for i in view["incidents"]] == ["executor"]
+
+    def test_a_real_stop_after_an_earlier_loss_of_the_same_stage_is_a_problem(self):
+        # Found on a demo board: a specialist was replaced, then the stage
+        # failed two checks and stopped. The stop has to wait for the owner.
+        def at(seq, event_type, title="", **fields):
+            return item(seq, event_type, title, ts=f"2026-11-25T09:{seq:02d}:00.000Z", **fields)
+
+        events = {"a": [at(1, "task_claimed"), at(2, "agent_timeout"),
+                        {**at(3, "task_blocked", "Исполнитель потерян (запись в журнале)"),
+                         "bookkeeping": True}, at(4, "task_released"), at(5, "task_claimed"),
+                        at(6, "task_submitted"), at(7, "verification_failed", detail="нет оценок"),
+                        at(8, "task_submitted"), at(9, "verification_failed", detail="опять нет"),
+                        at(10, "task_blocked", "Задача остановлена", detail="two failed rounds")]}
+        view = recovery_view([task("a", "blocked", restarts=1, verification_failures=2)], events)
+        # What waits for the owner stands first, the newest of it on top: the
+        # stop and the check that used up the rounds, both about one stage.
+        assert [(i["kind"], i["human_needed"]) for i in view["incidents"]] == [
+            ("blocked", True), ("check", True), ("check", False), ("executor", False)]
+        assert "Сейчас нужна ваша помощь по 1 задаче" in view["story"]
+        assert view["open"] == 2 and view["total"] == 4
 
     def test_incidents_come_newest_first(self):
         events = {"a": [item(1, "verification_failed", ts="2026-11-25T09:01:00.000Z"),
@@ -362,3 +407,12 @@ class TestIntegration:
         tasks = [task("a", "completed"), task("b", "cancelled")]
         assert integration_view(tasks, self.run(), [])["story"] == \
             "Все результаты приняты. Можно запускать объединение."
+
+
+class TestABookkeepingLine:
+    def test_it_is_not_a_second_problem(self):
+        events = {"a": [item(1, "task_claimed"), item(2, "agent_timeout"), item(3, "task_released"),
+                        {**item(4, "agent_timeout"), "bookkeeping": True}, item(5, "task_claimed")]}
+        view = recovery_view([task("a", "in_progress", restarts=1)], events)
+        assert view["total"] == 1
+        assert view["incidents"][0]["did"] == ["вернула задачу в очередь"]

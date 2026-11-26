@@ -93,13 +93,16 @@ EVENT_TEXT = {
     "task_tokens": "Учтён объём использования AI",
     "message_sent": "Отправлено сообщение",
     "budget_changed": "Руководитель команды изменил бюджет",
+    "run_paused": "Работа поставлена на паузу: новые задачи не запускаются",
+    "run_resumed": "Пауза снята: новые задачи запускаются",
     "lead_token_rotated": "Ключ руководителя команды заменён",
     "team_completed": "Работа команды завершена",
 }
 
 # Actors that stand for a function, not for a specialist. None of these
 # names reaches the reader as the raw identifier the engine stores.
-_FUNCTION_ACTORS = {"lead": "Руководитель команды", "recovery": "Система"}
+_FUNCTION_ACTORS = {"lead": "Руководитель команды", "recovery": "Система",
+                    "owner": "Владелец проекта"}
 VERIFIER_ROLE = "AI-проверяющий"
 _VERIFIER_EVENTS = ("verification_started", "verification_passed",
                     "verification_failed", "verify_pass", "verify_fail")
@@ -124,6 +127,7 @@ _EVENT_MARKS = {
     "token_usage_recorded": ("normal", "circle"), "task_tokens": ("normal", "circle"),
     "message_sent": ("normal", "circle"),
     "budget_changed": ("manual", "refresh"),
+    "run_paused": ("attention", "minus"), "run_resumed": ("normal", "refresh"),
     "lead_token_rotated": ("manual", "refresh"),
     "team_completed": ("done", "check"),
 }
@@ -380,6 +384,9 @@ def task_view(task: dict, *, level: str = "simple", now: datetime | None = None,
             "accepted": task["status"] == "completed",
         },
     }
+    if task["status"] == "completed" and attempts and any(a.get("manual") for a in attempts):
+        # "Checked and accepted" would be a lie: a decision accepted it.
+        view["state_hint"] = "принято решением руководителя команды, без проверки"
     started, finished = parse_time(task.get("claimed_at")), parse_time(task.get("completed_at"))
     if started:
         view["worked_s"] = max(0, int(((finished if task["status"] == "completed"
@@ -521,7 +528,7 @@ def verifier_view(tasks: list[dict], attempts: list[dict],
 
 def event_view(event: dict, *, level: str = "simple", titles: dict | None = None,
                roles: dict | None = None, quarantined: bool = False,
-               after_override: bool = False) -> dict | None:
+               after_override: bool = False, archive_note: bool = False) -> dict | None:
     """One feed item, or None when the event means nothing to a reader.
 
     ``titles`` maps a task id to its title and ``roles`` an
@@ -530,11 +537,24 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
     ``quarantined`` says that the workspace of this task's previous
     attempt was archived. ``after_override`` marks the journal half of a
     manual acceptance (the engine writes two events for one decision).
+    ``archive_note`` marks the other line the engine writes for one lost
+    executor: after the timeout it records the archive of the workspace
+    under the same event type. One loss is one line for a reader.
     """
     etype = event.get("event_type")
     text = EVENT_TEXT.get(etype)
     if text is None or (level != "advanced" and etype in _ADVANCED_ONLY):
         return None
+    if etype == "agent_timeout" and archive_note:
+        if level != "advanced":
+            return None
+        return {"seq": event.get("seq"), "ts": event.get("timestamp"),
+                "title": "Рабочая область прежней попытки убрана в архив",
+                "type": etype, "kind": "normal", "icon": "refresh",
+                "specialist": _FUNCTION_ACTORS["recovery"],
+                "task": (titles or {}).get(event.get("task_id")),
+                "detail": "Служебная запись: то, что исполнитель не успел сдать, лежит в архиве.",
+                "bookkeeping": True}
     meta = _event_meta(event)
     if after_override:
         # The engine records a manual acceptance twice: the decision of
@@ -585,6 +605,8 @@ def event_view(event: dict, *, level: str = "simple", titles: dict | None = None
         item["title"] = "Исполнитель потерян (запись в журнале)"
         item["kind"], item["icon"] = "normal", "refresh"
         item["detail"] = "Задача сразу возвращена в очередь, решения человека не требуется."
+        # A journal line that only repeats the timeout: nothing counts it.
+        item["bookkeeping"] = True
     elif etype in ("task_blocked", "round_limit"):
         item["detail"] = _blocked_explanation(
             reason, failures=meta.get("failures"))[0]
@@ -802,3 +824,62 @@ def cost_view(usage: list[dict], *, task_of: dict | None = None,
         out["unknown_by_task"] = unknown_task
         out["unknown_by_role"] = unknown_role
     return out
+
+
+# ------------------------------------------------------ what the owner can do (17)
+
+def actions_view(tasks: list[dict], *, run: dict | None = None, paused: bool = False,
+                 budget_state: str = "none") -> list[dict]:
+    """What the owner can do from the board right now (v2.1 spec 17).
+
+    Read from the state only: an action is offered when the engine would
+    accept it (the same edges the state machine allows). ``confirm`` is
+    the sentence the owner agrees to first; empty when there is nothing
+    to regret. ``ask`` names a number the owner has to give. The engine
+    decides again when the action is done: this list is an offer, not a
+    promise.
+    """
+    actions: list[dict] = []
+    status = (run or {}).get("status", "active")
+    if status == "active":
+        actions.append({"key": "resume" if paused else "pause", "task": None,
+                        "label": "Снять паузу" if paused else "Поставить на паузу",
+                        "confirm": "" if paused else
+                        "Новые задачи не будут начинаться, пока вы не снимете паузу. "
+                        "Те, что уже в работе, продолжат."})
+    for t in tasks:
+        title, state = t["title"], t["status"]
+        if state == "blocked":
+            actions.append({"key": "retry", "task": t["id"], "confirm": "",
+                            "label": "Разрешить ещё одну попытку: " + title})
+        if state in ("pending", "in_progress", "awaiting_verification") and status == "active":
+            actions.append({"key": "cancel", "task": t["id"],
+                            "label": "Отменить этап: " + title,
+                            "confirm": ("Этап в работе. Его закроют, специалист "
+                                        "освободится, а сделанное сохранится в архиве, "
+                                        "но не войдёт в итог."
+                                        if state != "pending" else
+                                        "Этап закроют, и он не войдёт в итог.")})
+        if state == "awaiting_verification":
+            actions.append({"key": "request_check", "task": t["id"], "confirm": "",
+                            "label": "Попросить проверить: " + title})
+    live = [t for t in tasks if t["status"] != "cancelled"]
+    accepted = [t for t in live if t["status"] == "completed"]
+    if status == "active" and live and len(accepted) == len(live):
+        actions.append({"key": "integrate", "task": None, "label": "Объединить результаты",
+                        "confirm": "Отдельные результаты соберутся в один, и он пройдёт "
+                                   "итоговую проверку. Если найдётся противоречие, исходные "
+                                   "версии останутся на месте."})
+    elif status == "integration_failed":
+        actions.append({"key": "integrate", "task": None, "label": "Запустить объединение заново",
+                        "confirm": "Объединение начнётся заново. Если противоречие не устранено, "
+                                   "оно снова остановится, и исходные версии останутся на месте."})
+    if status == "apply_pending":
+        actions.append({"key": "apply", "task": None, "label": "Применить изменения к проекту",
+                        "confirm": "Собранный результат будет внесён в проект. Отменить это "
+                                   "через доску нельзя."})
+    if budget_state == "limit":
+        actions.append({"key": "budget", "task": None, "label": "Увеличить бюджет",
+                        "ask": "Новый бюджет команды, в долларах", "confirm": ""})
+    return actions
+

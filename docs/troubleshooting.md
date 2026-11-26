@@ -32,6 +32,20 @@
 - Integration conflicts: the conflicting files are listed; resolve them
   in a task branch (or rework the overlap) and integrate again. Task
   branches and the project branch are never touched by a failed gate.
+- `PAUSED` (exit code 2) on a `claim` - the lead paused the team (or
+  the owner did from the board). It is not a fault of the executor:
+  executors already running are not stopped. When the work may go on:
+  `team.py resume --team <id> --lead-token <tok>`.
+- `the brief is not ready. Question for the owner: ...` from
+  `team.py init --brief`, or exit code 1 from `team.py plan --brief` -
+  nothing was created. Ask the owner that one question and write the
+  answer into the brief; `problems` in the answer of `plan` say what is
+  written wrongly.
+- The board shows no buttons under "Что можно сделать" - the board was
+  started without the lead's authority and is read-only (the report can
+  still be downloaded). The lead restarts it with `--lead-token-file`.
+  `a request from another origin is refused` - the request did not come
+  from the board's own page; open the address exactly as it was printed.
 - `BUDGET_LIMIT` (exit code 2) on a `claim` - the budget of the team,
   or the limit of this task, is spent. It is not a fault of the
   executor: executors already running are not stopped and nothing was

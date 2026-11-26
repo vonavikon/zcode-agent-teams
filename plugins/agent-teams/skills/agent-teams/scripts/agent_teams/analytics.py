@@ -27,6 +27,13 @@ BUDGET_STATE_TEXT = {
 }
 
 
+# How much of a long history travels with one snapshot (v2.1 spec 21):
+# the newest, and a count of the rest.
+CHECK_MARK_LIMIT = 300
+PROBLEM_LIMIT = 50
+INCIDENT_LIMIT = 50
+
+
 def _money(value: float | None) -> str:
     if value is None:
         return "не согласован"
@@ -37,7 +44,9 @@ def _money(value: float | None) -> str:
 
 def quality_view(tasks: list[dict], attempts: list[dict],
                  accepted_by_lead: set[str], titles: dict | None = None,
-                 empty: list[str] | None = None) -> dict:
+                 empty: list[str] | None = None, *,
+                 mark_limit: int | None = CHECK_MARK_LIMIT,
+                 problem_limit: int | None = PROBLEM_LIMIT) -> dict:
     """How far the results of a team can be trusted (v2.1 spec 10).
 
     Three things are counted apart, because they are different:
@@ -58,17 +67,25 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     for a in attempts:
         checks_by_task.setdefault(a["task_id"], []).append(a)
 
+    def real_checks(task: dict) -> list[dict]:
+        """The checks a result really had. The row the engine writes behind
+        a decision of the lead is not one of them."""
+        rows = list(checks_by_task.get(task["id"]) or [])
+        if task["id"] in accepted_by_lead and rows and rows[-1].get("verdict") == "pass":
+            rows = rows[:-1]
+        return rows
+
     handed = [t for t in tasks if checks_by_task.get(t["id"]) or t.get("submitted_at")]
     by_decision = [t for t in handed if t["id"] in accepted_by_lead]
     # Judged, and already checked: a result handed over whose check has
     # not come back yet is neither passed nor failed.
-    judged = [t for t in handed
-              if t["id"] not in accepted_by_lead and checks_by_task.get(t["id"])]
-    first_time = [t for t in judged
-                  if checks_by_task[t["id"]][0].get("verdict") == "pass"]
-    reworked = [t for t in judged
-                if any(a.get("verdict") == "fail" for a in checks_by_task[t["id"]])]
-    checks = [a for t in judged for a in checks_by_task[t["id"]]]
+    judged = [t for t in handed if t["id"] not in accepted_by_lead and real_checks(t)]
+    first_time = [t for t in judged if real_checks(t)[0].get("verdict") == "pass"]
+    # Every check that really happened counts, on a result the lead then
+    # took over too: a failed check is a fact, whatever accepted the
+    # result in the end.
+    checks = [a for t in handed for a in real_checks(t)]
+    reworked = [t for t in handed if any(a.get("verdict") == "fail" for a in real_checks(t))]
     passed = len([a for a in checks if a.get("verdict") == "pass"])
     failed = len([a for a in checks if a.get("verdict") == "fail"])
 
@@ -77,21 +94,23 @@ def quality_view(tasks: list[dict], attempts: list[dict],
     # A result that passed at first and was then sent back is one that
     # needed rework, like any other.
     clean = {t["id"] for t in first_time
-             if not any(a.get("verdict") == "fail" for a in checks_by_task[t["id"]])}
+             if not any(a.get("verdict") == "fail" for a in real_checks(t))}
     split = {"first": len(clean), "reworked": len(judged) - len(clean),
              "decision": len(by_decision),
              "awaiting": max(0, len(handed) - len(judged) - len(by_decision))}
     # Every check in the order the answers came back: the strip of marks
     # shows how the checks went, and where one result was sent back more
     # than once.
+    ordered = sorted(checks, key=lambda a: a.get("created_at") or "")
+    shown_checks = ordered if mark_limit is None else ordered[-mark_limit:]
     timeline = [{"ts": a.get("created_at"), "verdict": a.get("verdict"),
                  "attempt": a.get("attempt"),
                  "task": (titles or {}).get(a["task_id"], a["task_id"])}
-                for a in sorted(checks, key=lambda a: a.get("created_at") or "")]
+                for a in shown_checks]
 
     machine = {"run": 0, "passed": 0, "failed": 0, "forced": 0}
     for t in judged:
-        latest = checks_by_task[t["id"]][-1]
+        latest = real_checks(t)[-1]
         report = latest.get("report") if isinstance(latest.get("report"), dict) else {}
         for criterion in report.get("criteria") or []:
             if not isinstance(criterion, dict):
@@ -100,18 +119,24 @@ def quality_view(tasks: list[dict], attempts: list[dict],
             machine["passed" if criterion.get("passed") else "failed"] += 1
         machine["forced"] += len(report.get("forced_failures") or [])
 
+    # The newest are sent, the others are counted (v2.1 spec 21).
+    failed_newest = [a for a in reversed(ordered) if a.get("verdict") == "fail"]
     problems = [{"task": (titles or {}).get(a["task_id"], a["task_id"]),
                  "remark": a.get("feedback") or "",
                  "when": a.get("created_at"), "attempt": a.get("attempt")}
-                for a in sorted(checks, key=lambda a: a.get("created_at") or "", reverse=True)
-                if a.get("verdict") == "fail"]
+                for a in (failed_newest if problem_limit is None else failed_newest[:problem_limit])]
     awaited = [t for t in tasks if t["status"] in ("in_progress", "awaiting_verification")]
 
     total = len(judged)
     if not handed:
         story = "Результаты ещё не передавались на проверку."
     elif total == 0:
-        story = "Результаты переданы на проверку, её ответ ещё не пришёл."
+        if checks:
+            story = "Ни один результат не прошёл проверку с первого раза."
+        elif len(by_decision) == len(handed):
+            story = "Результаты не проверялись."
+        else:
+            story = "Результаты переданы на проверку, её ответ ещё не пришёл."
     elif total == 1:
         story = ("1 результат прошёл проверку с первого раза." if first_time
                  else "Проверенный результат не прошёл проверку с первого раза.")
@@ -143,9 +168,10 @@ def quality_view(tasks: list[dict], attempts: list[dict],
         "accepted_by_decision": len(by_decision),
         "first_time": len(first_time), "reworked": len(reworked), "judged": total,
         "split": split, "timeline": timeline, "empty": empty,
+        "timeline_more": max(0, len(checks) - len(timeline)),
         "machine": machine,
         "awaited": [t["title"] for t in awaited],
-        "problems": problems,
+        "problems": problems, "problems_more": max(0, len(failed_newest) - len(problems)),
         "story": story,
     }
 
@@ -286,7 +312,8 @@ _PROBLEM_TEXT = {
 
 
 def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
-                  budget: dict | None = None) -> dict:
+                  budget: dict | None = None, *,
+                  limit: int | None = INCIDENT_LIMIT) -> dict:
     """Every problem the team ran into and how it ended (v2.1 spec 12).
 
     Read from the journal only. A problem is not hidden because it
@@ -301,6 +328,7 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
         task = by_id.get(task_id)
         if task is None:
             continue
+        events = [item for item in events if not item.get("bookkeeping")]
         after: dict[int, list[dict]] = {}
         for index, item in enumerate(events):
             after.setdefault(item["seq"], []).extend(events[index + 1:index + 4])
@@ -308,13 +336,9 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
             kind = _PROBLEMS.get(item.get("type"))
             if not kind:
                 continue
-            # The block recovery writes and lifts in one step is no
-            # problem of the owner (viewmodel.event_view hides it in the
-            # simple level; here it is told as the timeout it belongs to).
-            if item["type"] == "task_blocked" and any(
-                    earlier.get("type") == "agent_timeout" for earlier in events
-                    if earlier["seq"] < item["seq"]):
-                continue
+            # The block recovery writes and lifts in one step is marked
+            # as bookkeeping by the reader's model (the timeout it belongs
+            # to is the problem); any other block is a real stop.
             what_followed = after.get(item["seq"], [])
             did = []
             # What the owner cannot lose is said out loud (spec 12).
@@ -416,13 +440,17 @@ def recovery_view(tasks: list[dict], events_by_task: dict[str, list[dict]],
         story = (f"Было проблем: {len(incidents)}. Ни одна не ждёт вашего решения."
                  if resolved else f"Было проблем: {len(incidents)}.")
     return {
+        # The counts are over every incident; the list is the newest.
+        "shown": len(incidents) if limit is None else min(len(incidents), limit),
+        "more": 0 if limit is None else max(0, len(incidents) - limit),
+        "incidents": incidents if limit is None else incidents[:limit],
         "total": len(incidents), "by_kind": by_kind,
         "kinds": [{"kind": kind, "title": _PROBLEM_TEXT[kind], "count": by_kind[kind]}
                   for kind in ("budget", "executor", "check", "contradiction", "blocked")
                   if kind in by_kind],
         "repeated": {task: n for task, n in repeated.items() if n > 1},
         "open": len(open_now), "resolved": len(resolved),
-        "incidents": incidents, "story": story,
+        "story": story,
     }
 
 

@@ -27,9 +27,26 @@
 - Binds to 127.0.0.1 unless `--host` says otherwise (a warning is
   printed when the board becomes reachable from other machines).
 - Read-only by construction: `state.db` is opened with `mode=ro` and
-  `PRAGMA query_only`; only GET and HEAD are answered; the state files
-  are not written. SQLite itself may create its empty `-shm` and `-wal`
-  sidecars next to the database: bookkeeping, not team state.
+  `PRAGMA query_only` for everything the page reads; only GET and HEAD
+  are answered, with one exception below; the state files are not
+  written by a read. SQLite itself may create its empty `-shm` and
+  `-wal` sidecars next to the database: bookkeeping, not team state.
+- Where the lead lends the board its authority (`--lead-token`, or
+  `--lead-token-file` where other processes may read a command line),
+  the token lives in the memory of the server's process only: it is in
+  no response, no page and no log. Without it POST is refused like any
+  other write method.
+- `POST /api/actions` is the one write address. It is accepted only
+  from the board's own origin (a request with another `Origin` is
+  refused, which is what a page that tries to use the owner's browser
+  looks like), only as JSON, and only up to 16 KB. Every action is one
+  engine operation under the engine's state lock and with its checks;
+  the board never edits state itself. An action with consequences needs
+  an explicit confirmation in the request, and the page asks the owner
+  first. `request_check` runs no agent: it leaves the lead a message.
+- `GET /api/report` answers the document for a manager from the
+  read-only snapshot, as an attachment under a policy that lets it do
+  nothing on the board's origin.
 - The project root is fixed by the command that started the server. A
   request names a team inside it (validated by the name rule); a
   `project_root` in the address is ignored.
@@ -63,7 +80,9 @@
   server.
 - Not a boundary: the board has no authentication. Whoever can reach
   the address reads what the lead reads (titles, files, results,
-  remarks).
+  remarks). A board started with the lead's authority lets the same
+  person act as the lead: start it so only at your own machine, and
+  leave it read-only where anyone else can reach the address.
 
 ## NOT a security boundary (documented limitation)
 

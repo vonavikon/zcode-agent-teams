@@ -23,6 +23,7 @@ Security posture, by construction:
 """
 from __future__ import annotations
 
+import gzip
 import json
 import mimetypes
 import os
@@ -57,7 +58,11 @@ DEFAULT_PORT = 8765
 # /api/results/<task>/<file>.
 ENDPOINTS = ("/api/status", "/api/events", "/api/snapshot", "/api/tasks",
              "/api/agents", "/api/cost", "/api/metrics", "/api/recovery",
-             "/api/integration", "/api/artifacts", "/api/benchmark")
+             "/api/integration", "/api/artifacts", "/api/benchmark", "/api/report")
+# The one address a control action goes to (v2.1 spec 17), and the most
+# it may carry: an action names a few fields, never a document.
+ACTION_PATH = "/api/actions"
+ACTION_MAX_BYTES = 16 * 1024
 # A file of a result is the team's own content. It is shown as text or as
 # a picture and is never allowed to act as a page of the board.
 RESULT_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
@@ -97,7 +102,16 @@ class _Handler(BaseHTTPRequestHandler):
     # -- helpers ---------------------------------------------------------
 
     def _send(self, status: HTTPStatus, body: bytes, ctype: str,
-              extra: dict | None = None, policy: str = CSP) -> None:
+              extra: dict | None = None, policy: str = CSP, *,
+              compressible: bool = False) -> None:
+        headers = dict(extra or {})
+        # A big answer is packed for a browser that accepts it (v2.1 spec
+        # 21): a hundred stages make a picture of hundreds of kilobytes
+        # that squeeze to a few dozen on the wire.
+        if compressible and len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body = gzip.compress(body, compresslevel=5)
+            headers["Content-Encoding"] = "gzip"
+            headers["Vary"] = "Accept-Encoding"
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -106,7 +120,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        for key, value in (extra or {}).items():
+        for key, value in headers.items():
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
@@ -114,7 +128,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _json(self, status: HTTPStatus, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self._send(status, body, "application/json; charset=utf-8")
+        self._send(status, body, "application/json; charset=utf-8", compressible=True)
 
     def _static(self, rel: str) -> None:
         root = STATIC_DIR.resolve()
@@ -169,7 +183,105 @@ class _Handler(BaseHTTPRequestHandler):
                    {"error": "read-only: the dashboard serves GET only"})
         self.close_connection = True
 
-    do_POST = do_PUT = do_DELETE = do_PATCH = _unsupported
+    do_PUT = do_DELETE = do_PATCH = _unsupported
+
+    def do_POST(self) -> None:  # noqa: N802
+        """A control action, and nothing else (v2.1 spec 17).
+
+        Without the lead's authority the board stays read-only, and a
+        POST is refused like every other write method.
+        """
+        if self.server.lead_token is None:
+            self._unsupported()
+            return
+        if not self._host_allowed():
+            self._json(HTTPStatus.FORBIDDEN, {"error": "unknown Host"})
+            return
+        parsed = urllib.parse.urlsplit(self.path)
+        path = posixpath.normpath(urllib.parse.unquote(parsed.path))
+        if path != ACTION_PATH:
+            self._unsupported()
+            return
+        self._action(urllib.parse.parse_qs(parsed.query))
+
+    def _action(self, query: dict) -> None:
+        """One action, done by the engine under the lead's authority.
+
+        The lead token is in the memory of this process and goes nowhere:
+        not into a response, not into a page, not into a log. The engine
+        is the one that changes state, under its own lock, with the same
+        checks as the command line.
+        """
+        from . import engine
+        from .errors import EngineError, NotFoundError, PermissionDenied, StateRejected
+
+        # Another page cannot make the owner's browser post here: a
+        # request has to come from the board's own origin.
+        if self.headers.get("Origin") != "http://" + (self.headers.get("Host") or ""):
+            self._json(HTTPStatus.FORBIDDEN,
+                       {"ok": False, "kind": "origin",
+                        "error": "a request from another origin is refused"})
+            return
+        if "application/json" not in (self.headers.get("Content-Type") or ""):
+            self._json(415, {"ok": False, "kind": "usage", "error": "send JSON"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            size = -1
+        if size < 0 or size > ACTION_MAX_BYTES:
+            self._json(413, {"ok": False, "kind": "usage", "error": "the request is too large"})
+            return
+        try:
+            body = json.loads(self.rfile.read(size).decode("utf-8") or "{}")
+        except (UnicodeDecodeError, ValueError):
+            body = None
+        if not isinstance(body, dict):
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "the request is not a JSON object"})
+            return
+        team = body.get("team") or (query.get("team") or [""])[0]
+        action = body.get("action")
+        task_id = body.get("task")
+        usd = body.get("usd")
+        reason = body.get("reason")
+        if not isinstance(team, str) or not NAME_RE.match(team):
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "a valid team name is required"})
+            return
+        if not isinstance(action, str) or action not in engine.ACTIONS:
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "unknown action"})
+            return
+        if task_id is not None and (not isinstance(task_id, str) or not NAME_RE.match(task_id)):
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "a valid task id is required"})
+            return
+        if usd is not None and (isinstance(usd, bool) or not isinstance(usd, (int, float))):
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "usd must be a number"})
+            return
+        if reason is not None and not isinstance(reason, str):
+            self._json(HTTPStatus.BAD_REQUEST,
+                       {"ok": False, "kind": "usage", "error": "reason must be a text"})
+            return
+        try:
+            result = engine.op_action(
+                self.server.project_root, team, action, self.server.lead_token,
+                task_id=task_id, usd=usd, reason=reason[:200] if reason else "",
+                confirm=body.get("confirm") is True)
+        except PermissionDenied as exc:
+            self._json(HTTPStatus.FORBIDDEN, {"ok": False, "kind": "forbidden", "error": str(exc)})
+        except NotFoundError as exc:
+            self._json(HTTPStatus.NOT_FOUND, {"ok": False, "kind": "not_found", "error": str(exc)})
+        except StateRejected as exc:
+            # The engine said no: the state moved, the action is not possible now.
+            self._json(409, {"ok": False, "kind": "budget" if str(exc).startswith("BUDGET_LIMIT")
+                             else "state", "error": str(exc)})
+        except EngineError as exc:
+            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "kind": "usage", "error": str(exc)})
+        else:
+            self._json(HTTPStatus.OK, {"ok": True, **result})
 
     def _api(self, path: str, query: dict) -> None:
         if path == "/api/health":  # a liveness probe names no team
@@ -198,6 +310,17 @@ class _Handler(BaseHTTPRequestHandler):
                 if cursors[name] is not None and cursors[name] < 0:
                     raise ValueError(f"{name} must not be negative")
             after_seq = cursors["after"]
+            if path == "/api/report":
+                # The document for a manager (v2.1 spec 18), read from the
+                # same snapshot as the board and sent as a file to keep:
+                # it opens on its own long after the engine has finished.
+                from .report import render_from
+
+                page = render_from(root, team)
+                self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8",
+                           extra={"Content-Disposition": f'attachment; filename="report-{team}.html"'},
+                           policy=RESULT_CSP)
+                return
             if path.startswith("/api/results/"):
                 self._result(path, root, team)
                 return
@@ -223,7 +346,9 @@ class _Handler(BaseHTTPRequestHandler):
                 if path == "/api/status":
                     body = {"ok": True, "now": snap["now"], "run": snap["run"],
                             "progress": snap["progress"], "last_seq": snap["last_seq"],
-                            "attention": len(snap["attention"]), "cost": snap["cost"]}
+                            "attention": len(snap["attention"]), "cost": snap["cost"],
+                            # Whether the owner can act from this board.
+                            "control": self.server.lead_token is not None}
                 elif path == "/api/events":
                     body = {"ok": True, "events": snap["events"],
                             "last_seq": snap["last_seq"], "now": snap["now"]}
@@ -260,6 +385,10 @@ class _Handler(BaseHTTPRequestHandler):
                                           for t in snap["tasks"]]}
                 else:
                     body = {"ok": True, **snap}
+                    if path == "/api/snapshot":
+                        # Said with the first picture too: the owner must
+                        # not wait for a poll to learn that the board can act.
+                        body["control"] = self.server.lead_token is not None
             self._json(HTTPStatus.OK, body)
         except DashboardDataError as exc:
             self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
@@ -299,10 +428,14 @@ class DashboardServer(ThreadingHTTPServer):
     # already listened on; a taken port must fail there as it does on Unix.
     allow_reuse_address = os.name != "nt"
 
-    def __init__(self, address: tuple, project_root: Path, team: str):
+    def __init__(self, address: tuple, project_root: Path, team: str,
+                 lead_token: str | None = None):
         super().__init__(address, _Handler)
         self.project_root = project_root
         self.team = team
+        # The lead's authority for the board's actions (v2.1 spec 17). It
+        # lives in this process only: never in a response, a log or a page.
+        self.lead_token = lead_token or None
 
     def server_bind(self):
         # HTTPServer resolves the bind address into a domain name here.
@@ -320,7 +453,8 @@ class DashboardServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def _bind(project_root: Path, team: str, host: str, port: int) -> DashboardServer | None:
+def _bind(project_root: Path, team: str, host: str, port: int,
+          lead_token: str | None = None) -> DashboardServer | None:
     """Validate the scope and bind; None when the port is taken."""
     if not NAME_RE.match(team or ""):
         raise UsageError(f"invalid team name: {team!r}")
@@ -328,7 +462,7 @@ def _bind(project_root: Path, team: str, host: str, port: int) -> DashboardServe
         raise UsageError(f"team {team!r} has no state at"
                         f" {team_dir(project_root, team)}; run init first")
     try:
-        return DashboardServer((host, port), project_root, team)
+        return DashboardServer((host, port), project_root, team, lead_token)
     except OSError:
         return None
 
@@ -339,13 +473,13 @@ def _url(host: str, port: int, team: str) -> str:
 
 
 def serve(project_root: Path, team: str, *, host: str = DEFAULT_HOST,
-          port: int = DEFAULT_PORT) -> DashboardServer | None:
+          port: int = DEFAULT_PORT, lead_token: str | None = None) -> DashboardServer | None:
     """Start the dashboard in a background thread and return the server.
 
     Returns None when the port is taken (the caller reports it). The
     server runs until ``shutdown()`` is called.
     """
-    server = _bind(Path(project_root).resolve(), team, host, port)
+    server = _bind(Path(project_root).resolve(), team, host, port, lead_token)
     if server is None:
         return None
     # A short poll keeps shutdown() quick for whoever embeds the server;
@@ -359,27 +493,33 @@ def serve(project_root: Path, team: str, *, host: str = DEFAULT_HOST,
 
 def op_ui(root: Path, team: str, *, host: str = DEFAULT_HOST,
           port: int = DEFAULT_PORT, open_browser: bool = False,
-          json_mode: bool = False, out: TextIO | None = None) -> dict:
+          json_mode: bool = False, out: TextIO | None = None,
+          lead_token: str | None = None) -> dict:
     """Run the dashboard until the process is interrupted.
 
     The address is written before the server starts waiting, so the lead
     sees it without a second terminal. Returns when the user interrupts
-    the process; the server is closed by then.
+    the process; the server is closed by then. With ``lead_token`` the
+    owner can act from the board (v2.1 spec 17); the token stays in this
+    process.
     """
     out = sys.stdout if out is None else out
     project_root = Path(root).resolve()
     if host not in ("127.0.0.1", "localhost", "::1"):
         print(f"warning: bound to {host}; the dashboard is reachable from"
               " other machines on this network", file=out, flush=True)
-    server = _bind(project_root, team, host, port)
+    server = _bind(project_root, team, host, port, lead_token)
     if server is None:
         raise UsageError(f"port {port} is already in use")
     with server:
         url = _url(host, server.server_address[1], team)
         if json_mode:
-            line = json.dumps({"url": url, "read_only": True}, ensure_ascii=False)
+            line = json.dumps({"url": url, "read_only": lead_token is None,
+                               "control": lead_token is not None}, ensure_ascii=False)
         else:
-            line = f"dashboard: {url}\nread-only; stops with Ctrl-C"
+            line = f"dashboard: {url}\n" + (
+                "the owner can act from it; stops with Ctrl-C"
+                if lead_token is not None else "read-only; stops with Ctrl-C")
         try:
             print(line, file=out, flush=True)
             if open_browser:

@@ -49,6 +49,10 @@ _SUBMISSION_COLUMNS = ("id, task_id, attempt, commit_sha, base_commit_sha, branc
                        " evidence_status")
 # Keys of tasks.metadata_json safe to expose. The rest may hold free text
 # and is dropped.
+# How many raw records of a long history travel with the technical
+# level of one snapshot (v2.1 spec 21).
+TECH_LIMIT = 200
+
 _META_KEYS = ("changed_files", "workspace_violations", "quarantine_dir",
               "quarantined_at", "submission_id", "uncommitted_changes")
 # Keys of event metadata safe to expose in the simple level. The remark of
@@ -209,7 +213,8 @@ def _result(task: dict, submission: dict | None, level: str) -> dict:
 
 def snapshot(project_root: Path, team: str, *, level: str = "simple",
              event_limit: int = 200, event_after: int | None = None,
-             event_before: int | None = None, parts: tuple[str, ...] = ()) -> dict:
+             event_before: int | None = None, parts: tuple[str, ...] = (),
+             whole: bool = False) -> dict:
     """Everything the dashboard needs, in one consistent read.
 
     ``level`` is ``simple`` or ``advanced``. The feed is a window of the
@@ -218,6 +223,9 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     (reading further back), the newest ``event_limit`` of them.
     ``parts`` asks for what the whole board does not need on every
     request: ``task_events`` (the history of each task, by task id).
+    ``whole`` lifts the limits a polling page lives under (v2.1 spec 21):
+    a report that is written once asks for the whole journal, every
+    incident, every mark and every raw record.
     """
     if level not in ("simple", "advanced"):
         level = "simple"
@@ -232,8 +240,13 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         config = merge_config(team_row.get("config") or {})
         run = _decode(conn.execute(
             "SELECT id, number, started_at, finished_at, status,"
-            " integration_base_commit, integration_commit_sha FROM runs"
+            " integration_base_commit, integration_commit_sha, metadata_json FROM runs"
             " WHERE team_id = ? ORDER BY number DESC LIMIT 1", (team,)).fetchone())
+        # The pause is a fact of the run, kept in its record (engine.op_pause).
+        paused = bool(run and (run.get("metadata") or {}).get("paused_at"))
+        if run:
+            run["metadata"] = {"paused_at": (run.get("metadata") or {}).get("paused_at")} \
+                if paused else {}
         tasks = [_decode(r) for r in conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM tasks WHERE team_id = ? ORDER BY rowid",
             (team,))]
@@ -349,7 +362,11 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         item = viewmodel.event_view(
             e, level=level, titles=titles, roles=roles,
             quarantined=e.get("task_id") in quarantined,
-            after_override=after_override)
+            after_override=after_override,
+            # The engine records the archive of a lost attempt as a second
+            # timeout of the same task: a note, not another loss.
+            archive_note=(e.get("event_type") == "agent_timeout"
+                          and isinstance(raw_meta, dict) and bool(raw_meta.get("quarantine"))))
         if item is not None:
             item["by"] = index_of.get(e.get("actor_id"))
             events.append(item)
@@ -370,7 +387,11 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         state = viewmodel.RUN_STATE.get(run["status"], viewmodel.RUN_STATE["active"])
         run_view = {"state": state["label"], "hint": state["hint"],
                     "number": run["number"], "started_at": run["started_at"],
-                    "finished_at": run.get("finished_at")}
+                    "finished_at": run.get("finished_at"), "paused": paused}
+        if paused:
+            # A pause is told in the header, where the state is read first.
+            run_view["state"] = "Пауза"
+            run_view["hint"] = "новые задачи не запускаются, пока вы не снимете паузу"
         if level == "advanced":
             run_view["tech"] = {"run_id": run["id"], "status": run["status"],
                                 "integration_base_commit": run.get("integration_base_commit"),
@@ -404,7 +425,9 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
     quality = analytics.quality_view(
         tasks, attempts, accepted_by_lead, titles,
         empty=[view["title"] for view in task_views
-               if view["result"]["ready"] and not view["result"]["files"]])
+               if view["result"]["ready"] and not view["result"]["files"]],
+        mark_limit=None if whole else analytics.CHECK_MARK_LIMIT,
+        problem_limit=None if whole else analytics.PROBLEM_LIMIT)
     budget = analytics.budget_view(cost, config, tasks)
     budget["series"] = cost["series"]
     if level == "advanced":
@@ -444,22 +467,37 @@ def snapshot(project_root: Path, team: str, *, level: str = "simple",
         # What the numbers mean (v2.1 spec 10 to 13).
         "quality": quality,
         "budget": budget,
-        "recovery": analytics.recovery_view(tasks, task_events, budget),
+        "recovery": analytics.recovery_view(tasks, task_events, budget,
+                                            limit=None if whole else analytics.INCIDENT_LIMIT),
         "integration": integration,
+        # What the owner can do from the board (spec 17); the page shows
+        # it only when the server was started with the lead's authority.
+        "actions": viewmodel.actions_view(
+            tasks, run={"status": run["status"]} if run else None,
+            paused=paused, budget_state=budget["state"]),
+        "paused": paused,
         # The plan as a graph (spec 6) and the time of every task (spec 7),
         # both drawn only from what the engine recorded.
         "plan": planview.plan_layout(tasks),
         "timeline": planview.timeline(
             task_views, task_events, team_row["created_at"],
-            end.isoformat(timespec="milliseconds").replace("+00:00", "Z")),
+            end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            mark_limit=None if whole else planview.MARK_LIMIT),
     }
     comparison = benchmark_view(project_root, team, config)
     if comparison is not None:
         out["benchmark"] = comparison
     if level == "advanced":
-        out["tech"] = {"submissions": [{k: v for k, v in s.items() if k != "count"}
-                                       for s in submissions],
-                       "attempts": attempts, "usage": usage, "config": config}
+        # The records the technical reader reads one by one are the newest
+        # (v2.1 spec 21); how many older ones exist is said with them.
+        def kept(rows: list) -> list:
+            return rows if whole else rows[-TECH_LIMIT:]
+
+        handed = [{k: v for k, v in s.items() if k != "count"} for s in submissions]
+        out["tech"] = {"submissions": kept(handed), "submissions_more": len(handed) - len(kept(handed)),
+                       "attempts": kept(attempts), "attempts_more": len(attempts) - len(kept(attempts)),
+                       "usage": kept(usage), "usage_more": len(usage) - len(kept(usage)),
+                       "config": config}
     if "task_events" in parts:
         out["task_events"] = task_events
     return out

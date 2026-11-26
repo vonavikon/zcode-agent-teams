@@ -8,6 +8,7 @@ load anything from another origin, and every bad value is a clear 400.
 from __future__ import annotations
 
 import hashlib
+import html as html_module
 import http.client
 import io
 import json
@@ -253,11 +254,31 @@ class TestTheAnswers:
 
     def test_status_and_events_are_the_light_answers(self, board):
         status = get_json(board["port"], "/api/status?team=t")
-        assert set(status) == {"ok", "now", "run", "progress", "last_seq", "attention", "cost"}
+        assert set(status) == {"ok", "now", "run", "progress", "last_seq", "attention", "cost",
+                               "control"}       # whether the owner can act from this board
+        assert status["control"] is False
         events = get_json(board["port"], "/api/events?team=t")
         assert set(events) == {"ok", "events", "last_seq", "now"}
         newest = events["last_seq"]
         assert get_json(board["port"], f"/api/events?team=t&after={newest}")["events"] == []
+
+    def test_the_report_is_served_as_a_file_to_keep(self, board):
+        status, headers, data = call(board["port"], "GET", "/api/report?team=t")
+        assert status == 200 and headers["content-type"].startswith("text/html")
+        assert headers["content-disposition"] == 'attachment; filename="report-t.html"'
+        assert "sandbox" in headers["content-security-policy"]
+        text = data.decode("utf-8")
+        # The twelve sections in their order; the hostile title escaped; and
+        # nothing technical before the collapsible section.
+        assert re.findall(r'id="(sec-[a-z-]+)"', text) == [
+            "sec-goal", "sec-result", "sec-done", "sec-not-done", "sec-problems", "sec-how-solved",
+            "sec-quality", "sec-cost", "sec-time", "sec-team", "sec-history", "sec-tech"]
+        assert html_module.escape(HOSTILE_TITLE) in text and HOSTILE_TITLE not in text
+        assert "agent-teams" not in text.split('id="sec-tech"')[0]
+        assert "<script" not in text and "<link" not in text
+        # A name that is not a team is refused as everywhere else.
+        status, _headers, _data = call(board["port"], "GET", "/api/report?team=nobody")
+        assert status == 404
 
     def test_markup_in_a_title_travels_as_text_and_back_unchanged(self, board):
         snap = get_json(board["port"], SNAPSHOT)
@@ -537,7 +558,40 @@ class TestStarting:
                             lambda self, **_options: (_ for _ in ()).throw(KeyboardInterrupt))
         out = io.StringIO()
         result = op_ui(tmp_path, "t", port=0, json_mode=True, out=out)
-        assert json.loads(out.getvalue()) == {"url": result["url"], "read_only": True}
+        assert json.loads(out.getvalue()) == {"url": result["url"], "read_only": True,
+                                              "control": False}
+
+    def test_the_lead_authority_is_announced_and_never_printed(self, tmp_path, monkeypatch):
+        lead = engine.op_init(tmp_path, "t", spec_file(tmp_path))["lead_token"]
+        monkeypatch.setattr(dashboard_server.DashboardServer, "serve_forever",
+                            lambda self, **_options: (_ for _ in ()).throw(KeyboardInterrupt))
+        out = io.StringIO()
+        op_ui(tmp_path, "t", port=0, json_mode=True, out=out, lead_token=lead)
+        announced = json.loads(out.getvalue())
+        assert announced["read_only"] is False and announced["control"] is True
+        assert lead not in out.getvalue()
+        out = io.StringIO()
+        op_ui(tmp_path, "t", port=0, out=out, lead_token=lead)
+        assert out.getvalue().split("\n")[1] == "the owner can act from it; stops with Ctrl-C"
+        assert lead not in out.getvalue()
+        # A file instead of the command line, where other processes may
+        # read the arguments of a command.
+        from argparse import Namespace
+
+        from agent_teams import cli
+        token_file = tmp_path / "token.txt"
+        token_file.write_text(lead + "\n", encoding="utf-8")
+        seen: dict = {}
+        monkeypatch.setattr(cli.dashboard_server, "op_ui",
+                            lambda root, team, **options: seen.update(options) or {})
+        args = Namespace(project_root=str(tmp_path), team="t", host=DEFAULT_HOST, port=0,
+                         open=False, json=True, lead_token="", lead_token_file=str(token_file))
+        cli._cmd_ui(args)
+        assert seen["lead_token"] == lead                  # read from the file, stripped
+        with pytest.raises(UsageError, match="cannot read --lead-token-file"):
+            cli._cmd_ui(Namespace(**{**vars(args), "lead_token_file": str(tmp_path / "no.txt")}))
+        with pytest.raises(UsageError, match="give the lead token once"):
+            cli._cmd_ui(Namespace(**{**vars(args), "lead_token": lead}))
 
     def test_ui_on_the_network_warns_first(self, tmp_path, monkeypatch):
         engine.op_init(tmp_path, "t", spec_file(tmp_path))

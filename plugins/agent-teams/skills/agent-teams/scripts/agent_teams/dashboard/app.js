@@ -19,7 +19,8 @@
     try { localStorage.setItem(key, value); } catch (e) { /* a preference is not worth an error */ }
   }
   var store = { mode: readPref("at.mode", "simple"),
-                theme: readPref("at.theme", prefersDark ? "dark" : "light") };
+                theme: readPref("at.theme", prefersDark ? "dark" : "light"),
+                control: false };      // whether the owner can act (never persisted)
 
   var ICONS = {
     circle: '<circle cx="12" cy="12" r="8"/>',
@@ -34,6 +35,18 @@
   function icon(name) { return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || ICONS.circle) + '</svg>'; }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function $(id) { return document.getElementById(id); }
+  /* A block is written only when its markup changed (v2.1 spec 21): a
+     refresh that moved nothing leaves the screen exactly as it was, and
+     one that moved a single card redraws that card alone. What the page
+     changes inside a block afterwards (a bar's width, the graph's
+     position, an open file) is kept, because the block is not rebuilt. */
+  function paint(el, html) {
+    if (!el) return false;
+    if (el.painted === html) return false;
+    el.painted = html;
+    el.innerHTML = html;
+    return true;
+  }
   function list(value) { return Array.isArray(value) ? value : []; }
   function plural(n, one, few, many) {
     var last = n % 10, tenth = n % 100;
@@ -142,7 +155,8 @@
     $("projectName").textContent = project.name || "AI-команда";
     $("projectGoal").textContent = project.goal || rs.hint || "";
     $("runStateText").textContent = rs.state || "нет данных";
-    var rsKind = !rs.state ? "idle" : /внимание/.test(rs.state) ? "problem" : /Завершено/.test(rs.state) ? "done" : "busy";
+    var rsKind = !rs.state ? "idle" : /внимание/.test(rs.state) ? "problem"
+      : /Пауза/.test(rs.state) ? "attention" : /Завершено|Готово/.test(rs.state) ? "done" : "busy";
     $("runState").className = "pill";
     $("runDot").className = "dot " + rsKind;
     $("elapsed").classList.remove("hidden");
@@ -228,11 +242,11 @@
         (cost.complete || Number(cost.usd) > 0 ? "" : ' <span class="muted">(данные о ценах недоступны)</span>') +
         ' · <span class="nowrap">объём использования AI: ' + (Number(cost.tokens) || 0).toLocaleString("ru-RU") + '</span></div>';
     }
-    $("nowList").innerHTML = html;
+    paint($("nowList"), html);
   }
 
   function renderTeam(agents, tasks) {
-    $("teamList").innerHTML = agents.map(function (a, index) {
+    paint($("teamList"), agents.map(function (a, index) {
       var facts = [];
       if (a.checks != null) facts.push("проверок: " + (Number(a.checks) || 0) +
         (Number(a.completed) > 0 ? " · принято по проверке: " + (Number(a.completed) || 0) : ""));
@@ -245,15 +259,15 @@
         '<div class="doing">' + esc(a.doing) + '</div><div class="facts">' + facts.join(" · ") + "</div></div>" +
         '<span class="state ' + esc(a.kind || "idle") + '">' + icon(a.icon) + esc(a.state) + "</span>" +
         "</article>";
-    }).join("") || '<div class="empty">Специалистов пока нет: план ещё не сформирован.</div>';
+    }).join("") || '<div class="empty">Специалистов пока нет: план ещё не сформирован.</div>');
   }
 
   function renderAttention(items) {
     $("attCount").textContent = items.length;
     $("attCount").className = "pill" + (items.length ? " state attention" : "");
     $("attCard").className = "card" + (items.length ? " attention" : "");
-    if (!items.length) { $("attList").innerHTML = '<div class="empty">Ничего не требует вашего решения. Команда справляется сама.</div>'; return; }
-    $("attList").innerHTML = items.map(function (a) {
+    if (!items.length) { paint($("attList"), '<div class="empty">Ничего не требует вашего решения. Команда справляется сама.</div>'); return; }
+    paint($("attList"), items.map(function (a) {
       return '<article class="attention-item ' + esc(a.kind) + '"><h3>' + icon(a.icon) + '<span>' + esc(a.title) + '</span></h3>' +
         (a.remarks ? '<div class="remarks"><b>Замечания проверяющего</b>' + esc(a.remarks) + '</div>' : '') +
         '<dl>' +
@@ -262,11 +276,11 @@
         '<dt>Что система сделала</dt><dd>' + esc(a.tried) + '</dd>' +
         '<dt>Что нужно от вас</dt><dd>' + esc(a.action) + '</dd>' +
         '<dt>Если ничего не делать</dt><dd>' + esc(a.if_nothing) + '</dd></dl></article>';
-    }).join("");
+    }).join(""));
   }
 
   function renderPlan(tasks) {
-    $("planList").innerHTML = tasks.map(function (t, i) {
+    paint($("planList"), tasks.map(function (t, i) {
       var bad = list(t.violations);
       var changed = list(t.changed_files);
       var files = changed.map(function (f) { return fileChip(f, bad.indexOf(f) >= 0); }).join("") +
@@ -288,7 +302,7 @@
         "</div>" +
         '<div class="who">' + esc(t.role) + (failed ? "<br>" + failed + " " + plural(failed, "раз", "раза", "раз") + " возвращена на доработку" : "") + "</div>" +
         "</div>";
-    }).join("") || '<div class="empty">План ещё не сформирован.</div>';
+    }).join("") || '<div class="empty">План ещё не сформирован.</div>');
   }
 
   function renderFeed(events, knownSeq) {
@@ -303,16 +317,16 @@
     // The lead and the system are no card: their lines are found by name.
     all.forEach(function (e) { if (e.specialist && e.by == null) names[e.specialist] = true; });
     var who = $("feedWho"), current = feedView.who;
-    who.innerHTML = '<option value="">Все специалисты</option>' +
+    paint(who, '<option value="">Все специалисты</option>' +
       list(lastSnap && lastSnap.agents).map(function (a, index) {
         return '<option value="' + index + '">' + esc(a.name) + "</option>";
-      }).join("") + Object.keys(names).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + "</option>"; }).join("");
+      }).join("") + Object.keys(names).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + "</option>"; }).join(""));
     who.value = current;
     var stage = $("feedTask");
-    stage.innerHTML = '<option value="">Все этапы</option>' +
+    paint(stage, '<option value="">Все этапы</option>' +
       list(lastSnap && lastSnap.tasks).map(function (t) {
         return '<option value="' + esc(t.title) + '">' + esc(t.title) + "</option>";
-      }).join("");
+      }).join(""));
     stage.value = feedView.task;
     var idsByTitle = {};
     list(lastSnap && lastSnap.tasks).forEach(function (t) { idsByTitle[t.title] = t.id; });
@@ -323,7 +337,7 @@
     var oldest = all.reduce(function (low, e) { return Math.min(low, e.seq); }, Infinity);
     $("feedOlder").classList.toggle("hidden", !(lastSnap && isFinite(oldest) && oldest > 1));
     events = listEvents;
-    $("feed").innerHTML = events.map(function (e) {
+    paint($("feed"), events.map(function (e) {
       var isNew = knownSeq !== null && e.seq > knownSeq;
       var cls = "feed-item " + esc(e.kind || "normal") + (isNew ? " is-new" : "");
       var sub = join([e.specialist, e.task]);
@@ -335,7 +349,7 @@
         (e.detail ? '<div class="dd">' + esc(e.detail) + '</div>' : '') +
         techBlock(e.tech) +
         "</div></div>";
-    }).join("") || '<div class="empty">' + (all.length ? "По этим условиям событий нет." : "Событий пока нет.") + "</div>";
+    }).join("") || '<div class="empty">' + (all.length ? "По этим условиям событий нет." : "Событий пока нет.") + "</div>");
   }
 
   /* ---- the plan as a graph (spec 6): left to right, the position is the
@@ -400,7 +414,7 @@
     }).join("");
     $("graph").setAttribute("viewBox", "0 0 " + (width || 600) + " " + (height || 120));
     $("graph").setAttribute("height", height || 120);
-    $("graph").innerHTML = '<g id="graphViewport">' + links + nodes + "</g>";
+    paint($("graph"), '<g id="graphViewport">' + links + nodes + "</g>");
     graphMove();
   }
   function redrawGraph() { if (lastSnap) renderGraph(lastSnap.tasks); }
@@ -458,7 +472,7 @@
   var SPAN_ORDER = ["work", "check", "fix", "wait", "recovery", "done", "stopped"];
   function renderTimeline(tl) {
     var rows = list(tl && tl.rows);
-    if (!tl || !rows.length) { $("timeline").innerHTML = ""; $("timeLegend").innerHTML = ""; return; }
+    if (!tl || !rows.length) { paint($("timeline"), ""); paint($("timeLegend"), ""); return; }
     var start = Date.parse(tl.start), end = Date.parse(tl.end) || Date.now();
     if (!(end > start)) end = start + 3600000;
     var left = 172, top = 34, rowH = 46;
@@ -466,6 +480,7 @@
     // A narrow window scrolls it sideways instead.
     var plotW = Math.max(360, ($("timeline").clientWidth || 680) - left - 16);
     var width = left + plotW + 16, height = top + rows.length * rowH + 12;
+    var spanName = function (sp) { return (tl.span_text || {})[sp.kind] || sp.text || sp.kind; };
     var at = function (iso) {
       var t = Date.parse(iso);
       return left + plotW * Math.min(1, Math.max(0, (t - start) / (end - start)));
@@ -482,7 +497,7 @@
       var spans = list(row.spans).map(function (sp) {
         var x1 = at(sp.from), x2 = Math.max(at(sp.to), x1 + 3);
         return '<rect class="span ' + esc(sp.kind) + '" x="' + x1 + '" y="' + (y + 12) + '" width="' + (x2 - x1) + '" height="18" rx="9">' +
-          "<title>" + esc(sp.text + ": с " + fmtClock(sp.from) + " по " + fmtClock(sp.to)) + "</title></rect>";
+          "<title>" + esc(spanName(sp) + ": с " + fmtClock(sp.from) + " по " + fmtClock(sp.to)) + "</title></rect>";
       }).join("");
       var marks = list(row.marks).map(function (m) {
         return '<circle class="tmark ' + esc(m.kind || "normal") + '" cx="' + at(m.ts) + '" cy="' + (y + 21) + '" r="4">' +
@@ -491,17 +506,20 @@
       return '<g class="trow" data-task="' + esc(row.id) + '" role="button" tabindex="0" aria-label="' + esc(row.title + ", " + row.state) + '">' +
         '<text class="row-title" x="12" y="' + (y + 18) + '"><title>' + esc(row.title) + "</title>" +
         esc(shorten(row.title, 26)) + "</text>" +
-        '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks + "</g>";
+        '<text class="row-state" x="12" y="' + (y + 34) + '">' + esc(row.state) + "</text>" + spans + marks +
+        // What is not drawn is said: the marks of a long history are counted.
+        (Number(row.marks_more) > 0 ? '<text class="row-more" x="' + (width - 12) + '" y="' + (y + 34) +
+          '" text-anchor="end">ещё ' + row.marks_more + "</text>" : "") + "</g>";
     }).join("");
     $("timeline").setAttribute("viewBox", "0 0 " + width + " " + height);
     $("timeline").setAttribute("width", width);
     $("timeline").setAttribute("height", height);
-    $("timeline").innerHTML = axis + body;
+    paint($("timeline"), axis + body);
     var present = {};
     rows.forEach(function (row) { row.spans.forEach(function (sp) { present[sp.kind] = true; }); });
-    $("timeLegend").innerHTML = SPAN_ORDER.filter(function (kind) { return present[kind]; }).map(function (kind) {
+    paint($("timeLegend"), SPAN_ORDER.filter(function (kind) { return present[kind]; }).map(function (kind) {
       return '<span class="legend-item"><i class="swatch ' + esc(kind) + '"></i>' + esc(tl.span_text[kind] || kind) + "</span>";
-    }).join("") + '<span class="legend-item"><i class="swatch mark"></i>событие</span>';
+    }).join("") + '<span class="legend-item"><i class="swatch mark"></i>событие</span>');
   }
   opener($("timeline"), "data-task", function (id) { openSheet("task", id); loadHistory(id); });
 
@@ -665,7 +683,7 @@
   }
   /* Every check in the order the answers came back, one mark each: a
      result that came back more than once is seen at a glance. */
-  function strip(timeline) {
+  function strip(timeline, more) {
     var marks = list(timeline);
     if (!marks.length) return "";
     var fails = {};
@@ -683,6 +701,8 @@
       '<span class="swatch bad cap"></span> вернула результат на доработку.' +
       (again ? " " + again + " " + plural(again, "результат возвращался", "результата возвращались",
                                           "результатов возвращались") + " на доработку больше одного раза." : "") +
+      (Number(more) > 0 ? " Раньше была ещё " + more + " " +
+        plural(Number(more), "проверка", "проверки", "проверок") + "." : "") +
       "</p>";
   }
   function renderQuality(q) {
@@ -699,7 +719,7 @@
                {n: q.passed, label: "пройдено"}, {n: q.failed, label: "не пройдено"}])
       : '<p class="muted small">Проверок ещё не было.</p>';
     var problems = list(q.problems);
-    $("qualityBody").innerHTML =
+    var qualityHtml =
       '<p class="story-text">' + esc(q.story) + "</p>" +
       stats([{n: q.handed_over, label: "передано на проверку", note: "результатов, которые исполнители сдали"},
              {n: q.first_time, label: q.first_time === 1 ? "прошёл с первого раза" : "прошли с первого раза",
@@ -709,15 +729,18 @@
              {n: q.accepted_by_decision, label: "принято решением", note: "руководитель команды принял без проверки"}]) +
       distribution(q.split) +
       duo("Что проверила машина", machineBody, "Что оценил проверяющий", judgedBody) +
-      strip(q.timeline) +
+      strip(q.timeline, q.timeline_more) +
       (list(q.empty).length ? "<p class='bad-text'>Принято без единого файла: " + esc(list(q.empty).join(", ")) +
        ". Исполнитель ничего не подготовил.</p>" : "") +
-      (problems.length ? "<h3>Найденные недостатки <span class='count'>" + problems.length +
-       "</span></h3><ul class='plain'>" + problems.map(function (p) {
+      (problems.length ? "<h3>Найденные недостатки <span class='count'>" + (problems.length + (Number(q.problems_more) || 0)) +
+       "</span></h3><ul class='plain'>" + problems.slice(0, 20).map(function (p) {
         return "<li><b>" + esc(p.task) + ".</b> " + esc(p.remark || "замечаний не записано") + "</li>";
-      }).join("") + "</ul>" : "") +
+      }).join("") + "</ul>" +
+       (problems.length > 20 || Number(q.problems_more) > 0 ? "<p class='small muted'>Показаны последние " +
+        Math.min(problems.length, 20) + " из " + (problems.length + (Number(q.problems_more) || 0)) + ".</p>" : "") : "") +
       (list(q.awaited).length ? "<h3>Ещё ждут проверки</h3>" + linesOf(list(q.awaited)) : "") +
       techBlock(q);
+    paint($("qualityBody"), qualityHtml);
     fitBars($("qualityBody"));
   }
 
@@ -754,7 +777,7 @@
     }
     html += modelsList(cost && cost.models);
     html += techBlock(b);
-    $("moneyBody").innerHTML = html;
+    paint($("moneyBody"), html);
     fitBars($("moneyBody"));
     Array.prototype.forEach.call($("moneyBody").querySelectorAll("[data-x]"), function (el) {
       el.style.left = el.getAttribute("data-x") + "%";
@@ -807,6 +830,10 @@
           (i.human_needed ? '<div class="dd"><b>' + esc(i.action) + "</b></div>" : "") +
           "</div></li>";
       }).join("") + "</ul>";
+      if (Number(r.more) > 0) {
+        html += "<p class='small muted'>Показаны последние " + r.shown + " из " + r.total +
+          ". Остальные случились раньше.</p>";
+      }
       var repeated = Object.keys(r.repeated || {});
       if (repeated.length) {
         html += "<p class='small muted'>Повторялись: " + esc(repeated.map(function (t) {
@@ -815,19 +842,19 @@
       }
     }
     html += techBlock(r);
-    $("problemBody").innerHTML = html;
+    paint($("problemBody"), html);
   }
 
   function renderBuild(g) {
     if (!g) return;
     var steps = list(g.steps);
-    $("buildBody").innerHTML = '<p class="story-text">' + esc(g.story) + "</p>" +
+    paint($("buildBody"), '<p class="story-text">' + esc(g.story) + "</p>" +
       '<ol class="steps big">' + steps.map(function (s) {
         return '<li class="' + (s.done ? "on" : "") + '">' + icon(s.done ? "check" : "circle") + "<span><b>" + esc(s.title) +
           "</b><small>" + esc(s.text) + "</small></span></li>";
       }).join("") + "</ol>" +
       (g.conflict ? '<div class="remarks"><b>Что помешало</b>' + esc(g.conflict.title) + ". " + esc(g.conflict.detail) + "</div>" : "") +
-      techBlock(g);
+      techBlock(g));
   }
 
   /* ---- comparing teams that ran one set of tasks (spec 19). The card
@@ -857,8 +884,8 @@
         "<dt>Проблем</dt><dd>" + esc(measured(r.problems)) + "</dd>" +
         "<dt>Конфликтов объединения</dt><dd>" + esc(measured(r.conflicts)) + "</dd></dl></div>";
     }).join("") + "</div>" : "";
-    $("benchBody").innerHTML = (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
-      '<p class="story-text">' + esc(b.note || "") + "</p>") + blocks + techBlock(b);
+    paint($("benchBody"), (b.statement ? '<p class="story-text"><b>' + esc(b.statement) + "</b></p>" :
+      '<p class="story-text">' + esc(b.note || "") + "</p>") + blocks + techBlock(b));
   }
 
   /* ---- the detail sheet: a specialist or a task (spec 5.1, 8) ---- */
@@ -1038,7 +1065,7 @@
      fixed placement leaves a hole under the shorter column, so the cards
      are split into the two most even groups, measured after every render,
      and each column keeps the reading priority. */
-  var CARD_ORDER = ["attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard",
+  var CARD_ORDER = ["actCard", "attCard", "nowCard", "teamCard", "planCard", "timeCard", "feedCard",
                     "qualityCard", "moneyCard", "problemCard", "buildCard", "benchCard"];
   function atBottom(feed) {
     return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
@@ -1076,6 +1103,7 @@
     renderPlan(snap.tasks);
     renderGraph(snap.tasks);
     renderTimeline(snap.timeline);
+    renderActions(snap);
     renderAttention(snap.attention);
     renderQuality(snap.quality);
     renderMoney(snap.budget, snap.cost);
@@ -1088,17 +1116,116 @@
     renderSheet();   // an open sheet follows the data, it is not closed by a refresh
   }
 
+  /* ---- what the owner can do (spec 17). The engine offers, the page
+     asks for a confirmation where there are consequences, and the server
+     does it through the engine: the lead token is in the memory of the
+     server and never in this page. ---- */
+  var SAID = {
+    pause: "Пауза поставлена: новые задачи не начинаются.",
+    resume: "Пауза снята: новые задачи запускаются.",
+    retry: "Этап возвращён в очередь.",
+    cancel: "Этап отменён.",
+    request_check: "Просьба передана руководителю команды: он проверит результат.",
+    apply: "Изменения внесены в проект."
+  };
+  var NOT_DONE = {
+    state: "Сейчас так нельзя: состояние команды изменилось. Доска обновится, и действие появится, когда оно снова будет возможно.",
+    budget: "Бюджет исчерпан: новые задачи не запускаются.",
+    forbidden: "Доска не имеет права на это действие: перезапустите её с правом управления.",
+    not_found: "Этапа больше нет в плане.",
+    origin: "Запрос пришёл не с этой страницы.",
+    usage: "Действие не выполнено: запрос составлен неправильно."
+  };
+  var acting = false;
+  function sayAction(text, bad) {
+    var box = $("actResult");
+    box.textContent = text;
+    box.className = "action-result" + (bad ? " bad" : "");
+  }
+  function renderActions(snap) {
+    var card = $("actCard");
+    // Only a board started with the lead's authority can act.
+    if (snap.control === false) store.control = false;
+    if (snap.control === true) store.control = true;
+    // The report needs no authority: the card is there on a read-only
+    // board too, with nothing else in it.
+    card.classList.remove("hidden");
+    $("reportLink").setAttribute("href", "/api/report" + API);
+    if (!store.control) { paint($("actList"), ""); return; }
+    var actions = list(snap.actions);
+    if (!actions.length) {
+      paint($("actList"), '<p class="muted">Сейчас от вас ничего не нужно.</p>');
+      return;
+    }
+    paint($("actList"), actions.map(function (a) {
+      return '<button type="button" class="action' + (a.confirm ? " danger" : "") + '" data-action="' +
+        esc(a.key) + '" data-task="' + esc(a.task || "") + '" data-confirm="' + esc(a.confirm || "") +
+        '" data-ask="' + esc(a.ask || "") + '">' + esc(a.label) + "</button>";
+    }).join(""));
+  }
+  function doAction(button) {
+    if (acting) return;
+    var action = button.getAttribute("data-action");
+    var body = {action: action, confirm: true};
+    // An action with consequences is done only after the owner agrees to it.
+    var asked = button.getAttribute("data-confirm");
+    if (asked && !window.confirm(asked)) return;
+    var question = button.getAttribute("data-ask");
+    if (question) {
+      var given = window.prompt(question, "");
+      if (given == null || given.trim() === "") return;
+      var usd = Number(String(given).replace(/\s|\$/g, "").replace(",", "."));
+      if (!(usd > 0)) { sayAction("Нужно число больше нуля, в долларах.", true); return; }
+      body.usd = usd;
+    }
+    var task = button.getAttribute("data-task");
+    if (task) body.task = task;
+    acting = true;
+    button.disabled = true;
+    sayAction("Выполняю…", false);
+    fetch("/api/actions" + API, { method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) })
+      .then(answer, function () { throw {kind: "connection"}; })
+      .then(function (result) {
+        var said = SAID[action] || "Готово.";
+        if (action === "integrate") {
+          said = result.ok === false
+            ? "Объединить не удалось: найдено противоречие. Исходные версии на месте."
+            : result.applied === true ? "Результаты объединены и применены к проекту."
+            : "Результаты объединены и проверены. Осталось применить их к проекту.";
+        }
+        if (action === "budget") said = "Бюджет изменён: " + moneyText(result.budget_usd) + ".";
+        if (store.mode === "advanced" && result.error) said += " (" + result.error + ")";
+        sayAction(said, false);
+      }, function (err) {
+        var text = NOT_DONE[err && err.kind] ||
+          "Действие не выполнено: доска не связалась с сервером. Попробуйте ещё раз.";
+        if (store.mode === "advanced" && err && err.message) text += " (" + err.message + ")";
+        sayAction(text, true);
+      })
+      .then(function () {
+        acting = false;
+        button.disabled = false;
+        takeSnapshot(true);        // the state may have moved: show it as it is now
+      });
+  }
+  $("actList").addEventListener("click", function (event) {
+    var node = event.target;
+    var button = node && node.closest ? node.closest("[data-action]") : null;
+    if (button) doAction(button);
+  });
+
   /* ---- polling: refresh data, keep user context (spec 16.4) ----
      Every few seconds the page asks a light "has anything changed?". The
      whole snapshot, with the whole feed, is taken only when something did
      (or once in a while, so the clocks stay true). */
-  function show(snap) {
+  function show(snap, force) {
     var known = lastSnap ? lastSnap.last_seq : null;
     lastGood = Date.now(); snapshotAt = Date.now(); lastSnap = snap;
     setConn("", "");
     /* A quiet team has nothing new in the journal, but the two levels
        show different things: the level the reader picked redraws too. */
-    if (known !== null && snap.last_seq === known && snap.level === shownLevel) {
+    if (!force && known !== null && snap.last_seq === known && snap.level === shownLevel) {
       timers();
       $("updatedAt").textContent = "обновлено в " + fmtClock(snap.now);
       return;
@@ -1131,7 +1258,12 @@
 
   function answer(r) {
     return r.json().catch(function () { return {}; }).then(function (body) {
-      if (!r.ok) { var err = new Error(body.error || ("HTTP " + r.status)); err.status = r.status; throw err; }
+      if (!r.ok) {
+        var err = new Error(body.error || ("HTTP " + r.status));
+        err.status = r.status;
+        err.kind = body.kind;        // why the server refused, for the owner's words
+        throw err;
+      }
       return body;
     });
   }
@@ -1147,9 +1279,9 @@
             function (err) { setRefreshing(false); throw err; });
   }
 
-  function takeSnapshot() {
+  function takeSnapshot(force) {
     return request("/api/snapshot" + API + "&level=" + encodeURIComponent(store.mode))
-      .then(show, requestFailed);
+      .then(function (snap) { show(snap, force); }, requestFailed);
   }
 
   function load() {
@@ -1158,8 +1290,12 @@
       .then(function (status) {
         lastGood = Date.now();
         setConn("", "");
+        // The right to act can change only with a restart of the board,
+        // and then the picture has to follow at once.
+        var controlChanged = typeof status.control === "boolean" && status.control !== store.control;
+        if (controlChanged) store.control = status.control;
         var changed = status.last_seq !== lastSnap.last_seq;
-        if (changed || Date.now() - snapshotAt > RESYNC_MS) return takeSnapshot();
+        if (changed || controlChanged || Date.now() - snapshotAt > RESYNC_MS) return takeSnapshot(controlChanged);
         $("updatedAt").textContent = "обновлено в " + fmtClock(status.now);
         timers();
       }, requestFailed);

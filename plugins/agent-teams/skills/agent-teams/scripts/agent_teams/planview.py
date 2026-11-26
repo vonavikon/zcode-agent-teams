@@ -20,6 +20,9 @@ _AFTER = {
     "verification_passed": "done", "verify_pass": "done", "task_completed": "done",
     "task_blocked": "stopped", "task_cancelled": "stopped",
 }
+# Marks drawn for one task; the older ones are counted, not sent (v2.1
+# spec 21: the whole journal is never loaded at once).
+MARK_LIMIT = 10
 SPAN_TEXT = {
     "work": "работа", "check": "проверка качества", "fix": "доработка после замечаний",
     "wait": "ожидание в очереди", "recovery": "восстановление после сбоя",
@@ -104,13 +107,16 @@ def plan_layout(tasks: list[dict]) -> dict:
 
 
 def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
-             start: str, end: str) -> dict:
+             start: str, end: str, *, mark_limit: int | None = MARK_LIMIT) -> dict:
     """How each task spent its time, from the journal.
 
     ``events_by_task`` holds the reader's event items of each task,
     oldest first. Every span runs from one real event to the next (or
     to ``end``: now, or the moment the run finished). A task without
     events has no spans: the engine recorded nothing about its time.
+    The spans are all sent; the marks are the last ``MARK_LIMIT`` of a
+    task, and ``marks_more`` says how many older ones are not. A report
+    that is written once asks for every mark with ``mark_limit=None``.
     """
     rows = []
     for task in tasks:
@@ -118,6 +124,8 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
         spans: list[dict] = []
         marks = []
         for index, item in enumerate(events):
+            if item.get("bookkeeping"):
+                continue        # the archive of a lost attempt: a note, not a moment of work
             marks.append({"ts": item["ts"], "title": item["title"], "kind": item.get("kind"),
                           "icon": item.get("icon"), "detail": item.get("detail", "")})
             state = _AFTER.get(item.get("type"))
@@ -130,5 +138,7 @@ def timeline(tasks: list[dict], events_by_task: dict[str, list[dict]],
             spans.append({"from": item["ts"], "to": till, "kind": state,
                           "text": SPAN_TEXT[state]})
         rows.append({"id": task["id"], "title": task["title"], "state": task["state"],
-                     "kind": task["kind"], "spans": spans, "marks": marks})
+                     "kind": task["kind"], "spans": spans,
+                     "marks": marks if mark_limit is None else marks[-mark_limit:],
+                     "marks_more": 0 if mark_limit is None else max(0, len(marks) - mark_limit)})
     return {"start": start, "end": end, "rows": rows, "span_text": dict(SPAN_TEXT)}

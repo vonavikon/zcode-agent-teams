@@ -8,8 +8,8 @@ the mechanism details; when they disagree with this file, this file wins.
 
 | Artifact | Where | Current |
 |---|---|---|
-| Plugin | plugin.json, marketplace.json | 2.1.0a4 |
-| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a4 |
+| Plugin | plugin.json, marketplace.json | 2.1.0a5 |
+| Engine | agent_teams/version.py ENGINE_VERSION | 2.1.0a5 |
 | Task specification format | agent_teams/version.py SPEC_VERSION | 1.1 |
 | SQLite schema | storage.SCHEMA_VERSION (PRAGMA user_version) | 4 |
 | Verification report | verification.REPORT_SCHEMA_VERSION | 1.0 |
@@ -31,7 +31,8 @@ Package `agent_teams/`: cli (entry team.py), engine (operations),
 statemachine + storage (state), locking (OS file lock), validation
 (spec checks), workspaces (git worktrees, snapshots), quality (machine
 gate, integration merge), verification (report validation),
-observability (usage, cost, metrics), report (HTML), langfuse (export),
+observability (usage, cost, metrics), report (the document for a
+manager), onboarding (a brief in plain words), langfuse (export),
 viewmodel (the reader's words), analytics (what the numbers mean:
 quality, budget, problems, integration, the comparison of teams),
 dashboard_data + dashboard_server and dashboard/ (the read-only board,
@@ -75,7 +76,9 @@ a reason).
 Task statuses: pending, in_progress, awaiting_verification, completed,
 blocked, cancelled; completed and cancelled are terminal. Every
 transition checks the edge, the initiator role, guards on the previous
-status, and appends a hash-chained event. Failed verdicts count
+status, and appends a hash-chained event. The lead may cancel a stage
+that is pending or already in work (since 2.1.0a5, v2.1 spec 17): the
+attempt is fenced as recovery fences a lost executor. Failed verdicts count
 immediately: the Nth failed round blocks the task
 (max_verification_failures, default 2). Recovery events (timeout,
 quarantine) are events and attempt records, not task statuses.
@@ -87,7 +90,9 @@ a shared-mode integrate) actually landed.
 ## 6. Execution lifecycle
 
 init validates, records the run base commit (HEAD of the git project),
-creates the lead token. claim checks roles and dependencies, prints the
+creates the lead token; from a brief in plain words it makes the
+specification first (section 19). claim checks roles and dependencies,
+prints the
 execution token, creates the per-attempt workspace and branch from the
 task's last verified checkpoint or the run base, sets the lease.
 heartbeat refreshes activity. submit demands a clean worktree
@@ -173,7 +178,9 @@ mailbox history, and keeps quarantined work for manual salvage.
 integrate merges the accepted SHAs in topological DAG order into a
 fresh integration branch, optionally running a check command in the
 merged tree; conflicts and failed checks stop at integration_failed and
-never touch task snapshots or the project branch. apply fast-forwards
+never touch task snapshots or the project branch. A stage the owner
+cancelled does not stand in the way of the rest: what was accepted is
+integrated. apply fast-forwards
 the project branch to the integration branch, refusing a dirty project
 or a moved base (re-integrate is the documented path); a failed apply
 never finishes the run.
@@ -189,12 +196,15 @@ mistakes, races and stale executors, not against an attacker on the
 machine.
 
 The budget is changed only by the lead, with the lead token, as an
-audited decision (section 17); an executor's token cannot move a limit,
-and the board has no way to change one.
+audited decision (section 17); an executor's token cannot move a limit.
+The board can change it only where the lead lent it the authority
+(section 20), and then through the same operation.
 
 The board (`team.py ui`, section 16) is read-only by construction: it
 opens state.db with `mode=ro` and `PRAGMA query_only`, answers GET
-only, and selects a whitelist of columns (a token hash is never read).
+to every reader and POST to one address only, and only where the lead
+lent it the authority (section 20), and selects a whitelist of columns
+(a token hash is never read).
 The project root is fixed by the command that started the server; a
 request can name a team inside it, never a path. While bound to
 loopback, a `Host` header that names another machine is refused (DNS
@@ -248,8 +258,14 @@ real team: the gate refuses a start, a running executor is not stopped,
 nothing is left behind, the limit can be raised; the numbers are tested
 as pure functions (three things never summed into one, a cost that is
 not known is never a zero, a recovery that did not work is not shown as
-one that did). CI: ubuntu, macos, windows x Python 3.10-3.14 plus
-vermin, schema validation and manifest checks; 900+ tests, no LLM or
+one that did). The eight scenarios of v2.1 spec 22.4 run end to end on
+real git repositories through the engine and are judged twice, by what
+the engine did and by what the owner sees on the board; readers of both
+levels and three pages polling a real server read while the engine
+writes; five, twenty and a hundred stages are built and read (the time
+assertions are guards against a walk that turns quadratic, not
+benchmarks). CI: ubuntu, macos, windows x Python 3.10-3.14 plus
+vermin, schema validation and manifest checks; 1000+ tests, no LLM or
 network in the suite.
 
 ## 16. Dashboard (the board)
@@ -311,8 +327,10 @@ new, `before` for reading further back), `/api/tasks`,
 `/api/cost`, `/api/metrics`, `/api/recovery`, `/api/integration`,
 `/api/artifacts` (the files of every result), `/api/benchmark` (only
 for a team that declared one, section 18),
-`/api/results/<task>/<file>` (one file of a task's result) and
-`/api/health`. The last fields of a snapshot (v2.1 spec 16.3) are read
+`/api/report` (the document for a manager, as a file to keep, section
+21), `/api/results/<task>/<file>` (one file of a task's result) and
+`/api/health`; and POST `/api/actions`, where the lead's authority is
+lent (section 20). The last fields of a snapshot (v2.1 spec 16.3) are read
 with the same connection and the same whitelists as the rest. The page polls `/api/status` every 3
 seconds and takes a whole snapshot only when something changed (or once
 in a while, so its clocks stay true): a refresh stays light.
@@ -367,6 +385,116 @@ it is sticky and a taller one hid a quarter of the screen.
 
 The texts of the board are Russian today; localization is an open
 decision (BACKLOG).
+
+The card of actions (v2.1 spec 17, section 20) offers what the engine
+would accept right now, in words, and asks for a yes where there are
+consequences; it also offers the report (section 21), which needs no
+authority and is there on a read-only board too.
+
+## 19. A task in plain words
+
+A person who is not technical does not write a specification (v2.1
+spec 14). The lead talks with the owner and fills a brief: a small
+JSON document of human words, documented field by field in
+`agent_teams/onboarding.py`. `team.py plan --brief brief.json` answers
+it with one document:
+
+- `questions`, the most important first, and `question`, the first of
+  them: the one to ask the owner now. Only four gaps are critical and
+  only they are asked: what to ask the team, at least one stage, the
+  files a stage must produce, and how to see that it is done;
+- `problems`: what is written wrongly, in words, each naming its stage;
+- `plan`: what will be done, for the confirmation: the stages with
+  their specialists and their order, the budget, the constraints, and a
+  summary sentence;
+- `spec`: the task specification, only when nothing is left to ask or
+  to fix.
+
+Everything else in a brief may be absent (the budget, the date, the
+result in words, the quality, the constraints, the materials): the
+system can start safely without it, so it is never asked for. No
+message of the engine is ever shown as a question: the brief is checked
+with the engine's own rules (paths, cycles, files two stages change,
+and the whole specification), and what they report becomes a problem in
+words with the engine's text kept beside it in `detail`.
+
+`plan` exits with 0 when the brief is ready and with 1 while something
+is left; the answer is printed whole, as a document, pure ASCII in
+every mode. `team.py init --team <id> --brief brief.json` turns a ready
+brief into the team; a brief that is not ready creates nothing and says
+which question to ask the owner. The specification is checked against
+the real project once more before the team is made (a link that leaves
+the project, two names that differ by letter case).
+
+## 20. Control from the board
+
+`team.py ui --lead-token <tok>` (or `--lead-token-file <path>`) lends
+the board the lead's authority. The token stays in the memory of that
+process: it is in no response, no page and no log. Without it the board
+is read-only as before and a POST is refused like every write method.
+
+The page asks `POST /api/actions` with one action; the server accepts it
+only from the board's own origin (a request with another `Origin` is
+refused), only as JSON, and only up to a small size; every action goes
+through `engine.op_action` under the engine's lock and with its checks,
+so the board never edits state itself:
+
+- `pause` and `resume`: a paused team refuses every new `claim` with
+  `PAUSED` before anything is made; work in progress goes on. The pause
+  is a fact of the run, kept in the run's own record, and both are in
+  the journal;
+- `retry`: the lead's release of a blocked stage;
+- `cancel`: a stage is closed; one that is in work has its attempt
+  fenced (token dead, workspace in quarantine, specialist free);
+- `request_check`: the board runs no agent. It leaves the lead a
+  message in the team's mailbox;
+- `integrate` and `apply`: the integration gate and the apply, as from
+  the command line;
+- `budget`: the lead's budget operation with a new sum.
+
+An action with consequences (`pause`, `cancel`, `integrate`, `apply`,
+`budget`) needs `confirm: true`, and the page asks the owner first. The
+engine decides again when the action is done; a refusal is worded for
+the owner by its kind (the state moved, the budget is spent, the board
+has no authority), and the engine's text reaches the technical reader
+only. Which actions are offered is read from the state by
+`viewmodel.actions_view`, with the same edges the state machine allows.
+
+## 21. The report for a manager
+
+`GET /api/report` and `team.py report --out FILE` give the same
+document (v2.1 spec 18): one HTML file with a style of its own, no
+script, nothing external, openable long after the engine has finished.
+It is built from the read-only snapshot the board is built from, with
+the limits of a polling page lifted (`snapshot(whole=True)`): so it
+says what the board says. Twelve sections, in the order of the
+specification, each an element with a stable id (`sec-goal` to
+`sec-history`), and the technical details in one `<details>` element
+that is closed by default (`sec-tech`): no identifier, commit, branch
+or path of the team's directory stands before it. A section with
+nothing to say says so in one sentence.
+
+## 22. Size and speed
+
+The whole journal is never loaded at once (v2.1 spec 21). With one
+snapshot travel: the newest 200 lines of the feed, the last ten marks
+of every stage on the timeline and a count of the older ones, the exact
+totals of the problems and their newest fifty incidents, the newest
+fifty defects; at the technical level the newest two hundred raw
+records of each kind. A browser that accepts gzip gets a big answer
+packed. The page writes a block only when its markup changed: a refresh
+that moved one card redraws that card alone.
+
+Measured on this machine on a hundred stages, twenty specialists, five
+thousand lines of journal and two thousand usage records
+(`tests/integration/big_team.py`): the picture is built in 36 ms at the
+simple level and 43 ms at the technical one; it weighs 765 KB and
+956 KB, 40 KB and 62 KB on the wire; the light poll answers in 37 ms;
+in a real browser the first picture stands 394 to 515 ms after the
+navigation began, and a change is on screen about 250 ms after the poll
+that saw it (55 ms to fetch, 192 ms to the first paint). The tests of
+the suite guard against a walk that turns quadratic; they are not
+benchmarks.
 
 ## 17. Budget control
 
