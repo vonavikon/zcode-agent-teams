@@ -375,6 +375,8 @@ h3 .count { color: var(--text-2); font-weight: 500; }
 .timeline .row-state { font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; fill: var(--text-3); }
 .timeline .trow { cursor: pointer; outline: none; }
 .timeline .trow:hover .row-title { fill: var(--accent); }
+/* A row reached by the keyboard shows where the focus is. */
+.timeline .trow:focus-visible .row-title { fill: var(--accent); text-decoration: underline; }
 .timeline .span { opacity: 0.85; }
 .timeline .span.work { fill: var(--blue); } .timeline .span.check, .timeline .span.fix { fill: var(--yellow); }
 .timeline .span.wait { fill: var(--gray); } .timeline .span.recovery { fill: var(--blue-soft); stroke: var(--blue); stroke-dasharray: 3 2; }

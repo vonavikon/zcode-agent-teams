@@ -396,6 +396,7 @@ async function main() {
       // looked up, so that a redrawn sheet yields a fresh empty box like in a browser
       result: writtenIds("resultView") ? state.html.resultView : "",
       fetches: state.fetches.slice(),
+      prevented: state.prevented,              // how many times Enter or Space was handled
     });
     out.steps = [];
     const record = (name) => out.steps.push(Object.assign({ name }, shown()));
@@ -424,6 +425,12 @@ async function main() {
         state.listeners.planList.click(card("data-task", a)); await settle(); await settle();
       } else if (kind === "file") {         // press a file of the result
         state.listeners.sheetBody.click({ target: { closest: (sel) => (sel === "[data-result-file]" ? { getAttribute: () => a } : null) } });
+        await settle(); await settle();
+      } else if (kind === "key") {         // a key pressed on a row reached by the keyboard
+        const [container, attribute, value, key] = [a, b, c, step[4]];
+        state.prevented = 0;
+        state.listeners[container].keydown({ key, preventDefault: () => { state.prevented += 1; },
+                                             ...card(attribute, value) });
         await settle(); await settle();
       } else if (kind === "older") { await click("feedOlder"); await settle(); }
       else if (kind === "poll") { await poll(); }

@@ -652,7 +652,9 @@ class TestTheTimeline:
         assert [k for k in re.findall(r'<rect class="span (\w+)"', tl)] == ["work", "check", "fix", "check", "done"]
         assert tl.count('<circle class="tmark problem"') == 1 and tl.count('<circle class="tmark done"') == 1
         assert tl.count('<text class="tick"') == 5
-        assert "доработка: 09:" in tl and "09:18 · Проверка не пройдена: нет оценок" in tl.replace("09:18", "09:18") if False else "Проверка не пройдена: нет оценок" in tl
+        # What a span and a mark say when asked: the zone of the clock is
+        # the reader's, so the words are checked without the hour.
+        assert "доработка: с " in tl and "· Проверка не пройдена: нет оценок" in tl
         for word in ("работа", "проверка качества", "доработка", "завершено", "событие"):
             assert word in legend, word
         assert "ожидание" not in legend                  # only what really happened
@@ -1172,3 +1174,34 @@ class TestTheActionsCard:
             ["press", "request_check"]])["presses"][0]
         assert refused["result"].startswith("Сейчас так нельзя: состояние команды изменилось.")
         assert refused["result"].endswith("(task b: x)")
+
+
+class TestTheKeyboard:
+    """What the mouse opens, the keyboard opens too (v2.1 spec 22.3)."""
+    PLACES = [("teamList", "data-specialist", "0"), ("planList", "data-task", "a"),
+              ("feed", "data-task", "a"), ("graph", "data-task", "a"), ("timeline", "data-task", "a")]
+
+    def pressed(self, place, key):
+        out = run("actions", [snapshot(_actions=[["key", *place, key]])])
+        return out["steps"][1]
+
+    @pytest.mark.parametrize("place", PLACES, ids=[p[0] for p in PLACES])
+    def test_enter_opens_the_sheet(self, place):
+        step = self.pressed(place, "Enter")
+        assert step["sheet"] != "" and step["prevented"] == 1
+
+    def test_space_opens_too_and_other_keys_do_nothing(self):
+        assert self.pressed(self.PLACES[1], " ")["sheet"] != ""
+        for key in ("ArrowDown", "a", "Escape", "Tab"):
+            step = self.pressed(self.PLACES[1], key)
+            assert step["sheet"] == "" and step["prevented"] == 0, key
+
+    def test_every_openable_row_says_it_is_a_button_and_can_be_reached(self):
+        out = run("render", [snapshot()])
+        for block, attribute in (("teamList", "data-specialist"), ("planList", "data-task"),
+                                 ("feed", "data-task"), ("graph", "data-task")):
+            markup = out["dom"][block]["html"]
+            assert 'role="button" tabindex="0"' in markup and attribute + '="' in markup, block
+        timeline = out["dom"]["timeline"]["html"]
+        assert 'role="button" tabindex="0"' in timeline and 'data-task=' in timeline
+
